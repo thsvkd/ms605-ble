@@ -1,0 +1,16 @@
+[project]
+name = "ms605-ble"
+version = "0.1.0"
+description = "MS605 BLE control PoC (verified protocol driver + interactive PoC)"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "bleak>=0.22",
+]
+
+[tool.uv]
+# Pin an interpreter uv can auto-download so the env is reproducible on any Mac.
+# (matches the original Linux venv's 3.12 line.)
+
+[tool.setuptools]
+py-modules = ["ms605_ble", "ms605_poc"]
