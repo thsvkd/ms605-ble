@@ -21,7 +21,10 @@ from .errors import (
     MS605TimeoutError,
 )
 from .models import (
+    LightSample,
     MS605Config,
+    PresenceHistoryRecord,
+    SubSensorStatus,
     ZoneThreshold,
     decode_config,
 )
@@ -42,6 +45,9 @@ __all__ = [
     "MS605DeviceError",
     "MS605ConnectionError",
     "ZoneThreshold",
+    "SubSensorStatus",
+    "PresenceHistoryRecord",
+    "LightSample",
     "Sensitivity",
     "DetectMode",
     "ParsedFrame",
