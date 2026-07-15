@@ -1,11 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "ms605-ble"
-version = "0.1.0"
-description = "MS605 BLE control PoC (verified protocol driver + interactive PoC)"
+version = "0.2.0"
+description = "MS605 BLE control library + CLIs (protocol driver, interactive app, unattended scheduler)"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "bleak>=0.22",
+]
+
+[project.scripts]
+ms605 = "ms605.cli.cli:main"
+ms605-driver = "ms605.cli.ble:main"
+ms605-schedule = "ms605.cli.scheduled_calibrate:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.6",
 ]
 
 [tool.uv]
@@ -13,4 +28,23 @@ dependencies = [
 # (matches the original Linux venv's 3.12 line.)
 
 [tool.setuptools]
-py-modules = ["ms605_ble", "ms605_poc"]
+packages = ["ms605", "ms605.cli"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+extend-exclude = [
+    "docs/",
+    "tools/ble_common.py",
+    "tools/btsnoop_att.py",
+    "tools/enumerate.py",
+    "tools/notify_logger.py",
+    "tools/replay.py",
+    "tools/scan.py",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
