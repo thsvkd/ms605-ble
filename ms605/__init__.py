@@ -24,9 +24,12 @@ from .models import (
     LightSample,
     MS605Config,
     PresenceHistoryRecord,
+    RadarOutputSnapshot,
+    RadarZoneLive,
     SubSensorStatus,
     ZoneThreshold,
     decode_config,
+    decode_radar_output,
 )
 from .protocol import (
     DetectMode,
@@ -48,10 +51,13 @@ __all__ = [
     "SubSensorStatus",
     "PresenceHistoryRecord",
     "LightSample",
+    "RadarZoneLive",
+    "RadarOutputSnapshot",
     "Sensitivity",
     "DetectMode",
     "ParsedFrame",
     "build_command",
     "parse_frame",
     "decode_config",
+    "decode_radar_output",
 ]
