@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ms605_debug.py — instrumented zone-threshold write diagnosis (collaborative).
+"""tools/debug_zone_write.py -- instrumented zone-threshold write diagnosis.
 
 Why: writing tag51 (zone thresholds) returns a status=0 ack, yet reading the
 config straight back shows the *old* values. This tool logs every raw BLE frame
@@ -7,17 +7,23 @@ config straight back shows the *old* values. This tool logs every raw BLE frame
 experiments to tell the competing hypotheses apart:
 
   EXP-A  write tag51 ALONE, then re-read at increasing delays.
-         → if a delayed read shows the new values, it's a timing/apply lag.
-         → any push arriving after the write is logged (event/ack-of-apply?).
+         -> if a delayed read shows the new values, it's a timing/apply lag.
+         -> any push arriving after the write is logged (event/ack-of-apply?).
   EXP-B  write tag61=4 (sensitivity CUSTOM) + tag51 in ONE frame, then re-read.
-         → if this sticks but EXP-A didn't, the device only honors custom
-           thresholds when CUSTOM is (re)asserted in the same write.
+         -> if this sticks but EXP-A didn't, the device only honors custom
+            thresholds when CUSTOM is (re)asserted in the same write.
 
 At the end it best-effort restores the original values.
 
+This is a one-off diagnostic tool, not part of the production driver/CLI
+surface -- it lives in tools/ alongside the other RE toolkit scripts. The
+apply-lag finding it was written to confirm is already handled in
+ms605.cli.cli's confirm_zone_thresholds() (poll-until-committed), so this
+tool is kept only for future regression diagnosis, not routine use.
+
 Run:
-    uv run python ms605_debug.py
-    # (press the sensor button when prompted, like the PoC)
+    uv run python tools/debug_zone_write.py
+    # (press the sensor button when prompted, like the app)
 
 Paste the ENTIRE output back so we can read the raw frames together.
 """
@@ -28,15 +34,10 @@ import os
 import sys
 import time
 
-import ms605_ble as drv
-from ms605_ble import (
-    MS605,
-    TAG_SENSITIVITY,
-    TAG_ZONE_THRESHOLDS,
-    _encode_zone_thresholds,
-    parse_frame,
-)
-from ms605_poc import LiveLink, connect_with_retry, discover_and_select
+from ms605 import MS605
+from ms605.cli._shared import LiveLink, connect_with_retry, discover_and_select
+from ms605.models import encode_zone_thresholds
+from ms605.protocol import TAG_SENSITIVITY, TAG_ZONE_THRESHOLDS, parse_frame
 
 _T0 = time.monotonic()
 
@@ -63,7 +64,7 @@ def install_sniffer(ms: MS605) -> None:
 
     We wrap `_write_chunks` (receives the complete TLV frame before chunking)
     and `_dispatch` (receives every fully-parsed inbound frame, response OR
-    push). Behaviour is unchanged — we only print then delegate."""
+    push). Behaviour is unchanged -- we only print then delegate."""
     orig_write = ms._write_chunks
     orig_dispatch = ms._dispatch
 
@@ -140,7 +141,7 @@ async def experiment_B(link: LiveLink):
     print(" EXP-B: write tag61=4 (CUSTOM) + tag51 in ONE frame → re-read")
     print("=" * 72)
     sentinel = [(211 + i, 111 + i) for i in range(7)]
-    value = _encode_zone_thresholds(sentinel)
+    value = encode_zone_thresholds(sentinel)
     print(f"  writing (single frame) tag61=04 + tag51 sentinel = {sentinel}")
     await link.ensure()
     # one command frame carrying BOTH attributes (mirrors an app "apply custom")
