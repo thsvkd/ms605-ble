@@ -75,6 +75,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "    from a 'scan' run (a CoreBluetooth UUID on macOS, a MAC on Linux).\n"
             "\n"
             "examples\n"
+            "  uv run pytest                                     # offline protocol tests\n"
             "  ms605-driver scan\n"
             "  ms605-driver --address <ADDR> read\n"
             "  ms605-driver --address <ADDR> set-sensitivity 3\n"
@@ -135,11 +136,60 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Exactly 7 'trigger,maintain' pairs, one per zone (e.g. 95,40).",
     )
 
+    p_zone_enable = sub.add_parser(
+        "set-zone-enable",
+        help="Enable/disable individual zones (tag50 bitmask).",
+        description="Write tag50: one 0/1 flag per zone (zone 0..6, near→far).",
+    )
+    p_zone_enable.add_argument(
+        "flags",
+        type=int,
+        choices=[0, 1],
+        nargs=7,
+        metavar="0|1",
+        help="Exactly 7 flags, one per zone (e.g. 1 1 1 1 1 1 0).",
+    )
+
     sub.add_parser(
         "calibrate",
         help="Start auto-calibration (space-learning) and wait for the result push.",
         description="Write tag52=4 (SPACE_LEARNING), send periodic keep-alives to keep "
         "the link alive, and wait for the tag62 result push (success/failure).",
+    )
+
+    p_dnd = sub.add_parser(
+        "set-dnd",
+        help="Set the do-not-disturb toggle (tag32).",
+        description="Write tag32 (do-not-disturb): 1=on, 0=off.",
+    )
+    p_dnd.add_argument("state", type=int, choices=[0, 1], help="1=on 0=off")
+
+    sub.add_parser(
+        "read-dnd",
+        help="Read the do-not-disturb toggle (tag32).",
+    )
+    sub.add_parser(
+        "read-pir",
+        help="Read the PIR state (tag56).",
+    )
+    sub.add_parser(
+        "read-subsensor-status",
+        help="Read per-sub-sensor presence status (tag64).",
+    )
+    sub.add_parser(
+        "sync-time",
+        help="Write the current UTC time to the device (tag33).",
+    )
+    p_history = sub.add_parser(
+        "read-history",
+        help="Read presence/light history (tags 57-60). Unverified against real hardware.",
+        description="Read presence-history (--kind presence, tags 58/59) or "
+        "light-history (--kind light, tags 57/60) records. Decompiled-only "
+        "confidence; see docs/APK_PROTOCOL.md.",
+    )
+    p_history.add_argument("kind", choices=["presence", "light"], help="Which history to read.")
+    p_history.add_argument(
+        "--detail", action="store_true", help="For 'presence': request the 37-byte detail record format."
     )
 
     return parser
@@ -171,10 +221,39 @@ async def _run_command(args: argparse.Namespace) -> int:
         elif args.command == "set-zone":
             await device.set_zone_thresholds(args.pairs, timeout=args.timeout)
             print("zone thresholds updated")
+        elif args.command == "set-zone-enable":
+            flags = [bool(f) for f in args.flags]
+            await device.set_zone_enable(flags, timeout=args.timeout)
+            print(f"zone enable mask updated: {flags}")
         elif args.command == "calibrate":
             print("starting auto-calibration; this can take up to ~3 minutes...")
             ok = await device.start_auto_calibration()
             print("calibration succeeded" if ok else "calibration reported failure")
+        elif args.command == "set-dnd":
+            await device.set_dnd(bool(args.state), timeout=args.timeout)
+            print(f"DND set to {bool(args.state)}")
+        elif args.command == "read-dnd":
+            print(f"DND: {await device.read_dnd(timeout=args.timeout)}")
+        elif args.command == "read-pir":
+            print(f"PIR state: {await device.read_pir_state(timeout=args.timeout)}")
+        elif args.command == "read-subsensor-status":
+            for status in await device.read_sub_sensor_status(timeout=args.timeout):
+                print(
+                    f"sub-sensor {status.index}: presence={status.has_presence} "
+                    f"presence_ts={status.presence_timestamp} absence_ts={status.absence_timestamp}"
+                )
+        elif args.command == "sync-time":
+            await device.set_time(timeout=args.timeout)
+            print("device clock synced to host UTC time")
+        elif args.command == "read-history":
+            if args.kind == "presence":
+                records = await device.read_presence_history(detail=args.detail, timeout=args.timeout)
+            else:
+                records = await device.read_light_history(timeout=args.timeout)
+            if not records:
+                print("(no history records)")
+            for rec in records:
+                print(rec)
         return 0
     except MS605Error as exc:
         print(f"error: {exc}", file=sys.stderr)
