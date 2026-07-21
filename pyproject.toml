@@ -15,7 +15,6 @@ dependencies = [
 [project.scripts]
 ms605 = "ms605.cli.cli:main"
 ms605-driver = "ms605.cli.ble:main"
-ms605-schedule = "ms605.cli.scheduled_calibrate:main"
 
 [dependency-groups]
 dev = [

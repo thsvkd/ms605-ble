@@ -1,10 +1,11 @@
 """ms605.cli._shared -- helpers shared by the MS605 CLIs.
 
-`ainput`/`_prompt` are used by every CLI that reads interactive input
-(cli.py, scheduled_calibrate.py). `discover_and_select`/`connect_with_retry`/
-`LiveLink` implement the single-device, button-press-aware connect flow used
-by cli.py (and by tools/debug_zone_write.py) -- not by scheduled_calibrate.py,
-which manages several devices at once with its own pooling logic.
+`ainput`/`_prompt` provide non-blocking interactive input for cli.py.
+`discover_and_select`/`connect_with_retry`/`LiveLink` implement the
+single-device, button-press-aware connect flow used by the interactive app and
+one-shot subcommands (and by tools/debug_zone_write.py) -- not by the
+`ms605 calibrate` batch path, which manages several devices at once with its
+own pooling logic (see run_batch_calibration in cli.py).
 """
 
 from __future__ import annotations
