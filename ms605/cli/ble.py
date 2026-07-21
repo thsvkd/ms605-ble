@@ -30,6 +30,32 @@ def _parse_zone_pair(text: str) -> tuple[int, int]:
     return trig, maint
 
 
+def _parse_timing_pair(text: str) -> tuple[int, int]:
+    parts = text.split(",")
+    if len(parts) != 2:
+        raise argparse.ArgumentTypeError(f"expected 'presence_secs,absence_secs', got {text!r}")
+    try:
+        presence, absence = int(parts[0]), int(parts[1])
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"non-integer duration in {text!r}") from exc
+    if not (0 <= presence <= 0xFFFF and 0 <= absence <= 0xFFFF):
+        raise argparse.ArgumentTypeError(f"duration out of range (0-65535) in {text!r}")
+    return presence, absence
+
+
+def _parse_zone_list(text: str) -> list[int]:
+    text = text.strip()
+    if not text:
+        return []
+    try:
+        zones = [int(z) for z in text.split(",")]
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"non-integer zone index in {text!r}") from exc
+    if any(not (0 <= z <= 6) for z in zones):
+        raise argparse.ArgumentTypeError(f"zone index out of range 0-6 in {text!r}")
+    return zones
+
+
 def _print_config(config: MS605Config) -> None:
     def enum_name(enum_cls: type, value: int) -> str:
         try:
@@ -45,8 +71,12 @@ def _print_config(config: MS605Config) -> None:
     for i, z in enumerate(config.zone_thresholds, start=1):
         print(f"  zone {i}: trigger={z.trigger} maintain={z.maintain}")
     print(f"sub_sensor_enable   : 0b{config.sub_sensor_enable:03b}")
-    print(f"segment_map         : {config.segment_map.hex()}")
-    print(f"presence/absence times: {config.presence_absence_times}")
+    print("sub-sensor zones (Sensor1/2/3 -> assigned zones):")
+    for zm in config.segment_map:
+        print(f"  Sensor{zm.index + 1}: zones={list(zm.zones)}  (mask=0b{zm.mask:07b})")
+    print("sub-sensor timing (presence/absence seconds):")
+    for t in config.presence_absence_times:
+        print(f"  Sensor{t.index + 1}: presence={t.presence_seconds}s  absence={t.absence_seconds}s")
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -65,6 +95,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "  read               connect to --address and print decoded config\n"
             "  set-sensitivity N  set radar sensitivity 1=LOW 2=MED 3=HIGH 4=CUSTOM\n"
             "  set-zone P0..P6    write all 7 zone 'trigger,maintain' pairs\n"
+            "  set-subsensor-zones Z1 Z2 Z3   assign zones (0-6) to Sensor1/2/3\n"
+            "  set-subsensor-timing T1 T2 T3  set Sensor1/2/3 presence/absence seconds\n"
             "  calibrate          start space-learning; keep the link alive and wait\n"
             "                     for the tag62 result push (up to ~3 min)\n"
             "\n"
@@ -157,6 +189,36 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "the link alive, and wait for the tag62 result push (success/failure).",
     )
 
+    p_sensor_zones = sub.add_parser(
+        "set-subsensor-zones",
+        help="Assign zones to Sensor1/2/3 (tag48 segment map).",
+        description="Write tag48: which zones (0-6) feed each of the 3 sub-sensors. "
+        "Give exactly 3 comma-separated zone-index lists (e.g. '0,1,2' or '' for none), "
+        "one per sub-sensor, in Sensor1/2/3 order.",
+    )
+    p_sensor_zones.add_argument(
+        "zones",
+        type=_parse_zone_list,
+        nargs=3,
+        metavar="Z,Z,...",
+        help="Zone indices (0-6) assigned to this sub-sensor, comma-separated (empty = none).",
+    )
+
+    p_sensor_timing = sub.add_parser(
+        "set-subsensor-timing",
+        help="Set Sensor1/2/3 presence/absence durations (tag49).",
+        description="Write tag49: each sub-sensor's (presence, absence) duration in "
+        "seconds. Give exactly 3 'presence_secs,absence_secs' pairs, one per sub-sensor, "
+        "in Sensor1/2/3 order.",
+    )
+    p_sensor_timing.add_argument(
+        "timings",
+        type=_parse_timing_pair,
+        nargs=3,
+        metavar="PRESENCE,ABSENCE",
+        help="Presence/absence duration in seconds for this sub-sensor (e.g. 0,30).",
+    )
+
     p_dnd = sub.add_parser(
         "set-dnd",
         help="Set the do-not-disturb toggle (tag32).",
@@ -229,6 +291,12 @@ async def _run_command(args: argparse.Namespace) -> int:
             print("starting auto-calibration; this can take up to ~3 minutes...")
             ok = await device.start_auto_calibration()
             print("calibration succeeded" if ok else "calibration reported failure")
+        elif args.command == "set-subsensor-zones":
+            await device.set_subsensor_zones(args.zones, timeout=args.timeout)
+            print(f"sub-sensor zone assignment updated: {args.zones}")
+        elif args.command == "set-subsensor-timing":
+            await device.set_subsensor_timing(args.timings, timeout=args.timeout)
+            print(f"sub-sensor presence/absence timing updated: {args.timings}")
         elif args.command == "set-dnd":
             await device.set_dnd(bool(args.state), timeout=args.timeout)
             print(f"DND set to {bool(args.state)}")

@@ -3,7 +3,7 @@ No BLE hardware needed."""
 
 from __future__ import annotations
 
-from ms605.cli.ble import _parse_zone_pair, build_arg_parser
+from ms605.cli.ble import _parse_timing_pair, _parse_zone_list, _parse_zone_pair, build_arg_parser
 
 
 def test_scan_and_read_subcommands_parse():
@@ -37,3 +37,40 @@ def test_new_subcommands_parse():
         ["--address", "AA:BB", "set-zone-enable", "1", "1", "1", "1", "1", "1", "0"]
     )
     assert zone_enable.flags == [1, 1, 1, 1, 1, 1, 0]
+
+
+def test_set_subsensor_zones_and_timing_parse():
+    parser = build_arg_parser()
+    zones = parser.parse_args(
+        ["--address", "AA:BB", "set-subsensor-zones", "0,1,2", "", "5,6"]
+    )
+    assert zones.zones == [[0, 1, 2], [], [5, 6]]
+    timing = parser.parse_args(
+        ["--address", "AA:BB", "set-subsensor-timing", "0,30", "5,60", "10,120"]
+    )
+    assert timing.timings == [(0, 30), (5, 60), (10, 120)]
+
+
+def test_timing_pair_parsing_rejects_bad_input():
+    import argparse
+
+    import pytest
+
+    assert _parse_timing_pair("0,30") == (0, 30)
+    with pytest.raises(argparse.ArgumentTypeError):
+        _parse_timing_pair("0")
+    with pytest.raises(argparse.ArgumentTypeError):
+        _parse_timing_pair("a,b")
+
+
+def test_zone_list_parsing():
+    import argparse
+
+    import pytest
+
+    assert _parse_zone_list("") == []
+    assert _parse_zone_list("0,1,2") == [0, 1, 2]
+    with pytest.raises(argparse.ArgumentTypeError):
+        _parse_zone_list("7")
+    with pytest.raises(argparse.ArgumentTypeError):
+        _parse_zone_list("a")

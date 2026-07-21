@@ -26,6 +26,8 @@ NEW_METHODS = [
     "read_sub_sensor_status",
     "set_zone_enable",
     "set_subsensor_config",
+    "set_subsensor_zones",
+    "set_subsensor_timing",
     "read_pir_state",
     "set_dnd",
     "read_dnd",
@@ -33,6 +35,7 @@ NEW_METHODS = [
     "read_sample_interval",
     "read_presence_history",
     "read_light_history",
+    "remove_push_handler",
 ]
 
 
@@ -49,3 +52,17 @@ def test_driver_exposes_new_protocol_coverage():
 def test_construction_does_not_touch_the_radio():
     ms = MS605("AA:BB:CC:DD:EE:FF")
     assert ms.is_connected is False
+
+
+def test_remove_push_handler_undoes_add_and_is_safe_when_absent():
+    ms = MS605("AA:BB:CC:DD:EE:FF")
+
+    def handler(_frame):
+        pass
+
+    ms.remove_push_handler(handler)  # never added -- must not raise
+    ms.add_push_handler(handler)
+    assert handler in ms._push_handlers
+    ms.remove_push_handler(handler)
+    assert handler not in ms._push_handlers
+    ms.remove_push_handler(handler)  # already removed -- must not raise
