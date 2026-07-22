@@ -1,73 +1,30 @@
 """ms605.cli._shared -- helpers shared by the MS605 CLIs.
 
-`ainput`/`_prompt` provide non-blocking interactive input for cli.py.
 `discover_and_select`/`connect_with_retry`/`LiveLink` implement the
 single-device, button-press-aware connect flow used by the interactive app and
 one-shot subcommands (and by tools/debug_zone_write.py) -- not by the
 `ms605 calibrate` batch path, which manages several devices at once with its
 own pooling logic (see run_batch_calibration in cli.py).
+
+The low-level `ainput` primitive lives in ms605.cli._ui (the presentation
+layer) and is re-exported here for the callers that still import it from
+_shared; new prompts should use the styled _ui.select/checkbox/confirm widgets.
 """
 
 from __future__ import annotations
 
 import asyncio
-import threading
 from typing import TYPE_CHECKING
 
 from ms605 import MS605, MS605Error
+from ms605.cli import _ui
+from ms605.cli._ui import ainput
 from ms605.discovery import friendly_ble_error
 
 if TYPE_CHECKING:
     from bleak.backends.device import BLEDevice
 
-
-async def ainput(prompt: str = "") -> str:
-    """Async input() that stays cancellable -- so Ctrl-C works at any prompt.
-
-    A blocking readline() cannot be interrupted, and the previous
-    `run_in_executor(None, ...)` implementation left that read parked on the
-    *default* thread pool. On Ctrl-C, asyncio.run's shutdown then blocked trying
-    to join that still-reading worker, so the interrupt only took effect after
-    the user pressed Enter (the exact symptom this fixes).
-
-    Here the read runs on a throwaway *daemon* thread that resolves a plain
-    asyncio.Future. Cancelling the await (task cancellation / KeyboardInterrupt)
-    completes immediately and simply abandons the daemon thread -- daemon
-    threads never block interpreter exit, and the process hard-exits (see
-    cli.main) which reaps it. The event loop keeps running throughout, so notify
-    callbacks / keep-alives still fire while we wait for input."""
-    loop = asyncio.get_running_loop()
-    result: asyncio.Future[str] = loop.create_future()
-
-    def _deliver(setter, payload) -> None:
-        # Hop back onto the loop thread; the loop may already be closing on
-        # shutdown, in which case there is nothing left to deliver to.
-        def _apply() -> None:
-            if not result.done():
-                setter(payload)
-
-        try:
-            loop.call_soon_threadsafe(_apply)
-        except RuntimeError:
-            pass
-
-    def _worker() -> None:
-        try:
-            value = _prompt(prompt)
-        except BaseException as exc:  # noqa: BLE001 - hand any failure to the awaiter
-            _deliver(result.set_exception, exc)
-        else:
-            _deliver(result.set_result, value)
-
-    threading.Thread(target=_worker, name="ms605-stdin", daemon=True).start()
-    return await result
-
-
-def _prompt(text: str) -> str:
-    try:
-        return input(text)
-    except EOFError:
-        return ""
+__all__ = ["ainput", "LiveLink", "connect_with_retry", "discover_and_select"]
 
 
 async def discover_and_select(
@@ -98,52 +55,49 @@ async def discover_and_select(
     attempt = 0
     while True:
         attempt += 1
-        print(f"\n🔍 MS605 검색 중... (스캔 {scan_secs:.0f}s, 시도 {attempt})")
-        devices = await MS605.scan(timeout=scan_secs)
+        with _ui.status(f"MS605 검색 중... (스캔 {scan_secs:.0f}s, 시도 {attempt})"):
+            devices = await MS605.scan(timeout=scan_secs)
 
         # 1) a specific device was requested: take it the instant it appears,
         #    no matter how many others are around; otherwise keep scanning.
         if want is not None:
             for dev in devices:
                 if _is_target(dev):
-                    print(f"\n➡️  지정 기기 자동 선택: {dev.name or '(이름없음)'} {dev.address}")
+                    _ui.success(f"지정 기기 자동 선택: [brand]{dev.name or '(이름없음)'}[/] [addr]{dev.address}[/]")
                     return dev
             if devices:
-                print(f"\n발견된 MS605 {len(devices)}개 중 지정 기기({prefer_address})는 아직 없음 — 재검색:")
+                _ui.muted(f"발견된 {len(devices)}개 중 지정 기기({prefer_address})는 아직 없음 — 재검색:")
                 for dev in devices:
-                    print(f"     - {dev.name or '(이름없음)':<20} {dev.address}")
+                    _ui.muted(f"     - {dev.name or '(이름없음)'}  {dev.address}")
             else:
-                print(f"  → 지정 기기({prefer_address})가 안 보입니다. 버튼을 눌러 광고 모드로 전환한 뒤 기다려주세요.")
+                _ui.warn(f"지정 기기({prefer_address})가 안 보입니다. 버튼을 눌러 광고 모드로 전환한 뒤 기다려주세요.")
             continue
 
         # 2) no specific target: auto-pick only when unambiguous (a single
-        #    device). With several advertising, always show the numbered menu so
-        #    the user chooses -- even in one-shot mode (matches the app).
+        #    device). With several advertising, always show the menu so the user
+        #    chooses -- even in one-shot mode (matches the app).
         if devices:
-            print(f"\n발견된 MS605 디바이스 {len(devices)}개:")
-            for idx, dev in enumerate(devices):
-                rssi = getattr(dev, "rssi", None)
-                rssi_s = f"{rssi} dBm" if isinstance(rssi, int) else "?"
-                print(f"  [{idx}] {dev.name or '(이름없음)':<20} {dev.address}   RSSI {rssi_s}")
             if auto_select and len(devices) == 1:
                 dev = devices[0]
-                print(f"\n➡️  기기 1개 자동 선택: [0] {dev.name or '(이름없음)'} {dev.address}")
+                _ui.success(f"기기 1개 자동 선택: [brand]{dev.name or '(이름없음)'}[/] [addr]{dev.address}[/]")
                 return dev
             if auto_select:
-                print(
-                    "  (여러 기기가 감지됨 — 번호를 선택하세요. "
-                    "'--address <주소>' 로 다음부터 바로 지정할 수 있습니다.)"
-                )
-            print("  [r] 다시 검색")
-            choice = (await ainput("\n제어할 디바이스 번호 선택: ")).strip().lower()
-            if choice == "r":
+                _ui.muted("여러 기기가 감지됨 — 선택하세요. ('--address <주소>' 로 다음부터 바로 지정 가능)")
+            options = [(_fmt_device_choice(dev), dev) for dev in devices]
+            options.append(("↻  다시 검색", "__rescan__"))
+            chosen = await _ui.select("제어할 MS605 디바이스를 선택하세요", options)
+            if chosen == "__rescan__":
                 continue
-            if choice.isdigit() and 0 <= int(choice) < len(devices):
-                return devices[int(choice)]
-            print("잘못된 입력입니다.")
-            continue
-        print("  → MS605가 안 보입니다. 디바이스 버튼을 눌러 광고(페어링) 모드로 전환한 뒤 기다려주세요.")
-        print("    (Meross 앱이 연결 중이면 종료/백그라운드 처리 — BLE는 한 번에 하나만 연결됩니다.)")
+            return chosen
+        _ui.warn("MS605가 안 보입니다. 디바이스 버튼을 눌러 광고(페어링) 모드로 전환한 뒤 기다려주세요.")
+        _ui.muted("  (Meross 앱이 연결 중이면 종료/백그라운드 — BLE는 한 번에 하나만 연결됩니다.)")
+
+
+def _fmt_device_choice(dev: BLEDevice) -> str:
+    """One-line label for a scanned device in a selection menu."""
+    rssi = getattr(dev, "rssi", None)
+    rssi_s = f"{rssi} dBm" if isinstance(rssi, int) else "?"
+    return f"{dev.name or '(이름없음)':<22} {dev.address}   RSSI {rssi_s}"
 
 
 async def connect_with_retry(device: BLEDevice, scan_secs: float, connect_timeout: float) -> MS605:
@@ -154,15 +108,15 @@ async def connect_with_retry(device: BLEDevice, scan_secs: float, connect_timeou
     while True:
         ms = MS605(device)
         try:
-            print(f"\n🔗 연결 시도: {device.name or ''} {device.address} ...")
-            await ms.connect(timeout=connect_timeout)
-            print("✅ 연결 성공!")
+            with _ui.status(f"연결 시도: {device.name or ''} {device.address} ..."):
+                await ms.connect(timeout=connect_timeout)
+            _ui.success("연결 성공!")
             return ms
         except (MS605Error, Exception) as exc:  # noqa: BLE001 - surface any BLE failure
-            print(f"   ✗ {friendly_ble_error(exc, target)}")
+            _ui.error(friendly_ble_error(exc, target))
             if first:
-                print("\n👉 디바이스의 버튼을 한 번 눌러 BLE 연결 모드로 전환해주세요.")
-                print("   버튼을 누르면 자동으로 다시 연결을 시도합니다. (Ctrl-C 로 중단)")
+                _ui.warn("디바이스의 버튼을 한 번 눌러 BLE 연결 모드로 전환해주세요.")
+                _ui.muted("   버튼을 누르면 자동으로 다시 연결을 시도합니다. (Ctrl-C 로 중단)")
                 first = False
             # keep trying: rescan (device may re-advertise a fresh handle after
             # the button press), then reconnect.
@@ -175,7 +129,7 @@ async def connect_with_retry(device: BLEDevice, scan_secs: float, connect_timeou
                 if d.address == target:
                     device = d
                     break
-            print("   ...재시도 중 (버튼 눌러주세요)")
+            _ui.muted("   ...재시도 중 (버튼 눌러주세요)")
 
 
 class LiveLink:
@@ -205,14 +159,15 @@ class LiveLink:
         """Guarantee a live link before a device operation; reconnect if not."""
         if self.ms.is_connected:
             return
-        print("\n⚠️  BLE 연결이 끊어져 있습니다 (기기가 유휴 상태로 링크를 종료). 재연결합니다...")
+        _ui.warn("BLE 연결이 끊어져 있습니다 (기기가 유휴 상태로 링크를 종료). 재연결합니다...")
         target = self.device.address
         first = True
         while True:
             # rescan first: CoreBluetooth may advertise a fresh handle after the
             # button press, and reusing a stale one just fails again.
             try:
-                found = await MS605.scan(timeout=self.scan_secs)
+                with _ui.status("재연결용 재검색 중..."):
+                    found = await MS605.scan(timeout=self.scan_secs)
             except Exception:  # noqa: BLE001
                 found = []
             for d in found:
@@ -220,14 +175,15 @@ class LiveLink:
                     self.device = d
                     break
             try:
-                await self.ms.reconnect(device=self.device, timeout=self.connect_timeout)
-                print("✅ 재연결 성공!\n")
+                with _ui.status("재연결 시도 중..."):
+                    await self.ms.reconnect(device=self.device, timeout=self.connect_timeout)
+                _ui.success("재연결 성공!")
                 return
             except (MS605Error, Exception) as exc:  # noqa: BLE001 - surface any BLE failure
-                print(f"   ✗ {friendly_ble_error(exc, target)}")
+                _ui.error(friendly_ble_error(exc, target))
                 if first:
-                    print("\n👉 디바이스 버튼을 한 번 눌러 BLE 연결 모드로 전환해주세요.")
-                    print("   버튼을 누르면 자동으로 다시 연결합니다. (Ctrl-C 로 중단)")
+                    _ui.warn("디바이스 버튼을 한 번 눌러 BLE 연결 모드로 전환해주세요.")
+                    _ui.muted("   버튼을 누르면 자동으로 다시 연결합니다. (Ctrl-C 로 중단)")
                     first = False
                 await asyncio.sleep(2.0)
-                print("   ...재시도 중 (버튼 눌러주세요)")
+                _ui.muted("   ...재시도 중 (버튼 눌러주세요)")
