@@ -21,6 +21,7 @@ from .errors import (
     MS605TimeoutError,
 )
 from .models import (
+    ConfigProfile,
     LightSample,
     MS605Config,
     PresenceHistoryRecord,
@@ -42,6 +43,7 @@ from .protocol import (
 __all__ = [
     "MS605",
     "MS605Config",
+    "ConfigProfile",
     "MS605Error",
     "FrameError",
     "MS605TimeoutError",

@@ -36,6 +36,7 @@ NEW_METHODS = [
     "read_presence_history",
     "read_light_history",
     "remove_push_handler",
+    "apply_profile",
 ]
 
 
