@@ -11,7 +11,7 @@ own pooling logic (see run_batch_calibration in cli.py).
 from __future__ import annotations
 
 import asyncio
-import sys
+import threading
 from typing import TYPE_CHECKING
 
 from ms605 import MS605, MS605Error
@@ -22,13 +22,45 @@ if TYPE_CHECKING:
 
 
 async def ainput(prompt: str = "") -> str:
-    """Non-blocking input() so the event loop (notify callbacks) keeps running."""
+    """Async input() that stays cancellable -- so Ctrl-C works at any prompt.
+
+    A blocking readline() cannot be interrupted, and the previous
+    `run_in_executor(None, ...)` implementation left that read parked on the
+    *default* thread pool. On Ctrl-C, asyncio.run's shutdown then blocked trying
+    to join that still-reading worker, so the interrupt only took effect after
+    the user pressed Enter (the exact symptom this fixes).
+
+    Here the read runs on a throwaway *daemon* thread that resolves a plain
+    asyncio.Future. Cancelling the await (task cancellation / KeyboardInterrupt)
+    completes immediately and simply abandons the daemon thread -- daemon
+    threads never block interpreter exit, and the process hard-exits (see
+    cli.main) which reaps it. The event loop keeps running throughout, so notify
+    callbacks / keep-alives still fire while we wait for input."""
     loop = asyncio.get_running_loop()
-    return (
-        (await loop.run_in_executor(None, sys.stdin.readline)).rstrip("\n")
-        if not prompt
-        else (await loop.run_in_executor(None, _prompt, prompt))
-    )
+    result: asyncio.Future[str] = loop.create_future()
+
+    def _deliver(setter, payload) -> None:
+        # Hop back onto the loop thread; the loop may already be closing on
+        # shutdown, in which case there is nothing left to deliver to.
+        def _apply() -> None:
+            if not result.done():
+                setter(payload)
+
+        try:
+            loop.call_soon_threadsafe(_apply)
+        except RuntimeError:
+            pass
+
+    def _worker() -> None:
+        try:
+            value = _prompt(prompt)
+        except BaseException as exc:  # noqa: BLE001 - hand any failure to the awaiter
+            _deliver(result.set_exception, exc)
+        else:
+            _deliver(result.set_result, value)
+
+    threading.Thread(target=_worker, name="ms605-stdin", daemon=True).start()
+    return await result
 
 
 def _prompt(text: str) -> str:
