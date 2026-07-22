@@ -87,3 +87,18 @@ def test_zone_threshold_table_marks_changed_columns():
 
 def test_select_empty_options_returns_none():
     assert _run(_ui.select("nothing", [])) is None
+
+
+def test_meter_bar_length_and_tick_position():
+    bar = _ui.meter(50, 25, scale=100, width=20)
+    assert len(bar.plain) == 20
+    # threshold 25/100 -> tick at index 5; value 50/100 -> 10 filled cells
+    assert bar.plain[5] == "┃"
+    assert bar.plain.count("█") == 9  # cell 5 is the tick, not a fill block
+    assert bar.plain.count("─") == 10
+
+
+def test_meter_clamps_out_of_range_values():
+    # value above scale fills fully; still exactly `width` cells, no overflow
+    bar = _ui.meter(999, 10, scale=100, width=16)
+    assert len(bar.plain) == 16

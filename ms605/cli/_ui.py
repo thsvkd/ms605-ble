@@ -29,6 +29,7 @@ from typing import Any
 
 import questionary
 from rich.console import Console
+from rich.live import Live
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
@@ -94,6 +95,11 @@ _THEME = Theme(
         "muted": "grey58",
         "key": "bold cyan",
         "addr": "grey62",
+        # live-monitor bar meters
+        "bar.fill": "green",
+        "bar.active": "bold red",
+        "bar.tick": "bold yellow",
+        "bar.empty": "grey30",
     }
 )
 console = Console(theme=_THEME, highlight=False)
@@ -306,3 +312,30 @@ def zone_threshold_table(
                 m = f"[ok]{maint}*[/]"
         table.add_row(str(idx), dist, t, m)
     return table
+
+
+# --- live monitor (real-time bar meters) ----------------------------------
+def meter(value: int, threshold: int, *, scale: float, width: int = 24, active: bool = False) -> Text:
+    """A horizontal bar for `value` on a 0..`scale` axis, with a tick at
+    `threshold`. Fill turns red while the zone is trigger-active. Values are
+    clamped into range (radar energy is small and non-negative in normal use)."""
+    scale = max(float(scale), 1.0)
+    filled = max(0, min(width, round(width * value / scale)))
+    tick = max(0, min(width - 1, round(width * threshold / scale)))
+    fill_style = "bar.active" if active else "bar.fill"
+    bar = Text()
+    for i in range(width):
+        if i == tick:
+            bar.append("┃", style="bar.tick")
+        elif i < filled:
+            bar.append("█", style=fill_style)
+        else:
+            bar.append("─", style="bar.empty")
+    return bar
+
+
+def make_live(renderable: Any):
+    """A transient, manually-refreshed Live region for the real-time monitor --
+    updates are driven by device pushes (live.update(..., refresh=True)), not a
+    background clock, and the region is cleared on exit (transient)."""
+    return Live(renderable, console=console, auto_refresh=False, transient=True)
