@@ -135,11 +135,18 @@ async def connect_with_retry(device: BLEDevice, scan_secs: float, connect_timeou
 class LiveLink:
     """Keeps a live MS605 GATT link across the interactive session.
 
-    The MS605 drops idle BLE links, so between menu selections (or while the
-    user is typing values) the connection can silently go away -- bleak then
-    reports it as "Service Discovery has not been performed yet". `ensure()`
-    re-establishes the link on demand (rescanning for a fresh handle and
-    prompting for the button) so every device operation runs on a live link.
+    The MS605 drops a link whose central->device direction goes idle, so
+    without traffic the connection silently dies while we wait for menu input,
+    while the user types values, or while the live monitor only *listens* to
+    tag55 pushes (the device stops streaming once it drops us). Two mechanisms
+    keep it up:
+
+    * `start_keepalive()` runs a background ping loop for the whole session
+      (the app itself pings every ~20 s), so idle waits no longer drop the link
+      -- this is what keeps the live monitor's graph updating.
+    * `ensure()` still re-establishes the link on demand (rescan + button
+      prompt) as a fallback if it did drop, before any device operation.
+
     The same MS605 object is reused across reconnects, so registered push
     handlers survive and callers can keep their `link.ms` reference."""
 
@@ -149,11 +156,45 @@ class LiveLink:
         device: BLEDevice,
         scan_secs: float,
         connect_timeout: float,
+        *,
+        keepalive_interval: float = 15.0,
     ) -> None:
         self.ms = ms
         self.device = device
         self.scan_secs = scan_secs
         self.connect_timeout = connect_timeout
+        self.keepalive_interval = keepalive_interval
+        self._keepalive_task: asyncio.Task | None = None
+
+    def start_keepalive(self) -> None:
+        """Begin the background ping loop (idempotent). Keeps the link alive
+        through every idle wait until stop_keepalive() / disconnect."""
+        if self._keepalive_task is None:
+            self._keepalive_task = asyncio.create_task(self._keepalive_loop())
+
+    async def stop_keepalive(self) -> None:
+        task = self._keepalive_task
+        self._keepalive_task = None
+        if task is not None:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+    async def _keepalive_loop(self) -> None:
+        # Ping the central->device direction periodically so the MS605 does not
+        # drop the idle link. Pings serialise with real operations via the
+        # driver's send lock; a failed ping just means the link is already gone
+        # (ensure() recovers it on the next operation), so we swallow and retry.
+        while True:
+            await asyncio.sleep(self.keepalive_interval)
+            if not self.ms.is_connected:
+                continue
+            try:
+                await self.ms.ping()
+            except Exception:  # noqa: BLE001 - link dropped; ensure() recovers on next op
+                pass
 
     async def ensure(self) -> None:
         """Guarantee a live link before a device operation; reconnect if not."""
