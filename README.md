@@ -28,7 +28,8 @@ captures, real device profiles, or other private research data.
   time synchronization, sub-sensor settings, and live output.
 - Single- and multi-sensor auto-calibration with keep-alive handling.
 - Configuration profiles for selective backup and cloning.
-- Pure frame/model modules and a fully offline synthetic test suite.
+- Pure frame/model modules and a radio-free test suite using synthetic fixtures
+  plus non-identifying interoperability constants.
 - Standalone research tools for scanning, GATT enumeration, notification
   logging, controlled writes, and offline btsnoop decoding.
 - A privacy- and IP-safe reverse-engineering workflow documented below.
@@ -98,9 +99,10 @@ asyncio.run(main())
 | `ms605-driver` | Low-level one-shot driver commands | Implemented |
 
 Configuration profiles can contain device names or addresses. Treat profile
-JSON and calibration logs as private local data; the repository ignores the
-standard local filenames, but contributors remain responsible for reviewing
-every staged file.
+JSON and calibration logs as private local data. Save profiles under the
+ignored `private-profiles/` directory or outside the checkout; arbitrary
+`--save` paths are **not** ignored automatically. Contributors remain
+responsible for reviewing every staged file.
 
 ## Repository layout
 
@@ -112,14 +114,14 @@ every staged file.
 | [`ms605/cli/`](ms605/cli/) | Interactive and low-level CLIs. |
 | [`docs/SPEC.md`](docs/SPEC.md) | Sanitized public protocol contract and confidence boundaries. |
 | [`tools/`](tools/) | Independent research and diagnostic utilities. |
-| [`tests/`](tests/) | Offline tests built from synthetic values only. |
+| [`tests/`](tests/) | Radio-free tests using synthetic fixtures and fixed, non-identifying protocol constants. |
 
 The public evidence chain is intentionally small:
 
 ```text
 private authorized observation
   -> independently written behavioral specification
-  -> original implementation
+  -> independently written implementation
   -> synthetic regression tests
 ```
 
@@ -179,6 +181,13 @@ artifact. Store it outside the repository if it includes local paths,
 timestamps, account context, or device identifiers. Never invent a version or
 hash for an older artifact; reacquire and repeat the analysis instead.
 
+The original analysis ledger is not published in this sanitized repository, so
+exact historical static-analysis reproduction is currently unavailable. A
+contributor can reproduce the method with an independently acquired authorized
+artifact, but must not claim it is the same artifact without matching published
+version and SHA-256 metadata. Future research should publish those safe ledger
+fields when known, without publishing the binary or local paths.
+
 ### 3. Use static analysis only to derive interface facts
 
 Static analysis is a map of behavior, not source material for this project.
@@ -189,7 +198,7 @@ Trace one user action at a time:
 3. identify serialization, integrity checking, chunking, and response routing;
 4. record only interface facts such as field order, width, byte order, and
    state transitions;
-5. restate those facts in original language in [`docs/SPEC.md`](docs/SPEC.md).
+5. restate those facts in independent prose in [`docs/SPEC.md`](docs/SPEC.md).
 
 Do not translate or paste vendor method bodies, comments, class layouts, or
 decompiler output. A public implementation must be understandable and
@@ -258,12 +267,13 @@ For each candidate:
 - vary the proposed covered byte range;
 - verify the standard algorithm check vector when one exists;
 - flip one byte and confirm the check fails;
-- generate a complete frame with an original encoder;
+- generate a complete frame with an independently written encoder;
 - parse the generated frame through a separate code path.
 
 For the current public specification, CRC-16/CCITT-FALSE must produce `0x29B1`
-for ASCII `123456789`. That standard vector proves the local implementation of
-the algorithm; it does not by itself prove device compatibility.
+for ASCII `123456789`. That standard vector is a canonical conformance check
+for the local algorithm; it does not by itself prove correctness for every
+input or device compatibility.
 
 ### 8. Establish semantics through an action matrix
 
@@ -286,15 +296,16 @@ ranges and the smallest experiment that can discriminate between hypotheses.
 The implementation boundary is:
 
 ```text
-observation notes -> behavioral spec -> original protocol code -> driver -> CLI
+observation notes -> behavioral spec -> independently written protocol code -> driver -> CLI
 ```
 
 The runtime package must not import a private artifact or require a vendor
 binary. The tools under [`tools/`](tools/) intentionally do not import the
 runtime package, allowing shared framing and checksum invariants to be checked
-through a second implementation path. Differences between a low-level tool
-and the runtime command contract must be explicit rather than silently
-normalized.
+through a second implementation path. This can expose implementation
+divergence; it is not independent authorship or external device evidence.
+Differences between a low-level tool and the runtime command contract must be
+explicit rather than silently normalized.
 
 Keep protocol parsing pure and separate from BLE I/O. Preserve unknown TLVs in
 parsed frames so new firmware does not force speculative decoding.
@@ -306,15 +317,17 @@ vector can be committed:
 
 1. replace message IDs and counters;
 2. replace all timestamps with fixed synthetic epochs;
-3. replace names, addresses, UUIDs, device IDs, and account-like values;
+3. replace names, addresses, device/session-specific UUIDs (including
+   CoreBluetooth identifiers), device IDs, and account-like values while
+   retaining protocol UUID constants required for interoperability;
 4. replace sensor readings and configuration values with deliberately chosen
    synthetic patterns;
 5. rebuild lengths and CRCs from scratch;
 6. verify round trips and negative cases offline;
-7. confirm that no unchanged neighboring bytes came from the original session.
+7. confirm that no unchanged neighboring bytes came from the private session.
 
 Masking a few visible fields inside a real packet is insufficient: checksums,
-padding, timing, and adjacent values may still identify the original session.
+padding, timing, and adjacent values may still identify the private session.
 
 The public suite covers standard CRC behavior, frame round trips, malformed
 input, checksum failure reporting, chunking/reassembly, message-ID rollover,
@@ -326,7 +339,7 @@ The public repository uses three labels:
 
 | Label | Meaning |
 | --- | --- |
-| **Implemented / repository-verified** | The behavior exists in code and is exercised by synthetic offline tests. This is not a universal hardware-compatibility claim. |
+| **Implemented / repository-verified** | The behavior exists in code and is exercised by synthetic fixtures or non-identifying protocol constants. This is not a universal hardware-compatibility claim. |
 | **Experimental** | The code expresses a plausible model, but public evidence does not establish device behavior, semantics, pagination, or firmware coverage. |
 | **Unknown / out of scope** | Evidence is absent or conflicting, or the behavior requires an excluded workflow. |
 
@@ -358,7 +371,7 @@ the claim remains experimental.
 Raw research artifacts are temporary and are not archived in a Git branch.
 The completion gate for one finding is:
 
-1. record the minimal derived interface fact in original prose;
+1. record the minimal derived interface fact in independent prose;
 2. implement it without copying vendor code;
 3. add a synthetic positive and, where useful, negative test;
 4. record remaining ambiguity and compatibility limits;
@@ -385,7 +398,7 @@ proprietary data.
 
 - Independently written protocol prose and diagrams.
 - Interface constants necessary for interoperability.
-- Original source code with no dependency on private evidence.
+- Independently written source code with no dependency on private evidence.
 - Synthetic frames with regenerated lengths and integrity fields.
 - Aggregate, non-identifying observations and explicit confidence labels.
 - Reproduction steps that require contributors to acquire their own authorized
@@ -408,7 +421,7 @@ contaminated history back.
 ## Development and verification
 
 ```bash
-uv sync
+uv sync --frozen
 uv run pytest -q
 uv run ruff check .
 
@@ -419,9 +432,10 @@ uv run python tools/replay.py --self-test
 uv run python tools/btsnoop_att.py --self-test
 ```
 
-All tests and tool self-tests above are offline. Hardware validation is a
-separate, opt-in activity and must follow the isolation and data-handling rules
-in this README.
+After dependencies are available, all tests and tool self-tests above are
+network-free and radio-free. `uv sync --frozen` may access the package registry
+when the local cache is incomplete. Hardware validation is a separate, opt-in
+activity and must follow the isolation and data-handling rules in this README.
 
 When changing protocol behavior:
 
@@ -430,6 +444,13 @@ When changing protocol behavior:
 3. keep parsing/model logic independent from radio I/O;
 4. run the complete offline verification set;
 5. inspect the staged diff for private or copied material.
+
+## Release and license status
+
+This repository does not yet contain a `LICENSE` file. Until the maintainers
+choose and add a license, the source is reviewable but no general reuse license
+is granted; it must not be presented as release-ready open source. License
+selection and matching package metadata are required before public release.
 
 ## Compatibility and non-affiliation
 

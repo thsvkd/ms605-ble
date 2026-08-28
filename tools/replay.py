@@ -12,18 +12,18 @@ payloads you understand (start with read-only enumerate.py / notify_logger.py
 first).
 
 Usage:
-    venv/bin/python scripts/replay.py --help
+    uv run python tools/replay.py --help
     # MS605: set sensitivity HIGH, then start auto-calibration
-    venv/bin/python scripts/replay.py AA:BB:CC:DD:EE:FF \\
+    uv run python tools/replay.py AA:BB:CC:DD:EE:FF \\
         --char 99e7be30-0002-4c6b-98a2-70fcb3471a72 --ms605-tlv 61 03
-    venv/bin/python scripts/replay.py AA:BB:CC:DD:EE:FF \\
+    uv run python tools/replay.py AA:BB:CC:DD:EE:FF \\
         --char 99e7be30-0002-4c6b-98a2-70fcb3471a72 --ms605-tlv 52 04 --listen-timeout 200
     # send a prebuilt synthetic MS605 frame, or explicitly supplied bytes
-    venv/bin/python scripts/replay.py AA:BB:CC:DD:EE:FF \\
+    uv run python tools/replay.py AA:BB:CC:DD:EE:FF \\
         --char 99e7be30-0002-4c6b-98a2-70fcb3471a72 --file /path/to/synthetic.frame
-    venv/bin/python scripts/replay.py AA:BB:CC:DD:EE:FF \\
+    uv run python tools/replay.py AA:BB:CC:DD:EE:FF \\
         --char 99e7be30-0002-4c6b-98a2-70fcb3471a72 --hex 55aac0...aa55
-    venv/bin/python scripts/replay.py --self-test
+    uv run python tools/replay.py --self-test
 """
 from __future__ import annotations
 

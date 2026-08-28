@@ -7,10 +7,10 @@ NOT open a GATT connection to anything. It is therefore safe to run at any
 time and does not require the target device's physical button to be pressed.
 
 Usage:
-    venv/bin/python scripts/scan.py --help
-    venv/bin/python scripts/scan.py --timeout 15
-    venv/bin/python scripts/scan.py --timeout 20 --json captures/scan.json
-    venv/bin/python scripts/scan.py --self-test
+    uv run python tools/scan.py --help
+    uv run python tools/scan.py --timeout 15
+    uv run python tools/scan.py --timeout 20 --json /path/to/private/scan.json
+    uv run python tools/scan.py --self-test
 """
 from __future__ import annotations
 
@@ -142,13 +142,13 @@ def self_test() -> int:
     assert synthetic[0].is_candidate, "MS605 advert should be flagged as candidate"
     ms605_reasons = " ".join(synthetic[0].meross_candidate_reasons)
     assert "99E7BE30-0001" in ms605_reasons, ms605_reasons
-    assert "STRONG" in ms605_reasons, ms605_reasons
+    assert "strong" in ms605_reasons.lower(), ms605_reasons
     assert f"0x{bc.MS605_SUBDEV_TYPE:02x}" in ms605_reasons, ms605_reasons
-    assert sum("STRONG" in r for r in synthetic[0].meross_candidate_reasons) >= 3, \
+    assert sum("strong" in r.lower() for r in synthetic[0].meross_candidate_reasons) >= 3, \
         synthetic[0].meross_candidate_reasons
     assert not synthetic[1].is_candidate, "unrelated headphones must not be flagged"
     assert synthetic[2].is_candidate, "legacy service UUID alone must still flag (as non-MS605)"
-    assert any("NOT the MS605" in r for r in synthetic[2].meross_candidate_reasons), \
+    assert any("not used by this MS605 driver" in r for r in synthetic[2].meross_candidate_reasons), \
         synthetic[2].meross_candidate_reasons
 
     table = format_table(synthetic)

@@ -13,6 +13,7 @@ cal_results/
 /captures/
 /docs/captures/
 /private-evidence/
+/private-profiles/
 /btsnoop_hci.log*
 /bugreport*
 /sysdiagnose*

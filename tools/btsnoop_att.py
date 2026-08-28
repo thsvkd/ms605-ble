@@ -17,10 +17,10 @@ control-channel reverse engineering:
 Prints a chronological timeline and dumps the same data as JSON.
 
 Usage:
-    venv/bin/python scripts/btsnoop_att.py --help
-    venv/bin/python scripts/btsnoop_att.py captures/btsnoop_hci.log
-    venv/bin/python scripts/btsnoop_att.py captures/btsnoop_hci.log --json captures/att_events.json
-    venv/bin/python scripts/btsnoop_att.py --self-test
+    uv run python tools/btsnoop_att.py --help
+    uv run python tools/btsnoop_att.py /path/to/private/btsnoop_hci.log
+    uv run python tools/btsnoop_att.py /path/to/private/btsnoop_hci.log --json /path/to/private/att_events.json
+    uv run python tools/btsnoop_att.py --self-test
 
 References for the on-disk/wire formats (no external library used):
   - btsnoop file format: https://fte.com/webhelpii/hcidump/appendix/appendix_a.htm

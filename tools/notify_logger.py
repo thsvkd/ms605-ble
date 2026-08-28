@@ -9,11 +9,11 @@ during a supervised session, immediately after the device owner has pressed
 the device's physical pairing/config button.
 
 Usage:
-    venv/bin/python scripts/notify_logger.py --help
-    venv/bin/python scripts/notify_logger.py AA:BB:CC:DD:EE:FF
-    venv/bin/python scripts/notify_logger.py AA:BB:CC:DD:EE:FF --duration 30
+    uv run python tools/notify_logger.py --help
+    uv run python tools/notify_logger.py AA:BB:CC:DD:EE:FF
+    uv run python tools/notify_logger.py AA:BB:CC:DD:EE:FF --duration 30
     # subscribe to the MS605 notify char and provoke a response with a write:
-    venv/bin/python scripts/notify_logger.py AA:BB:CC:DD:EE:FF \\
+    uv run python tools/notify_logger.py AA:BB:CC:DD:EE:FF \\
         --write 99e7be30-0002-4c6b-98a2-70fcb3471a72 55aac00006110161...
 """
 from __future__ import annotations

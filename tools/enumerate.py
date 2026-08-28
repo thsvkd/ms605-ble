@@ -8,9 +8,9 @@ the device's physical pairing/config button (the device only accepts GATT
 connections for a short window afterwards).
 
 Usage:
-    venv/bin/python scripts/enumerate.py --help
-    venv/bin/python scripts/enumerate.py AA:BB:CC:DD:EE:FF
-    venv/bin/python scripts/enumerate.py AA:BB:CC:DD:EE:FF --no-read --outdir gatt/
+    uv run python tools/enumerate.py --help
+    uv run python tools/enumerate.py AA:BB:CC:DD:EE:FF
+    uv run python tools/enumerate.py AA:BB:CC:DD:EE:FF --no-read --outdir /path/to/private/gatt/
 """
 from __future__ import annotations
 
