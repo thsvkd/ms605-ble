@@ -110,8 +110,8 @@ def self_test() -> int:
     """Exercise build_entry()/format_table() against synthetic advertisement
     data -- no adapter, no BLE I/O, no network."""
     synthetic = [
-        # Realistic MS605 advertisement: mfr-ID 0xFFFF with 0xC0 device-type
-        # byte + MRBL_ name prefix + the confirmed 99E7BE30-0001 service.
+        # Synthetic MS605-like advertisement: mfr-ID 0xFFFF with 0xC0
+        # candidate device-type byte + MRBL_ name prefix + configured service.
         build_entry(
             address="AA:BB:CC:DD:EE:01",
             name="MRBL_ab12",

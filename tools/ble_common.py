@@ -1,49 +1,15 @@
-"""
-ble_common.py -- shared helpers for the MS605 BLE reverse-engineering toolkit.
+"""Pure helpers for the standalone BLE analysis toolkit.
 
-Every function in this module is a pure function (no BLE I/O, no asyncio) so it
-can be exercised with synthetic inputs from a plain `python -c` call or a
-`--self-test` flag, without ever touching a radio or a physical device.
+This module intentionally does not import the installable ``ms605`` package,
+which gives the derived frame model a second implementation path. All helpers
+are radio-free and support synthetic self-tests. The public protocol contract
+and confidence boundaries live in ``docs/SPEC.md``; raw captures and vendor
+source are not repository inputs.
 
-Evidence sources baked into the constants below (see CAPTURE_PLAYBOOK.md /
-TOOLKIT_README.md / APK_PROTOCOL.md for the full trail):
-
-- MS605_* (the CONFIRMED MS605 protocol): recovered by static analysis of the
-  official Meross Android app (com.meross.meross 3.39.1), decompiled sources
-  in apk/j5/. The MS605 uses a SECOND, separate BLE stack (com.meross.ble2 /
-  Ble2ConnManager) -- NOT the legacy A00A/JSON one. Its GATT service is
-  99E7BE30-0001-4C6B-98A2-70FCB3471A72 (write -0002, notify -0003), and its
-  frame is a BINARY TLV envelope:
-      55AA | subdevType(1) | length(2 BE) | triggerSrc(1) | msgId(1)
-           | TLV[tag(1)|len(2 BE)|value]... | CRC16-CCITT-FALSE(2 BE) | AA55
-  subdevType = 0xC0 for MS605; triggerSrc = 0x11 on the wire; msgId rolls
-  1..255 (0 == unsolicited push). CRC16 is computed over [triggerSrc..last
-  attr byte]. No signing/MD5 on the BLE path (CRC16 integrity only). Every
-  example frame below was reproduced byte-for-byte by an independent
-  reimplementation of the app's serializer + CRC (see MS605 self-test).
-  Sensitivity = tag 61 (1=LOW/2=MED/3=HIGH/4=CUSTOM); detect mode /
-  space-learning = tag 52 (1=RADAR/2=RADAR+PIR/3=PIR+RADAR/4=SPACE_LEARNING,
-  i.e. auto-calibration); space-learning result pushed on notify tag 62.
-- MEROSS_LEGACY_* / packet framing: the OLDER stack (com.meross.ble /
-  Ble1ConnManager), used only by Meross Wi-Fi switches/plugs
-  (MSS.../MSL.../MRS...) -- confirmed NOT used by the MS605. Service 0000A00A,
-  write char 0000B002, notify char 0000B003, packet = 55AA + BE16 length +
-  ASCII JSON + BE32 CRC32(json) + AA55. Kept here only for annotating/decoding
-  legacy captures, and cross-checked against the open-source Fabi019/MerossBLE
-  project. NOTE both stacks share the 55AA.../...AA55 magic bytes but differ in
-  everything between them (JSON+CRC32 vs. TLV+CRC16).
-- MATTER_CHIPOBLE_*: the standard Matter/CHIP-over-BLE (BTP) commissioning
-  transport (service 0xFFF6, characteristics C1/C2/C3). The MS605 is a
-  Matter-over-Thread device and also exposes this service for the one-time
-  Matter fabric join -- but sensitivity/calibration ride the MS605_* TLV
-  service above, NOT Matter clusters or CHIPoBLE.
-- Meross has no Bluetooth SIG-registered company identifier (checked against
-  the official Bluetooth SIG assigned-numbers list; no "Meross" entry exists).
-  Per the decompiled scanner (BleNameSupportUtils.f), the MS605 advertises
-  manufacturer_data under company id 0xFFFF (65535) whose short-form TLV
-  device-type byte is 0xC0 -- this is the STRONG advertisement signal (plus
-  local-name prefixes RFBL_ / MRBL_). Chipset-vendor company IDs (e.g. Nordic
-  0x0059) remain a weak, non-authoritative fallback signal.
+The module recognizes three distinct transports: the MS605 binary TLV service,
+the older Meross JSON/CRC32 service used by other product generations, and the
+standard Matter CHIP-over-BLE commissioning service. Only the first is used by
+the MS605 configuration operations implemented by this project.
 """
 from __future__ import annotations
 
@@ -56,24 +22,20 @@ from dataclasses import dataclass, field
 # Known UUIDs
 # --------------------------------------------------------------------------
 
-# CONFIRMED MS605 BLE-config profile (com.meross.ble2 / Ble2ConnManager,
-# literal ctor args in apk/j5/.../Ble2ConnManager.java:14).
+# MS605 BLE configuration profile.
 MS605_SERVICE_UUID = "99e7be30-0001-4c6b-98a2-70fcb3471a72"
 MS605_WRITE_CHAR_UUID = "99e7be30-0002-4c6b-98a2-70fcb3471a72"
 MS605_NOTIFY_CHAR_UUID = "99e7be30-0003-4c6b-98a2-70fcb3471a72"
-# Device-type byte ("subdevType") identifying the MS605 in both the TLV
-# command frame and the advertisement short-form TLV (BleNameSupportUtils
-# maps byte 0xC0 <-> "ms605").
+# Device-type byte ("subdevType") in commands and advertisements.
 MS605_SUBDEV_TYPE = 0xC0
-# On-wire triggerSrc byte stamped by Ble2ConnManager.f0() just before send.
+# Outgoing-command trigger source.
 MS605_TRIGGER_SRC = 0x11
 # Advertisement manufacturer-data company id under which the MS605 broadcasts.
 MS605_ADV_COMPANY_ID = 0xFFFF
-# BLE local-name prefixes used by the MS605 generation (BleNameSupportUtils.c).
+# BLE local-name prefixes used by the MS605 generation.
 MS605_NAME_PREFIXES = ("RFBL_", "MRBL_")
 
-# Legacy Meross BLE Wi-Fi-provisioning profile (com.meross.ble / Ble1; used by
-# Meross Wi-Fi switches/plugs -- confirmed NOT used by the MS605).
+# Legacy Meross BLE Wi-Fi-provisioning profile; not used by this driver.
 MEROSS_LEGACY_SERVICE_UUID = "0000a00a-0000-1000-8000-00805f9b34fb"
 MEROSS_LEGACY_WRITE_CHAR_UUID = "0000b002-0000-1000-8000-00805f9b34fb"
 MEROSS_LEGACY_NOTIFY_CHAR_UUID = "0000b003-0000-1000-8000-00805f9b34fb"
@@ -169,9 +131,8 @@ def parse_hex_arg(text: str) -> bytes:
 
 def adv_mentions_ms605_subdev(manufacturer_data: dict[int, bytes] | None) -> bool:
     """True if the advertisement carries MS605 manufacturer data: company id
-    0xFFFF whose short-form-TLV device-type byte (first byte) is 0xC0. Mirrors
-    BleNameSupportUtils.f() (minus the CRC8 tail check, which we don't require
-    for a heuristic match). Never raises."""
+    0xFFFF whose candidate device-type byte (first byte) is 0xC0. This is a
+    discovery heuristic, not an identity proof. Never raises."""
     manufacturer_data = manufacturer_data or {}
     payload = manufacturer_data.get(MS605_ADV_COMPANY_ID)
     if not payload:
@@ -193,17 +154,16 @@ def is_meross_candidate(
     manufacturer_data = manufacturer_data or {}
     lowered_uuids = {u.lower() for u in service_uuids}
 
-    # --- Strong, CONFIRMED MS605 signals (com.meross.ble2) ---
+    # --- MS605-specific signals implemented by this repository ---
     if MS605_SERVICE_UUID in lowered_uuids:
         reasons.append(
-            "advertises the confirmed MS605 BLE-config service 99E7BE30-0001 "
-            "(STRONG: this is the MS605's own com.meross.ble2 GATT service)"
+            "advertises the repository's MS605 BLE-config service 99E7BE30-0001 "
+            "(strong candidate signal; verify the GATT profile after connecting)"
         )
     if adv_mentions_ms605_subdev(manufacturer_data):
         reasons.append(
             f"manufacturer_data company id 0x{MS605_ADV_COMPANY_ID:04x} with device-type "
-            f"byte 0x{MS605_SUBDEV_TYPE:02x} (STRONG: exactly the MS605 advertisement "
-            "signature per BleNameSupportUtils.f)"
+            f"byte 0x{MS605_SUBDEV_TYPE:02x} (strong candidate signal; not unique proof)"
         )
     if name and any(name.upper().startswith(p) for p in MS605_NAME_PREFIXES):
         reasons.append(
@@ -217,14 +177,13 @@ def is_meross_candidate(
     if MEROSS_LEGACY_SERVICE_UUID in lowered_uuids:
         reasons.append(
             "advertises the LEGACY Meross BLE-config service 0000A00A "
-            "(this is the Wi-Fi-switch/plug stack -- confirmed NOT the MS605's "
-            "protocol; flags a different Meross product line)"
+            "(a separate Wi-Fi-device transport, not used by this MS605 driver)"
         )
     if MATTER_CHIPOBLE_SERVICE_UUID in lowered_uuids:
         reasons.append(
             "advertises Matter/CHIPoBLE commissioning service 0000FFF6 "
-            "(weak signal: shared by ALL Matter-commissionable devices, "
-            "but consistent with the MS605 being Matter-over-Thread)"
+            "(weak signal shared by Matter-commissionable devices; not an "
+            "MS605 identity or configuration-protocol signal)"
         )
     for company_id in manufacturer_data:
         if company_id in _WEAK_VENDOR_HINT_IDS:
@@ -252,11 +211,11 @@ MAGIC_TAIL = b"\xaa\x55"
 
 
 # --------------------------------------------------------------------------
-# MS605 (com.meross.ble2) TLV protocol -- CONFIRMED from app decompilation.
+# MS605 TLV protocol as implemented by this repository.
 # Frame: 55AA | subdevType(1) | len(2 BE) | triggerSrc(1) | msgId(1)
 #             | TLV[tag(1)|len(2 BE)|value]... | CRC16(2 BE) | AA55
 # len covers [triggerSrc .. last attr byte]; CRC16 is computed over the same
-# range. Mirrors TLVUtils.j()/d() in apk/j5/.../ble2/TLVUtils.java.
+# range. Confidence and compatibility limits are documented in docs/SPEC.md.
 # --------------------------------------------------------------------------
 
 # --- MS605 TLV tag numbers (subset that matters for the target operations) ---
@@ -289,7 +248,7 @@ MS605_TAG_NAMES = {
 
 def crc16_ccitt_false(data: bytes) -> int:
     """CRC-16/CCITT-FALSE (poly 0x1021, init 0xFFFF, no reflect, no xorout).
-    Byte-for-byte reimplementation of the app's TLVUtils.d()."""
+    The standard ``123456789`` check value is 0x29B1."""
     crc = 0xFFFF
     for byte in data:
         crc ^= (byte & 0xFF) << 8
@@ -303,7 +262,7 @@ def crc16_ccitt_false(data: bytes) -> int:
 
 def crc8_meross_adv(data: bytes) -> int:
     """CRC-8 (poly 0x07, init 0x00) used only by the MS605 *advertisement*
-    short-form TLV. Reimplements the app's TLVUtils.e()."""
+    short-form TLV."""
     crc = 0
     for byte in data:
         crc ^= (byte & 0xFF)
@@ -320,9 +279,9 @@ def build_ms605_tlv_frame(attributes, msg_id: int = 1,
                           trigger_src: int = MS605_TRIGGER_SRC) -> bytes:
     """Build one MS605 TLV command frame.
 
-    attributes: iterable of (tag, value_bytes) pairs.
-    Reproduces the app's TLVUtils.j() serializer exactly (verified byte-for-byte
-    against the decompiled app's own example frames in the MS605 self-test)."""
+    ``attributes`` is an iterable of ``(tag, value_bytes)`` pairs. The
+    serializer is intentionally independent from the runtime package so the
+    two implementations can cross-check the public specification."""
     if not 0 <= subdev_type <= 0xFF:
         raise FrameError(f"subdev_type out of byte range: {subdev_type}")
     if not 0 <= msg_id <= 0xFF:
@@ -359,7 +318,7 @@ class ParsedMS605Frame:
 
 
 def parse_ms605_tlv_frame(packet: bytes) -> ParsedMS605Frame:
-    """Inverse of build_ms605_tlv_frame(); mirrors TLVUtils.n()/p()/m(...,true).
+    """Inverse of :func:`build_ms605_tlv_frame`.
     Raises FrameError on structural problems (bad magic, truncation, bad TLV
     lengths) but reports CRC mismatch via .crc_ok rather than raising."""
     # 2 magic + 1 subdev + 2 len + 1 trig + 1 msgid + 2 crc + 2 magic = 11 min
@@ -433,15 +392,13 @@ def describe_ms605_frame(parsed: ParsedMS605Frame) -> str:
 
 # --------------------------------------------------------------------------
 # Meross legacy packet framing (55AA len JSON crc32 AA55) -- the Wi-Fi-device
-# stack (NOT the MS605). Kept for decoding legacy captures and for replay.py's
-# optional --meross-envelope mode.
+# stack (NOT the MS605). Kept as a separate compatibility decoder and for
+# replay.py's optional --meross-envelope mode.
 # --------------------------------------------------------------------------
 
 
 def crc32_be(data: bytes) -> bytes:
-    """Standard (zlib/ISO-HDLC) CRC32 over `data`, packed big-endian -- this
-    is the same algorithm java.util.zip.CRC32 uses, matching the decompiled
-    Meross app's `int2bytes(crc32(data).toInt())`."""
+    """Standard (zlib/ISO-HDLC) CRC32 over ``data``, packed big-endian."""
     return struct.pack(">I", zlib.crc32(data) & 0xFFFFFFFF)
 
 
@@ -514,9 +471,8 @@ def chunk_bytes(data: bytes, chunk_size: int, frame: str = "none") -> list[bytes
     bytes (after any framing overhead is added).
 
     frame:
-      - "none": raw split, no per-chunk header (matches the Meross app's own
-        `splitIntoChunks`: it relies on the *inner* 55AA/AA55 envelope for
-        reassembly, not a per-chunk header).
+      - "none": raw split, no per-chunk header; the inner 55AA/AA55 envelope
+        supplies the application-level reassembly boundary.
       - "seq":  each chunk is prefixed with a 1-byte sequence number (mod 256).
       - "len":  each chunk is prefixed with a 2-byte big-endian length of the
         chunk's own payload (excluding the 2-byte header itself).

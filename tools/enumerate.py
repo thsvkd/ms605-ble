@@ -62,7 +62,7 @@ def annotate_uuid(uuid: str) -> str:
     """Append a short known-role annotation to a UUID, if recognized."""
     u = uuid.lower()
     known = {
-        bc.MS605_SERVICE_UUID: "*** MS605 BLE-config service (CONFIRMED, com.meross.ble2) ***",
+        bc.MS605_SERVICE_UUID: "*** repository MS605 BLE-config service ***",
         bc.MS605_WRITE_CHAR_UUID: "*** MS605 WRITE characteristic (send TLV commands here) ***",
         bc.MS605_NOTIFY_CHAR_UUID: "*** MS605 NOTIFY characteristic (subscribe for TLV responses/pushes) ***",
         bc.MEROSS_LEGACY_SERVICE_UUID: "legacy Meross Wi-Fi-device BLE-config service (NOT the MS605)",
@@ -203,7 +203,7 @@ def self_test() -> int:
     )
 
     report = render_report(dump)
-    assert "MS605 BLE-config service (CONFIRMED" in report, report
+    assert "repository MS605 BLE-config service" in report, report
     assert "MS605 WRITE characteristic" in report, report
     assert "hex=4d65726f7373" in report
     assert "ascii='Meross'" in report

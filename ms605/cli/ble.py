@@ -246,8 +246,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "read-history",
         help="Read presence/light history (tags 57-60). Unverified against real hardware.",
         description="Read presence-history (--kind presence, tags 58/59) or "
-        "light-history (--kind light, tags 57/60) records. Decompiled-only "
-        "confidence; see docs/APK_PROTOCOL.md.",
+        "light-history (--kind light, tags 57/60) records. Experimental; "
+        "hardware behavior and pagination are not verified.",
     )
     p_history.add_argument("kind", choices=["presence", "light"], help="Which history to read.")
     p_history.add_argument(

@@ -47,7 +47,7 @@ def test_driver_exposes_existing_api():
 
 def test_driver_exposes_new_protocol_coverage():
     for name in NEW_METHODS:
-        assert hasattr(MS605, name), f"MS605 is missing {name}() (see docs/APK_PROTOCOL.md)"
+        assert hasattr(MS605, name), f"MS605 is missing {name}() (see docs/SPEC.md)"
 
 
 def test_construction_does_not_touch_the_radio():

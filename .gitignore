@@ -7,3 +7,26 @@ __pycache__/
 .pytest_cache/
 .omc/
 cal_results/
+
+# Private research artifacts and local device profiles. These files can expose
+# identifiers or unrelated traffic and must never be committed.
+/captures/
+/docs/captures/
+/private-evidence/
+/btsnoop_hci.log*
+/bugreport*
+/sysdiagnose*
+/PacketLogger*
+/jadx-output/
+/decompiled/
+/docs/decompiled/
+*.apk
+*.apks
+*.xapk
+*.ipa
+*.dex
+*.pcap
+*.pcapng
+*.pklg
+/sensor_*.json
+/sensor_info_*.yaml

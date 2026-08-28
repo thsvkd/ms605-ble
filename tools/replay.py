@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
 """
-replay.py -- send crafted/captured writes to a BLE characteristic. This is
-the control-PoC core of the toolkit: once CAPTURE_PLAYBOOK.md + btsnoop_att.py
-have told you which bytes the Meross app sent to set sensitivity / trigger
-auto-calibration, this script replays those bytes (or new variations of them)
-against the device, chunking for the negotiated MTU and logging any
-notifications that come back.
+replay.py -- send a deliberately constructed write to a BLE characteristic.
+This is the active-test component of the research toolkit: it builds a frame
+from the public specification (or accepts bytes supplied by the operator),
+chunks it for the negotiated MTU, and logs subsequent notifications.
 
 WARNING: this script CONNECTS to the target and WRITES to it. Only run it
 against the MS605 during a supervised session, immediately after the device
@@ -15,14 +13,14 @@ first).
 
 Usage:
     venv/bin/python scripts/replay.py --help
-    # MS605 (confirmed): set sensitivity HIGH, then start auto-calibration
+    # MS605: set sensitivity HIGH, then start auto-calibration
     venv/bin/python scripts/replay.py AA:BB:CC:DD:EE:FF \\
         --char 99e7be30-0002-4c6b-98a2-70fcb3471a72 --ms605-tlv 61 03
     venv/bin/python scripts/replay.py AA:BB:CC:DD:EE:FF \\
         --char 99e7be30-0002-4c6b-98a2-70fcb3471a72 --ms605-tlv 52 04 --listen-timeout 200
-    # send a prebuilt MS605 frame verbatim, or arbitrary raw bytes
+    # send a prebuilt synthetic MS605 frame, or explicitly supplied bytes
     venv/bin/python scripts/replay.py AA:BB:CC:DD:EE:FF \\
-        --char 99e7be30-0002-4c6b-98a2-70fcb3471a72 --file examples/set_sensitivity_high.frame
+        --char 99e7be30-0002-4c6b-98a2-70fcb3471a72 --file /path/to/synthetic.frame
     venv/bin/python scripts/replay.py AA:BB:CC:DD:EE:FF \\
         --char 99e7be30-0002-4c6b-98a2-70fcb3471a72 --hex 55aac0...aa55
     venv/bin/python scripts/replay.py --self-test
@@ -174,8 +172,8 @@ def self_test() -> int:
     assert parsed.crc_ok
     assert parsed.payload == json_bytes
 
-    # chunking a framed packet larger than a small chunk size, "none" framing
-    # (mirrors the real Meross app behavior: app-level envelope + raw split)
+    # Chunk a framed packet larger than a small chunk size using the
+    # application-level envelope as the reassembly boundary.
     big_json = b'{"header":{},"payload":{"x":"' + b"A" * 500 + b'"}}'
     big_framed = bc.build_meross_legacy_packet(big_json)
     chunks = bc.chunk_bytes(big_framed, 180, frame="none")
@@ -187,8 +185,7 @@ def self_test() -> int:
     assert reparsed.crc_ok
     assert reparsed.payload == big_json
 
-    # --ms605-tlv path: set sensitivity HIGH must reproduce the app's exact
-    # frame byte-for-byte (this is the confirmed control-PoC for the MS605).
+    # --ms605-tlv path: a deterministic synthetic sensitivity frame.
     args = types.SimpleNamespace(hex=None, file=None, meross_envelope=False,
                                  ms605_tlv=[["61", "03"]], ms605_msgid=1)
     frame = build_payload(args)
@@ -232,7 +229,7 @@ def self_test() -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Send crafted/captured writes to a BLE characteristic, chunked for the "
+        description="Send deliberately constructed writes to a BLE characteristic, chunked for the "
                     "negotiated MTU, logging any notifications received afterward. "
                     "WARNING: this CONNECTS to and WRITES to the target.",
     )
@@ -253,7 +250,7 @@ def main() -> int:
                                 help="path to a binary/text file whose exact bytes are the payload")
     payload_group.add_argument("--ms605-tlv", nargs=2, action="append", default=None,
                                 metavar=("TAG", "HEXVALUE"),
-                                help="build a CONFIRMED MS605 TLV command frame from one or more "
+                                help="build an MS605 TLV command frame from one or more "
                                      "TAG HEXVALUE pairs (repeatable), auto-framed as "
                                      "55AA|C0|len|11|msgId|TLVs|CRC16|AA55. TAG is decimal or 0x "
                                      "hex. Examples: --ms605-tlv 61 03 (sensitivity HIGH), "
@@ -267,12 +264,12 @@ def main() -> int:
                          help="wrap the --hex/--file payload in the LEGACY Meross Wi-Fi-device "
                               "packet envelope (55AA + BE16 length + payload + CRC32 + AA55) -- "
                               "this is the Wi-Fi-switch stack, NOT the MS605 (use --ms605-tlv "
-                              "for the MS605). See TOOLKIT_README/APK_PROTOCOL")
+                              "for the MS605). See docs/SPEC.md")
     parser.add_argument("--chunk-size", type=int, default=None,
                          help="max on-air bytes per BLE write; default: negotiated MTU - 3")
     parser.add_argument("--frame", choices=["none", "seq", "len"], default="none",
                          help="per-chunk framing added on top of MTU-based splitting: "
-                              "none=raw split (matches the known Meross app behavior), "
+                              "none=raw split using the application frame envelope, "
                               "seq=1-byte sequence prefix, len=2-byte BE length prefix "
                               "(default: none)")
     parser.add_argument("--delay-ms", type=float, default=50.0,
