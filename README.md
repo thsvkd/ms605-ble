@@ -128,6 +128,10 @@ private authorized observation
 Raw observations are temporary inputs to research, never repository assets or
 build dependencies.
 
+For a compact public research record covering discovery, packet structure,
+command coverage, sanitized authorized-device results, and setup automation,
+see [docs/evidence/README.md](docs/evidence/README.md).
+
 ## How this project was reverse-engineered
 
 This section specifies the repeatable method, including the controls that keep
