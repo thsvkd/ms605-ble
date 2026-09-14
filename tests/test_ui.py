@@ -89,16 +89,29 @@ def test_select_empty_options_returns_none():
     assert _run(_ui.select("nothing", [])) is None
 
 
-def test_meter_bar_length_and_tick_position():
-    bar = _ui.meter(50, 25, scale=100, width=20)
-    assert len(bar.plain) == 20
-    # threshold 25/100 -> tick at index 5; value 50/100 -> 10 filled cells
-    assert bar.plain[5] == "┃"
-    assert bar.plain.count("█") == 9  # cell 5 is the tick, not a fill block
-    assert bar.plain.count("─") == 10
+def test_meter_tick_is_at_a_fixed_column_regardless_of_threshold():
+    # the whole point of the fix: the tick sits at `tick_at` no matter the
+    # threshold value, so it never drifts frame-to-frame.
+    for thr in (10, 55, 200):
+        bar = _ui.meter(thr, thr, width=20, tick_at=6)
+        assert bar.plain[6] == "┃"
+        assert len(bar.plain) == 20
+
+
+def test_meter_fill_is_relative_to_threshold():
+    # value == threshold fills exactly up to the tick
+    bar = _ui.meter(25, 25, width=20, tick_at=6)
+    assert bar.plain.count("█") == 6  # cells 0..5, tick at 6
+    # value == 2x threshold fills to 2x the tick column
+    bar2 = _ui.meter(50, 25, width=20, tick_at=6)
+    assert bar2.plain[6] == "┃"
+    assert bar2.plain.count("█") == 11  # 0..5 and 7..11 (cell 6 is the tick)
 
 
 def test_meter_clamps_out_of_range_values():
-    # value above scale fills fully; still exactly `width` cells, no overflow
-    bar = _ui.meter(999, 10, scale=100, width=16)
-    assert len(bar.plain) == 16
+    bar = _ui.meter(999, 10, width=16, tick_at=5)
+    assert len(bar.plain) == 16  # no overflow past width
+
+
+def test_meter_zero_threshold_is_safe():
+    assert len(_ui.meter(5, 0, width=10, tick_at=3).plain) == 10

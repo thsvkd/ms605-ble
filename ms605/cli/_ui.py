@@ -315,13 +315,20 @@ def zone_threshold_table(
 
 
 # --- live monitor (real-time bar meters) ----------------------------------
-def meter(value: int, threshold: int, *, scale: float, width: int = 24, active: bool = False) -> Text:
-    """A horizontal bar for `value` on a 0..`scale` axis, with a tick at
-    `threshold`. Fill turns red while the zone is trigger-active. Values are
-    clamped into range (radar energy is small and non-negative in normal use)."""
-    scale = max(float(scale), 1.0)
-    filled = max(0, min(width, round(width * value / scale)))
-    tick = max(0, min(width - 1, round(width * threshold / scale)))
+def meter(value: int, threshold: int, *, width: int = 24, tick_at: int = 8, active: bool = False) -> Text:
+    """A horizontal bar with the threshold pinned at a *fixed* column
+    (`tick_at`) -- the same column for every zone, so a constant threshold
+    never drifts frame-to-frame. The fill grows in proportion to
+    value/threshold: value == threshold fills exactly up to the tick, and the
+    bar clamps to full at (width/tick_at)x the threshold. Fill turns red while
+    the device flags the zone trigger-active. This is a threshold-relative view
+    -- "is the bar past the tick?" answers "is it over threshold?" at a glance."""
+    tick = max(1, min(width - 1, tick_at))
+    if threshold > 0:
+        filled = round(tick * value / threshold)
+    else:
+        filled = width if value > 0 else 0
+    filled = max(0, min(width, filled))
     fill_style = "bar.active" if active else "bar.fill"
     bar = Text()
     for i in range(width):

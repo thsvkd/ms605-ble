@@ -294,6 +294,9 @@ def test_render_monitor_builds_a_frame_from_synthetic_payload():
     assert "실시간 감지값 모니터링" in text
     assert "Z0" in text and "Z6" in text
     assert "120/60" in text
+    # Both synthetic presence-trigger and presence-maintain meters are shown.
+    assert "재실 트리거" in text
+    assert "재실 유지" in text
 
 
 def test_render_monitor_waiting_state_has_no_zones():

@@ -68,6 +68,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from rich import box
 from rich.console import Group
 from rich.panel import Panel
 from rich.table import Table
@@ -1363,13 +1364,19 @@ def _format_zone_presence(snap) -> str:
     return "".join("1" if z.trigger_active else "0" for z in snap.zones)
 
 
+_MONITOR_BAR_WIDTH = 16
+_MONITOR_TICK = 5  # threshold pinned at this fixed column (~1/3 in) for every bar
+
+
 def render_monitor(state: dict, dists: Sequence[float]) -> Panel:
     """Build one frame of the live monitor: a header (timestamp / PIR /
-    per-sub-sensor presence) above a per-zone bar table (current radar energy
-    with a threshold tick, bar reddening while the device flags the zone
-    trigger-active). Pure -- `state` is {'snap', 'pir', 'ts'}, updated by the
-    push handler; the bars are scaled to the current frame's own max so they
-    stay readable regardless of absolute energy level."""
+    per-sub-sensor presence) above a per-zone table that shows *both* meters the
+    device reports for each zone -- Presence Trigger (재실 트리거) and Presence
+    Maintain (재실 유지) -- as current-vs-threshold bars. The threshold is pinned
+    at a fixed column so it never drifts; the fill grows relative to that
+    threshold and reddens once it crosses (the trigger meter uses the device's
+    own trigger-active flag). Pure -- `state` is {'snap', 'pir', 'ts'}, updated
+    by the push handler."""
     snap = state.get("snap")
     pir = state.get("pir")
     ts = state.get("ts", "--:--:--")
@@ -1389,31 +1396,44 @@ def render_monitor(state: dict, dists: Sequence[float]) -> Panel:
     if snap is None:
         body: object = Text("데이터 수신 대기 중...", style="grey58")
     else:
-        live_vals = [z.current_trigger for z in snap.zones if z.enabled]
-        live_vals += [z.trigger_threshold for z in snap.zones if z.enabled]
-        scale = max(30, max(live_vals, default=30))
-        table = Table.grid(padding=(0, 2))
-        table.add_column(justify="right")
-        table.add_column()
-        table.add_column(justify="right")
+        table = Table(box=box.SIMPLE_HEAD, header_style="key", border_style="muted", padding=(0, 1))
+        table.add_column("존", justify="right")
+        table.add_column("재실 트리거", justify="left")
+        table.add_column("cur/thr", justify="right")
+        table.add_column("재실 유지", justify="left")
+        table.add_column("cur/thr", justify="right")
         for z in snap.zones:
             dist = dists[z.index] if z.index < len(dists) else 0.0
             label = Text(f"Z{z.index} {dist:>4.1f}m", style="key")
             if not z.enabled:
-                table.add_row(label, Text("off", style="grey30"), Text("", style="grey30"))
+                off = Text("off", style="grey30")
+                table.add_row(label, off, "", off, "")
                 continue
-            bar = _ui.meter(
-                z.current_trigger, z.trigger_threshold, scale=scale, active=z.trigger_active
+            trig_bar = _ui.meter(
+                z.current_trigger, z.trigger_threshold,
+                width=_MONITOR_BAR_WIDTH, tick_at=_MONITOR_TICK, active=z.trigger_active,
             )
-            val = Text(
+            maint_bar = _ui.meter(
+                z.current_maintain, z.maintain_threshold,
+                width=_MONITOR_BAR_WIDTH, tick_at=_MONITOR_TICK,
+                active=z.current_maintain >= z.maintain_threshold,
+            )
+            trig_val = Text(
                 f"{z.current_trigger:>3}/{z.trigger_threshold:<3}",
                 style="bold red" if z.trigger_active else "grey70",
             )
-            table.add_row(label, bar, val)
+            maint_val = Text(
+                f"{z.current_maintain:>3}/{z.maintain_threshold:<3}",
+                style="bold red" if z.current_maintain >= z.maintain_threshold else "grey70",
+            )
+            table.add_row(label, trig_bar, trig_val, maint_bar, maint_val)
         body = table
 
-    footer = Text("┃=임계값   █=현재값(활성 시 빨강)   ·   Enter를 눌러 종료", style="grey46")
-    return Panel(Group(head, Text(), body, Text(), footer),
+    footer = Text(
+        "┃=임계값(고정)   █=현재값(임계값 초과 시 빨강)   ·   Enter를 눌러 종료",
+        style="grey46",
+    )
+    return Panel(Group(head, Text(), body, footer),
                  title="[brand]실시간 감지값 모니터링[/]", border_style="accent", padding=(0, 2))
 
 
