@@ -445,12 +445,14 @@ When changing protocol behavior:
 4. run the complete offline verification set;
 5. inspect the staged diff for private or copied material.
 
-## Release and license status
+## License
 
-This repository does not yet contain a `LICENSE` file. Until the maintainers
-choose and add a license, the source is reviewable but no general reuse license
-is granted; it must not be presented as release-ready open source. License
-selection and matching package metadata are required before public release.
+Copyright 2026 thsvkd.
+
+This project, including its documentation and independently written protocol
+specification, is licensed under the [Apache License 2.0](LICENSE). Unless a
+contribution states otherwise, intentionally submitted contributions are
+accepted under the same license.
 
 ## Compatibility and non-affiliation
 

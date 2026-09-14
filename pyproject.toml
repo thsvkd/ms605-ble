@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,11 +8,17 @@ version = "0.2.0"
 description = "MS605 BLE control library + CLIs (protocol driver, interactive app, unattended scheduler)"
 readme = "README.md"
 requires-python = ">=3.10"
+license = "Apache-2.0"
 dependencies = [
     "bleak>=0.22",
     "questionary>=2.1.1",
     "rich>=15.0.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/thsvkd/ms605-ble"
+Repository = "https://github.com/thsvkd/ms605-ble"
+Issues = "https://github.com/thsvkd/ms605-ble/issues"
 
 [project.scripts]
 ms605 = "ms605.cli.cli:main"
