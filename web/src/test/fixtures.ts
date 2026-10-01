@@ -1,6 +1,10 @@
 // Synthetic values only (public repo): simulator Device IDs b"SIM605" + n and locally administered addresses.
 import type {
+  BatchView,
+  CalibrationJobView,
+  LiveData,
   LiveInfo,
+  LiveZone,
   PendingView,
   RegistryInfo,
   SensorView,
@@ -72,6 +76,7 @@ export function stateSnapshot(patch: Partial<StateSnapshot> = {}): StateSnapshot
     sites: [SITE_A],
     sensors: [],
     pending: [],
+    batch: null,
     ...patch,
   }
 }
@@ -107,5 +112,101 @@ export function storeState(patch: Partial<StateSnapshot> = {}): Partial<AppState
     sites: Object.fromEntries(snap.sites.map((s) => [s.site_id, s])),
     sensors: Object.fromEntries(snap.sensors.map((s) => [s.device_id, s])),
     pending: snap.pending,
+    batch: snap.batch,
   }
+}
+
+// -- M3 -----------------------------------------------------------------------------------
+
+export const BATCH_ID = 'b-0001'
+
+/** Seven zones 0.8 m apart, the simulator's tag53 (G23). */
+export function liveZone(index: number, patch: Partial<LiveZone> = {}): LiveZone {
+  return {
+    index,
+    distance_m: 0.8 * (index + 1),
+    enabled: true,
+    trigger_active: false,
+    trigger: 40,
+    trigger_threshold: 55,
+    maintain: 20,
+    maintain_threshold: 30,
+    ...patch,
+  }
+}
+
+/** Z0 above its threshold (trigger flag on), Z2 a negative calibration threshold, Z6 off. */
+export function liveData(n: number, patch: Partial<LiveData> = {}): LiveData {
+  return {
+    device_id: deviceId(n),
+    at: NOW_S,
+    pir: true,
+    sub_sensor_presence: [true, false, false],
+    zones: [
+      liveZone(0, { trigger: 64, trigger_threshold: 60, trigger_active: true, maintain: 22, maintain_threshold: 30 }),
+      liveZone(1, { trigger: 41, trigger_threshold: 55, maintain: 30, maintain_threshold: 30 }),
+      liveZone(2, { trigger: -10, trigger_threshold: -33, maintain: 5, maintain_threshold: 0 }),
+      liveZone(3),
+      liveZone(4),
+      liveZone(5),
+      liveZone(6, { enabled: false }),
+    ],
+    ...patch,
+  }
+}
+
+const pairs = (trigger: number[], maintain = 30) => trigger.map((t) => ({ trigger: t, maintain }))
+
+export function job(n: number, patch: Partial<CalibrationJobView> = {}): CalibrationJobView {
+  return {
+    batch_id: BATCH_ID,
+    device_id: deviceId(n),
+    attempt: 1,
+    state: 'idle',
+    started: false,
+    elapsed_s: null,
+    error: null,
+    detail: '',
+    before: null,
+    after: null,
+    history_saved: false,
+    retryable: false,
+    ...patch,
+  }
+}
+
+export function succeededJob(n: number, patch: Partial<CalibrationJobView> = {}): CalibrationJobView {
+  return job(n, {
+    state: 'succeeded',
+    started: true,
+    elapsed_s: 1.8,
+    before: [{ trigger: 70, maintain: 30 }, ...pairs([62, 55, 55, 55, 55, 55])],
+    after: [{ trigger: 64, maintain: 28 }, ...pairs([66, 55, 55, 55, 55, 55])],
+    history_saved: true,
+    ...patch,
+  })
+}
+
+/** Three sensors: done -> succeeded, lost while learning, succeeded. */
+export function batchView(patch: Partial<BatchView> = {}): BatchView {
+  const ids = [1, 2, 3].map(deviceId)
+  return {
+    batch_id: BATCH_ID,
+    state: 'done',
+    round: 1,
+    start: 'now',
+    fire_at: NOW_S,
+    created_at: NOW_S,
+    expected_s: 180,
+    presence_override: false,
+    device_ids: ids,
+    round_ids: ids,
+    jobs: [succeededJob(1), job(2, { state: 'lost', started: true, elapsed_s: 40, retryable: true }), succeededJob(3)],
+    ...patch,
+  }
+}
+
+/** Three registered, connected sensors in Lab A. */
+export function calibSensors(patch: (n: number) => Partial<SensorView> = () => ({})): SensorView[] {
+  return [1, 2, 3].map((n) => sensor(n, { registry: registry(SITE_A, `센서 ${n}`), live: live(n), ...patch(n) }))
 }

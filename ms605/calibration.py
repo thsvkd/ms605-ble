@@ -36,6 +36,10 @@ _log = logging.getLogger(__name__)
 EXPECTED_CALIBRATION_S = 180.0
 # tag55 arrives about once a second (simulator assumption) -> about 3 samples.
 PREFLIGHT_WINDOW_S = 3.0
+# Right after a (re-)gather the session holds "identify" for one tag read: a
+# calibration fired in that window waits this long for it instead of failing.
+IDENTIFY_WAIT_S = 2.0
+_IDENTIFY_POLL_S = 0.05
 
 _CANCEL_DETAIL = "링크를 끊어 학습을 중단함. 다시 연결하려면 버튼을 누르세요"
 
@@ -131,6 +135,7 @@ class CalibrationJob:
         timeout: float = CALIBRATION_TIMEOUT_S,
         expected_s: float = EXPECTED_CALIBRATION_S,
         progress_interval: float = 1.0,
+        identify_wait: float = IDENTIFY_WAIT_S,
     ) -> None:
         self.session = session
         self.state = CalibrationState.IDLE
@@ -140,6 +145,7 @@ class CalibrationJob:
         self._timeout = timeout
         self._expected_s = expected_s
         self._progress_interval = progress_interval
+        self._identify_wait = identify_wait
         self._running = False
         self._cancel_requested = False
         self._waiter: asyncio.Future[bool] | None = None
@@ -218,6 +224,15 @@ class CalibrationJob:
 
     async def _run(self) -> CalibrationResult:
         s = self.session
+        if s.busy == "identify":
+            try:
+                await self._wait_identify()
+            except asyncio.CancelledError:
+                self._finish(CalibrationState.CANCELLED)
+                raise
+            if self._cancel_requested:
+                return self._finish(CalibrationState.CANCELLED)
+        # no await between this check and taking the lock below
         if s.busy is not None:
             return self._finish(CalibrationState.FAILED, error=f"busy: {s.busy}")
         if s.state is not LinkState.CONNECTED:
@@ -233,6 +248,18 @@ class CalibrationJob:
                 raise
             finally:
                 await self._stop_progress()
+
+    async def _wait_identify(self) -> None:
+        """Poll (no device I/O) until the session's "identify" lock is gone,
+        `identify_wait` passes, or cancel() is called. Only "identify" is waited
+        for: the session takes it on its own for one tag read (5.2)."""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self._identify_wait
+        while self.session.busy == "identify" and not self._cancel_requested:
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                return
+            await asyncio.sleep(min(_IDENTIFY_POLL_S, remaining))
 
     async def _calibrate(self, ms: MS605) -> CalibrationResult:
         s = self.session

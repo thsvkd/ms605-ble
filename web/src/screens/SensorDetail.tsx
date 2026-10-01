@@ -1,17 +1,18 @@
-import { ArrowLeft, Construction, Trash2, Unplug } from 'lucide-react'
+import { ArrowLeft, Construction, Crosshair, Trash2, Unplug } from 'lucide-react'
 import { useState } from 'react'
 import { Link, useLocation } from 'wouter'
 import { ApiRequestError, deleteSensor, release } from '../api/client'
-import { Button } from '../components/Button'
+import { Button, buttonClass } from '../components/Button'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { EditSensorForm } from '../components/EditSensorForm'
+import { LiveStrip } from '../components/LiveStrip'
 import { NameSensorForm } from '../components/NameSensorForm'
 import { SensorInfoList } from '../components/SensorInfoList'
 import { StatusBadge } from '../components/StatusBadge'
 import styles from '../components/detail.module.css'
 import { useNow } from '../hooks/useNow'
 import { sensorStatus } from '../status'
-import { useStore } from '../store/store'
+import { selectBatchMembers, useStore } from '../store/store'
 import { errorText, t } from '../strings'
 
 function BackLink() {
@@ -26,6 +27,7 @@ function BackLink() {
 export function SensorDetailScreen({ deviceId }: { deviceId: string }) {
   const sensor = useStore((s) => s.sensors[deviceId])
   const gathering = useStore((s) => s.gather.gathering)
+  const locked = useStore((s) => selectBatchMembers(s).has(deviceId))
   const now = useNow()
   const [, navigate] = useLocation()
   const [confirmDelete, setConfirmDelete] = useState(false)
@@ -71,8 +73,20 @@ export function SensorDetailScreen({ deviceId }: { deviceId: string }) {
           <h2 id="name-title" className={styles.cardTitle}>
             {t.sensor.nameIt}
           </h2>
-          <NameSensorForm deviceId={deviceId} bleName={sensor.live?.name ?? null} onDone={(r) => r === undefined && navigate('/')} />
+          <NameSensorForm
+            deviceId={deviceId}
+            bleName={sensor.live?.name ?? null}
+            onDone={(r) => r === undefined && navigate('/')}
+          />
         </section>
+      )}
+
+      {sensor.live && <LiveStrip deviceId={deviceId} />}
+      {sensor.live?.link === 'connected' && (
+        <Link href={`/calibrate?ids=${encodeURIComponent(deviceId)}`} className={buttonClass('secondary')}>
+          <Crosshair size={18} aria-hidden />
+          {t.calib.thisSensor}
+        </Link>
       )}
 
       <SensorInfoList sensor={sensor} />
@@ -85,7 +99,12 @@ export function SensorDetailScreen({ deviceId }: { deviceId: string }) {
       {(sensor.live || reg) && (
         <div className={styles.dangerZone}>
           {sensor.live && (
-            <Button icon={Unplug} onClick={releaseOne}>
+            <Button
+              icon={Unplug}
+              onClick={releaseOne}
+              disabled={locked}
+              aria-describedby={locked ? 'release-locked' : undefined}
+            >
               {t.release.one}
             </Button>
           )}
@@ -95,6 +114,11 @@ export function SensorDetailScreen({ deviceId }: { deviceId: string }) {
             </Button>
           )}
         </div>
+      )}
+      {locked && (
+        <p id="release-locked" className={styles.lockNote}>
+          {t.release.blockedByBatch}
+        </p>
       )}
       {error && (
         <p className={styles.error} role="alert">

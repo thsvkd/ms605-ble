@@ -51,6 +51,7 @@ def _connected(m: dict) -> bool:
 
 
 def _assert_consecutive(messages: list[dict], after: int) -> None:
+    messages = [m for m in messages if m["seq"] is not None]  # live / countdown carry no seq (14.6.3)
     assert [m["seq"] for m in messages] == list(range(after + 1, after + 1 + len(messages)))
 
 
@@ -297,7 +298,7 @@ def test_events_of_one_tick_coalesce(tmp_path):
         bus = hub.fleet.bus
         for state, previous in ((LinkState.CONNECTING, LinkState.LOST), (LinkState.CONNECTED, LinkState.CONNECTING)):
             bus.emit(LinkStateChanged(address=ADDR1, device_id=SIM1, state=state, previous=previous))
-        bus.emit(PirChanged(address=ADDR1, device_id=SIM1, detected=True))  # ignored in M2
+        bus.emit(PirChanged(address=ADDR1, device_id=SIM1, detected=True))  # nobody watches: no live
         bus.emit(BusyChanged(address=ADDR1, device_id=SIM1, busy="read"))  # no session: ignored
         await asyncio.sleep(0)
         messages = _drain_queue(hub)

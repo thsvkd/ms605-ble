@@ -28,7 +28,8 @@ Behaviours
   `live_interval` the device pushes tag55 (thresholds moving linearly toward
   `learned_thresholds`) and tag56; after `calibration_secs` it stores the
   learned tag51 values and pushes tag62=`calibration_result`. A link drop
-  aborts it.
+  aborts it. Ticks are due on a fixed grid, so a busy event loop delays a
+  tick but does not stretch the whole learning (late ticks catch up).
 - live output: tag54=1 streams tag55 every `live_interval` while connected.
 - faults: drop_link(), inject_status(), corrupt_live(), drop_responses(),
   `response_delay`, corrupt_next_crc().
@@ -132,6 +133,7 @@ from .protocol import (
 
 STATUS_OK = 0
 STATUS_ERROR = 1  # MEASURE: real non-zero codes are unknown
+TICK_CATCH_UP_S = 1.0  # wall seconds of late ticks run back to back at most (e.g. after the host slept)
 
 # Synthetic learned thresholds (trigger, maintain) per zone -- not device data.
 DEFAULT_LEARNED_THRESHOLDS: tuple[tuple[int, int], ...] = tuple(
@@ -316,6 +318,7 @@ class SimMS605:
         self._window_until: float | None = None
         self._idle_handle: asyncio.TimerHandle | None = None
         self._tick_handle: asyncio.TimerHandle | None = None
+        self._tick_due = 0.0  # loop time the scheduled tick is due at
         self._drop_handle: asyncio.TimerHandle | None = None
         self._ticks = 0
         self._calibrating = False
@@ -420,10 +423,16 @@ class SimMS605:
         if self._client is not None:
             self._link_lost(self._client)
 
-    def _ensure_ticker(self) -> None:
+    def _ensure_ticker(self, after: float | None = None) -> None:
+        """Schedule the next tick one interval after `after` (the last tick's due time,
+        not when it ran: no drift) or after now when the ticker starts."""
         live = self._client is not None and self.tags[TAG_LIVE_OUTPUT_ENABLE][0]
         if self._tick_handle is None and (self._calibrating or live):
-            self._tick_handle = self._later(self.live_interval, self._tick)
+            loop = asyncio.get_running_loop()
+            now = loop.time()
+            base = now if after is None else max(after, now - TICK_CATCH_UP_S)
+            self._tick_due = base + self.live_interval / self.speed
+            self._tick_handle = loop.call_at(self._tick_due, self._tick)
 
     def _tick(self) -> None:
         self._tick_handle = None
@@ -436,7 +445,7 @@ class SimMS605:
                 self._finish_calibration()
         elif self.tags[TAG_LIVE_OUTPUT_ENABLE][0]:
             self._push([(TAG_LIVE_RADAR_OUTPUT, self._radar_value())])
-        self._ensure_ticker()
+        self._ensure_ticker(self._tick_due)
 
     def _start_calibration(self) -> None:
         if self._calibrating:

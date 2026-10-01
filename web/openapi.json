@@ -13,6 +13,389 @@
         "title": "ApiError",
         "type": "object"
       },
+      "BatchCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "At"
+          },
+          "delay_s": {
+            "anyOf": [
+              {
+                "maximum": 3600,
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Delay S"
+          },
+          "device_ids": {
+            "items": {
+              "pattern": "^[0-9a-f]{2,128}$",
+              "type": "string"
+            },
+            "maxItems": 32,
+            "minItems": 1,
+            "title": "Device Ids",
+            "type": "array"
+          },
+          "presence_override": {
+            "default": false,
+            "title": "Presence Override",
+            "type": "boolean"
+          },
+          "start": {
+            "default": "now",
+            "enum": [
+              "now",
+              "delay",
+              "at"
+            ],
+            "title": "Start",
+            "type": "string"
+          }
+        },
+        "required": [
+          "device_ids"
+        ],
+        "title": "BatchCreate",
+        "type": "object"
+      },
+      "BatchMessage": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/BatchView"
+          },
+          "seq": {
+            "title": "Seq",
+            "type": "integer"
+          },
+          "ts": {
+            "title": "Ts",
+            "type": "number"
+          },
+          "type": {
+            "const": "batch",
+            "default": "batch",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "seq",
+          "ts",
+          "data"
+        ],
+        "title": "BatchMessage",
+        "type": "object"
+      },
+      "BatchRetry": {
+        "additionalProperties": false,
+        "properties": {
+          "at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "At"
+          },
+          "delay_s": {
+            "anyOf": [
+              {
+                "maximum": 3600,
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Delay S"
+          },
+          "device_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "pattern": "^[0-9a-f]{2,128}$",
+                  "type": "string"
+                },
+                "maxItems": 32,
+                "minItems": 1,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Device Ids"
+          },
+          "start": {
+            "default": "now",
+            "enum": [
+              "now",
+              "delay",
+              "at"
+            ],
+            "title": "Start",
+            "type": "string"
+          }
+        },
+        "title": "BatchRetry",
+        "type": "object"
+      },
+      "BatchState": {
+        "enum": [
+          "waiting",
+          "running",
+          "done",
+          "cancelled"
+        ],
+        "title": "BatchState",
+        "type": "string"
+      },
+      "BatchView": {
+        "properties": {
+          "batch_id": {
+            "title": "Batch Id",
+            "type": "string"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "number"
+          },
+          "device_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Device Ids",
+            "type": "array"
+          },
+          "expected_s": {
+            "title": "Expected S",
+            "type": "number"
+          },
+          "fire_at": {
+            "title": "Fire At",
+            "type": "number"
+          },
+          "jobs": {
+            "items": {
+              "$ref": "#/components/schemas/CalibrationJobView"
+            },
+            "title": "Jobs",
+            "type": "array"
+          },
+          "presence_override": {
+            "title": "Presence Override",
+            "type": "boolean"
+          },
+          "round": {
+            "title": "Round",
+            "type": "integer"
+          },
+          "round_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Round Ids",
+            "type": "array"
+          },
+          "start": {
+            "enum": [
+              "now",
+              "delay",
+              "at"
+            ],
+            "title": "Start",
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/BatchState"
+          }
+        },
+        "required": [
+          "batch_id",
+          "state",
+          "round",
+          "start",
+          "fire_at",
+          "created_at",
+          "expected_s",
+          "presence_override",
+          "device_ids",
+          "round_ids",
+          "jobs"
+        ],
+        "title": "BatchView",
+        "type": "object"
+      },
+      "CalibrationJobMessage": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/CalibrationJobView"
+          },
+          "seq": {
+            "title": "Seq",
+            "type": "integer"
+          },
+          "ts": {
+            "title": "Ts",
+            "type": "number"
+          },
+          "type": {
+            "const": "calibration_job",
+            "default": "calibration_job",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "seq",
+          "ts",
+          "data"
+        ],
+        "title": "CalibrationJobMessage",
+        "type": "object"
+      },
+      "CalibrationJobView": {
+        "properties": {
+          "after": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ZonePair"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "After"
+          },
+          "attempt": {
+            "title": "Attempt",
+            "type": "integer"
+          },
+          "batch_id": {
+            "title": "Batch Id",
+            "type": "string"
+          },
+          "before": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ZonePair"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Before"
+          },
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "device_id": {
+            "title": "Device Id",
+            "type": "string"
+          },
+          "elapsed_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Elapsed S"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "history_saved": {
+            "title": "History Saved",
+            "type": "boolean"
+          },
+          "retryable": {
+            "title": "Retryable",
+            "type": "boolean"
+          },
+          "started": {
+            "title": "Started",
+            "type": "boolean"
+          },
+          "state": {
+            "$ref": "#/components/schemas/CalibrationState"
+          }
+        },
+        "required": [
+          "batch_id",
+          "device_id",
+          "attempt",
+          "state",
+          "started",
+          "elapsed_s",
+          "error",
+          "detail",
+          "before",
+          "after",
+          "history_saved",
+          "retryable"
+        ],
+        "title": "CalibrationJobView",
+        "type": "object"
+      },
+      "CalibrationState": {
+        "enum": [
+          "idle",
+          "starting",
+          "learning",
+          "succeeded",
+          "failed",
+          "lost",
+          "timeout",
+          "cancelled"
+        ],
+        "title": "CalibrationState",
+        "type": "string"
+      },
       "CalibrationSummary": {
         "properties": {
           "detect_mode": {
@@ -50,6 +433,24 @@
         "title": "CalibrationSummary",
         "type": "object"
       },
+      "ClientMessage": {
+        "discriminator": {
+          "mapping": {
+            "live_subscribe": "#/components/schemas/LiveSubscribeMessage",
+            "live_unsubscribe": "#/components/schemas/LiveUnsubscribeMessage"
+          },
+          "propertyName": "type"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/LiveSubscribeMessage"
+          },
+          {
+            "$ref": "#/components/schemas/LiveUnsubscribeMessage"
+          }
+        ],
+        "title": "ClientMessage"
+      },
       "ConnectingDevice": {
         "properties": {
           "address": {
@@ -68,6 +469,59 @@
         "title": "ConnectingDevice",
         "type": "object"
       },
+      "Countdown": {
+        "properties": {
+          "batch_id": {
+            "title": "Batch Id",
+            "type": "string"
+          },
+          "fire_at": {
+            "title": "Fire At",
+            "type": "number"
+          },
+          "remaining_s": {
+            "title": "Remaining S",
+            "type": "number"
+          }
+        },
+        "required": [
+          "batch_id",
+          "fire_at",
+          "remaining_s"
+        ],
+        "title": "Countdown",
+        "type": "object"
+      },
+      "CountdownMessage": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/Countdown"
+          },
+          "seq": {
+            "default": null,
+            "title": "Seq",
+            "type": "null"
+          },
+          "ts": {
+            "title": "Ts",
+            "type": "number"
+          },
+          "type": {
+            "const": "countdown",
+            "default": "countdown",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "seq",
+          "ts",
+          "data"
+        ],
+        "title": "CountdownMessage",
+        "type": "object"
+      },
       "ErrorBody": {
         "properties": {
           "code": {
@@ -82,7 +536,8 @@
               "invalid_request",
               "invalid_file",
               "storage",
-              "internal"
+              "internal",
+              "batch_active"
             ],
             "title": "Code",
             "type": "string"
@@ -200,6 +655,52 @@
         "title": "LinkState",
         "type": "string"
       },
+      "LiveData": {
+        "properties": {
+          "at": {
+            "title": "At",
+            "type": "number"
+          },
+          "device_id": {
+            "title": "Device Id",
+            "type": "string"
+          },
+          "pir": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pir"
+          },
+          "sub_sensor_presence": {
+            "items": {
+              "type": "boolean"
+            },
+            "title": "Sub Sensor Presence",
+            "type": "array"
+          },
+          "zones": {
+            "items": {
+              "$ref": "#/components/schemas/LiveZone"
+            },
+            "title": "Zones",
+            "type": "array"
+          }
+        },
+        "required": [
+          "device_id",
+          "at",
+          "pir",
+          "sub_sensor_presence",
+          "zones"
+        ],
+        "title": "LiveData",
+        "type": "object"
+      },
       "LiveInfo": {
         "properties": {
           "address": {
@@ -285,6 +786,141 @@
           "gathered_at"
         ],
         "title": "LiveInfo",
+        "type": "object"
+      },
+      "LiveMessage": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/LiveData"
+          },
+          "seq": {
+            "default": null,
+            "title": "Seq",
+            "type": "null"
+          },
+          "ts": {
+            "title": "Ts",
+            "type": "number"
+          },
+          "type": {
+            "const": "live",
+            "default": "live",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "seq",
+          "ts",
+          "data"
+        ],
+        "title": "LiveMessage",
+        "type": "object"
+      },
+      "LiveSubscribeMessage": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/LiveWatch"
+          },
+          "type": {
+            "const": "live_subscribe",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "data"
+        ],
+        "title": "LiveSubscribeMessage",
+        "type": "object"
+      },
+      "LiveUnsubscribeMessage": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/LiveWatch"
+          },
+          "type": {
+            "const": "live_unsubscribe",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "data"
+        ],
+        "title": "LiveUnsubscribeMessage",
+        "type": "object"
+      },
+      "LiveWatch": {
+        "additionalProperties": false,
+        "properties": {
+          "device_ids": {
+            "items": {
+              "pattern": "^[0-9a-f]{2,128}$",
+              "type": "string"
+            },
+            "maxItems": 32,
+            "title": "Device Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "device_ids"
+        ],
+        "title": "LiveWatch",
+        "type": "object"
+      },
+      "LiveZone": {
+        "properties": {
+          "distance_m": {
+            "title": "Distance M",
+            "type": "number"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "index": {
+            "title": "Index",
+            "type": "integer"
+          },
+          "maintain": {
+            "title": "Maintain",
+            "type": "integer"
+          },
+          "maintain_threshold": {
+            "title": "Maintain Threshold",
+            "type": "integer"
+          },
+          "trigger": {
+            "title": "Trigger",
+            "type": "integer"
+          },
+          "trigger_active": {
+            "title": "Trigger Active",
+            "type": "boolean"
+          },
+          "trigger_threshold": {
+            "title": "Trigger Threshold",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "index",
+          "distance_m",
+          "enabled",
+          "trigger_active",
+          "trigger",
+          "trigger_threshold",
+          "maintain",
+          "maintain_threshold"
+        ],
+        "title": "LiveZone",
         "type": "object"
       },
       "Notice": {
@@ -460,6 +1096,120 @@
           "source"
         ],
         "title": "PendingView",
+        "type": "object"
+      },
+      "PreflightRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "device_ids": {
+            "items": {
+              "pattern": "^[0-9a-f]{2,128}$",
+              "type": "string"
+            },
+            "maxItems": 32,
+            "minItems": 1,
+            "title": "Device Ids",
+            "type": "array"
+          },
+          "window_s": {
+            "default": 3.0,
+            "maximum": 10.0,
+            "minimum": 0.2,
+            "title": "Window S",
+            "type": "number"
+          }
+        },
+        "required": [
+          "device_ids"
+        ],
+        "title": "PreflightRequest",
+        "type": "object"
+      },
+      "PreflightResult": {
+        "properties": {
+          "checked_at": {
+            "title": "Checked At",
+            "type": "number"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/PresenceView"
+            },
+            "title": "Results",
+            "type": "array"
+          }
+        },
+        "required": [
+          "checked_at",
+          "results"
+        ],
+        "title": "PreflightResult",
+        "type": "object"
+      },
+      "PresenceView": {
+        "properties": {
+          "device_id": {
+            "title": "Device Id",
+            "type": "string"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "occupied": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Occupied"
+          },
+          "pir": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pir"
+          },
+          "presence": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Presence"
+          },
+          "samples": {
+            "title": "Samples",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "device_id",
+          "samples",
+          "presence",
+          "pir",
+          "occupied",
+          "error"
+        ],
+        "title": "PresenceView",
         "type": "object"
       },
       "RegistryInfo": {
@@ -849,7 +1599,11 @@
       "ServerMessage": {
         "discriminator": {
           "mapping": {
+            "batch": "#/components/schemas/BatchMessage",
+            "calibration_job": "#/components/schemas/CalibrationJobMessage",
+            "countdown": "#/components/schemas/CountdownMessage",
             "gather": "#/components/schemas/GatherMessage",
+            "live": "#/components/schemas/LiveMessage",
             "notice": "#/components/schemas/NoticeMessage",
             "pending": "#/components/schemas/PendingMessage",
             "sensor": "#/components/schemas/SensorMessage",
@@ -880,6 +1634,18 @@
           },
           {
             "$ref": "#/components/schemas/NoticeMessage"
+          },
+          {
+            "$ref": "#/components/schemas/BatchMessage"
+          },
+          {
+            "$ref": "#/components/schemas/CalibrationJobMessage"
+          },
+          {
+            "$ref": "#/components/schemas/LiveMessage"
+          },
+          {
+            "$ref": "#/components/schemas/CountdownMessage"
           }
         ],
         "title": "ServerMessage"
@@ -1048,6 +1814,16 @@
       },
       "StateSnapshot": {
         "properties": {
+          "batch": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BatchView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "gather": {
             "$ref": "#/components/schemas/GatherStatus"
           },
@@ -1086,9 +1862,28 @@
           "gather",
           "sites",
           "sensors",
-          "pending"
+          "pending",
+          "batch"
         ],
         "title": "StateSnapshot",
+        "type": "object"
+      },
+      "ZonePair": {
+        "properties": {
+          "maintain": {
+            "title": "Maintain",
+            "type": "integer"
+          },
+          "trigger": {
+            "title": "Trigger",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "trigger",
+          "maintain"
+        ],
+        "title": "ZonePair",
         "type": "object"
       }
     }

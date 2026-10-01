@@ -22,7 +22,14 @@ from ms605.events import (
     PirChanged,
 )
 from ms605.models import FALLBACK_DISTANCES_M, zone_distances
-from ms605.protocol import SENSITIVITY_PRESETS, TAG_LIVE_OUTPUT_ENABLE, TAG_PIR_STATE, Sensitivity
+from ms605.protocol import (
+    SENSITIVITY_PRESETS,
+    TAG_DETECT_MODE,
+    TAG_LIVE_OUTPUT_ENABLE,
+    TAG_PIR_STATE,
+    TAG_READ_REQUEST,
+    Sensitivity,
+)
 from ms605.session import DeviceSession
 from ms605.sim import DEFAULT_LEARNED_THRESHOLDS, SimFleet
 from ms605.storage import Storage
@@ -667,3 +674,100 @@ def test_calibration_record_keeps_the_old_keys_and_adds_device_id_last():
     assert record["zones"][0]["distance_m"] == pytest.approx(0.8)
     assert zone_distances(cfg) == pytest.approx((0.8, 1.6, 2.4, 3.2, 4.0, 4.8, 5.6))  # 8 edges -> 7 far edges
     assert zone_distances(replace(cfg, zone_distances_m=None)) == FALLBACK_DISTANCES_M
+
+
+# -- the "identify" wait (M3, docs/CORE_API.md 5.2) -------------------------------------
+
+
+def _job_io(dev, since: int) -> list:
+    """Frames after `since` that read or write anything (keep-alive pings excluded)."""
+    io_tags = (TAG_READ_REQUEST, TAG_DETECT_MODE)
+    return [f for f in dev.frames_in[since:] if any(tag in io_tags for tag, _ in f.attributes)]
+
+
+async def _hold(session: DeviceSession, reason: str, secs: float, held: asyncio.Event) -> None:
+    async with session.operation(reason):
+        held.set()
+        await asyncio.sleep(secs)
+
+
+def test_identify_lock_released_in_time_is_waited_for():
+    async def main():
+        dev, session, events = _setup()
+        await _connected(session)
+        held = asyncio.Event()
+        holder = asyncio.create_task(_hold(session, "identify", 0.3, held))
+        await held.wait()
+        loop = asyncio.get_running_loop()
+        began = loop.time()
+        result = await CalibrationJob(session, timeout=TIMEOUT).run()
+        assert loop.time() - began >= 0.25  # it waited for the lock instead of failing at once
+        assert result.state is S.SUCCEEDED and result.started
+        await holder
+        await session.close()
+
+    asyncio.run(main())
+
+
+def test_identify_lock_held_past_the_wait_fails_busy():
+    async def main():
+        dev, session, events = _setup()
+        await _connected(session)
+        held = asyncio.Event()
+        holder = asyncio.create_task(_hold(session, "identify", 1.0, held))
+        await held.wait()
+        frames = len(dev.frames_in)
+        loop = asyncio.get_running_loop()
+        began = loop.time()
+        result = await CalibrationJob(session, timeout=TIMEOUT, identify_wait=0.2).run()
+        waited = loop.time() - began
+        assert 0.2 <= waited < 0.9
+        assert result.state is S.FAILED and not result.started
+        assert result.error == "busy: identify"
+        assert _job_io(dev, frames) == []  # no device I/O while waiting
+        await holder
+        await session.close()
+
+    asyncio.run(main())
+
+
+def test_cancel_while_waiting_for_identify_is_cancelled_without_a_start():
+    async def main():
+        dev, session, events = _setup()
+        await _connected(session)
+        held = asyncio.Event()
+        holder = asyncio.create_task(_hold(session, "identify", 1.0, held))
+        await held.wait()
+        frames = len(dev.frames_in)
+        job = CalibrationJob(session, timeout=TIMEOUT)
+        run = asyncio.create_task(job.run())
+        await asyncio.sleep(0.1)
+        assert job.state is S.IDLE
+        await asyncio.wait_for(job.cancel(), 0.5)
+        result = await run
+        assert result.state is S.CANCELLED and not result.started
+        assert _job_io(dev, frames) == []  # in particular no tag52 write
+        assert session.state is LinkState.CONNECTED
+        holder.cancel()
+        await asyncio.gather(holder, return_exceptions=True)
+        await session.close()
+
+    asyncio.run(main())
+
+
+def test_other_locks_are_not_waited_for():
+    async def main():
+        dev, session, events = _setup()
+        await _connected(session)
+        held = asyncio.Event()
+        holder = asyncio.create_task(_hold(session, "read", 0.5, held))
+        await held.wait()
+        loop = asyncio.get_running_loop()
+        began = loop.time()
+        result = await CalibrationJob(session, timeout=TIMEOUT).run()
+        assert loop.time() - began < 0.1
+        assert result.state is S.FAILED and result.error == "busy: read"
+        await holder
+        await session.close()
+
+    asyncio.run(main())

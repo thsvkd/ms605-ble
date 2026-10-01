@@ -22,7 +22,8 @@ from ms605.events import (
     LiveRadar,
     PirChanged,
 )
-from ms605.protocol import TAG_LIVE_OUTPUT_ENABLE, TAG_LIVE_RADAR_OUTPUT, TAG_PIR_STATE
+from ms605.models import FALLBACK_DISTANCES_M, zone_distances
+from ms605.protocol import TAG_LIVE_OUTPUT_ENABLE, TAG_LIVE_RADAR_OUTPUT, TAG_PIR_STATE, TAG_ZONE_DISTANCES
 from ms605.session import DeviceSession
 from ms605.sim import SimBLEDevice, SimFleet
 
@@ -576,6 +577,23 @@ def test_read_info_identifies_the_device():
 
     asyncio.run(main())
 
+
+
+def test_read_info_reads_the_zone_distances():
+    async def main():
+        dev, session, events = _setup()
+        await session.connect()
+        info = await session.read_info()
+        assert info.zone_distances_m == pytest.approx((0.0, 0.8, 1.6, 2.4, 3.2, 4.0, 4.8, 5.6))
+        assert zone_distances(info) == pytest.approx((0.8, 1.6, 2.4, 3.2, 4.0, 4.8, 5.6))
+        assert [e.busy for e in _of(events, BusyChanged)] == ["identify", None]  # the same single read
+        dev.tags[TAG_ZONE_DISTANCES] = b""  # a device that reports no distances
+        info = await session.read_info()
+        assert info.zone_distances_m is None
+        assert zone_distances(info) == FALLBACK_DISTANCES_M
+        await session.close()
+
+    asyncio.run(main())
 
 # -- live output refcount -------------------------------------------------------------
 

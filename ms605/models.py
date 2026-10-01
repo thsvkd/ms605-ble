@@ -11,6 +11,7 @@ from __future__ import annotations
 import struct
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
+from typing import Protocol
 
 from .errors import FrameError, ProfileError
 from .protocol import (
@@ -205,7 +206,14 @@ def decode_config(response: ParsedFrame) -> MS605Config:
 FALLBACK_DISTANCES_M: tuple[float, ...] = (0.8, 1.6, 2.4, 3.2, 4.0, 5.0, 6.0)
 
 
-def zone_distances(cfg: MS605Config) -> tuple[float, ...]:
+class HasZoneDistances(Protocol):
+    """MS605Config, or session.DeviceInfo (tag53 read while identifying)."""
+
+    @property
+    def zone_distances_m(self) -> Sequence[float] | None: ...
+
+
+def zone_distances(cfg: HasZoneDistances) -> tuple[float, ...]:
     """Return exactly 7 zone far-edge distances (metres)."""
     d = tuple(cfg.zone_distances_m or ())
     # tag53 carries 8 boundary markers (0.0 .. 6.0); the 7 zones are the

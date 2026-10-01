@@ -5,6 +5,7 @@ BleakClient. Every value here is synthetic."""
 from __future__ import annotations
 
 import asyncio
+import time
 
 import pytest
 
@@ -250,6 +251,29 @@ def test_auto_calibration_streams_pushes_and_updates_thresholds():
         # thresholds stream from the old table toward the learned one
         assert radar[0].zones[0].trigger_threshold > radar[-1].zones[0].trigger_threshold
         assert radar[-1].zones[0].trigger_threshold == DEFAULT_LEARNED_THRESHOLDS[0][0]
+
+    _run(run())
+
+
+def test_a_busy_event_loop_does_not_stretch_the_learning():
+    """Ticks are due on a fixed grid: 3 ms of loop time per 5.6 ms tick delays each one but not
+    the end (chained timers would add 180 x 3 ms = 0.54 s to the 1 s learning)."""
+
+    async def run():
+        dev = _fast(speed=180)  # 180 ticks of 1/180 s: 1.0 s
+        ms = await _driver(dev)
+        tick = dev._tick
+
+        def busy_tick() -> None:
+            time.sleep(0.003)
+            tick()
+
+        dev._tick = busy_tick
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        assert await ms.start_auto_calibration(timeout=5.0) is True
+        assert loop.time() - started < 1.3
+        assert dev.thresholds == list(DEFAULT_LEARNED_THRESHOLDS)
 
     _run(run())
 

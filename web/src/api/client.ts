@@ -1,13 +1,16 @@
 import { useStore } from '../store/store'
 import type {
+  BatchView,
   ErrorCode,
   GatherStatus,
   ImportResult,
+  PreflightResult,
   SensorCreate,
   SensorInfoImport,
   SensorUpdate,
   SensorView,
   SiteView,
+  StartMode,
 } from './types'
 
 export class ApiRequestError extends Error {
@@ -82,3 +85,29 @@ export const simPress = (index: number) => request<void>('POST', `/api/sim/press
 export const simPressAll = () => request<void>('POST', '/api/sim/press-all')
 
 export const simDrop = (index: number) => request<void>('POST', `/api/sim/drop/${index}`)
+
+// -- M3 (docs/GUI_API.md 14.8.7): responses only colour the form; the batch itself arrives over WS (G10)
+
+export const preflight = (deviceIds: string[], windowS?: number) =>
+  request<PreflightResult>(
+    'POST',
+    '/api/preflight',
+    windowS === undefined ? { device_ids: deviceIds } : { device_ids: deviceIds, window_s: windowS },
+  )
+
+export interface StartBody {
+  start: StartMode
+  delay_s?: number
+  /** ISO 8601 with an offset (toISOString's Z counts). */
+  at?: string
+}
+
+export const createBatch = (body: StartBody & { device_ids: string[]; presence_override?: boolean }) =>
+  request<BatchView>('POST', '/api/batches', body)
+
+export const getBatch = (batchId: string) => request<BatchView>('GET', `/api/batches/${enc(batchId)}`)
+
+export const cancelBatch = (batchId: string) => request<BatchView>('POST', `/api/batches/${enc(batchId)}/cancel`)
+
+export const retryBatch = (batchId: string, body: StartBody & { device_ids?: string[] }) =>
+  request<BatchView>('POST', `/api/batches/${enc(batchId)}/retry`, body)

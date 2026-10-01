@@ -1,5 +1,6 @@
 import { useStore } from '../store/store'
 import type { IncomingMessage } from '../store/reducer'
+import type { ClientMessage } from './types'
 
 /** The subset of the browser WebSocket this client uses (tests pass a fake). */
 export interface SocketLike {
@@ -9,6 +10,7 @@ export interface SocketLike {
   onclose: ((ev: CloseEvent) => void) | null
   onerror: ((ev: Event) => void) | null
   close(code?: number, reason?: string): void
+  send(data: string): void
 }
 
 export interface WsOptions {
@@ -27,6 +29,14 @@ const CONNECTING = 0
 const BACKOFF_S = [0.5, 1, 2, 4, 5]
 const AUTH_CLOSE = new Set([4401, 4403])
 const TOO_SLOW = 1013
+/** LiveWatch.device_ids max_length (14.4). */
+export const WATCH_CHUNK = 32
+
+function chunks(ids: string[]): string[][] {
+  const out: string[][] = []
+  for (let i = 0; i < ids.length; i += WATCH_CHUNK) out.push(ids.slice(i, i + WATCH_CHUNK))
+  return out
+}
 
 export function backoffMs(attempt: number, random: () => number = Math.random): number {
   const base = BACKOFF_S[Math.min(attempt, BACKOFF_S.length - 1)] ?? 5
@@ -53,6 +63,26 @@ export function connectWs(options: WsOptions = {}): WsHandle {
   let timer: ReturnType<typeof setTimeout> | null = null
   let attempt = 0
   let stopped = false
+  /** The ids this socket has told the server to stream (14.8.3); null until its snapshot. */
+  let sent: Set<string> | null = null
+
+  /** Send the difference between `watch` and what the server already has, in chunks of 32. */
+  const syncWatch = () => {
+    const s = socket
+    if (!s || sent === null || s.readyState !== OPEN) return
+    const want = new Set(Object.keys(store.getState().watch))
+    const add = [...want].filter((id) => !sent?.has(id))
+    const drop = [...sent].filter((id) => !want.has(id))
+    const post = (type: ClientMessage['type'], ids: string[]) => {
+      for (const part of chunks(ids)) {
+        const msg: ClientMessage = { type, data: { device_ids: part } }
+        s.send(JSON.stringify(msg))
+      }
+    }
+    post('live_subscribe', add)
+    post('live_unsubscribe', drop)
+    sent = want
+  }
 
   const clearTimer = () => {
     if (timer !== null) clearTimeout(timer)
@@ -73,6 +103,7 @@ export function connectWs(options: WsOptions = {}): WsHandle {
       socket = null
     }
     let gotSnapshot = false
+    sent = null
     const s = createSocket(url)
     socket = s
     s.onmessage = (ev) => {
@@ -86,6 +117,9 @@ export function connectWs(options: WsOptions = {}): WsHandle {
       if (msg.type === 'snapshot') {
         gotSnapshot = true
         attempt = 0
+        // a new connection starts with no subscriptions on the server: send every watched id again
+        sent = new Set()
+        syncWatch()
       }
       if (resync) restartNow()
     }
@@ -93,6 +127,7 @@ export function connectWs(options: WsOptions = {}): WsHandle {
       detach(s)
       if (socket !== s || stopped) return // a replaced socket's late close must not reconnect again
       socket = null
+      sent = null
       if (AUTH_CLOSE.has(ev.code)) {
         store.getState().setUnauthorized()
         return
@@ -115,6 +150,7 @@ export function connectWs(options: WsOptions = {}): WsHandle {
     if (s) {
       detach(s)
       socket = null
+      sent = null
       s.close()
     }
     store.getState().setConn('reconnecting')
@@ -130,12 +166,16 @@ export function connectWs(options: WsOptions = {}): WsHandle {
   }
 
   document.addEventListener('visibilitychange', onVisible)
+  const unsubscribeStore = store.subscribe((next, prev) => {
+    if (next.watch !== prev.watch) syncWatch()
+  })
   open()
 
   return {
     stop() {
       stopped = true
       clearTimer()
+      unsubscribeStore()
       document.removeEventListener('visibilitychange', onVisible)
       if (socket) {
         detach(socket)

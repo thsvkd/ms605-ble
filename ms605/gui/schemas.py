@@ -6,10 +6,10 @@ import sys
 from pathlib import Path
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, RootModel, StringConstraints
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, RootModel, StringConstraints, model_validator
 from pydantic.json_schema import models_json_schema
 
-from ms605.events import LinkState
+from ms605.events import BatchState, CalibrationState, LinkState
 
 # -- field types ---------------------------------------------------------------
 
@@ -148,6 +148,142 @@ class ServerInfo(Out):
     sim: SimInfo | None
 
 
+# -- M3: live monitor ------------------------------------------------------------------
+
+
+class LiveWatch(In):
+    device_ids: Annotated[list[DeviceId], Field(max_length=32)]
+
+
+class LiveSubscribeMessage(In):  # client -> server
+    type: Literal["live_subscribe"]
+    data: LiveWatch
+
+
+class LiveUnsubscribeMessage(In):  # client -> server
+    type: Literal["live_unsubscribe"]
+    data: LiveWatch
+
+
+class ClientMessage(
+    RootModel[Annotated[LiveSubscribeMessage | LiveUnsubscribeMessage, Field(discriminator="type")]]
+):
+    pass
+
+
+class LiveZone(Out):
+    index: int  # 0..6
+    distance_m: float  # far edge, models.zone_distances()
+    enabled: bool
+    trigger_active: bool  # the device's own flag (colours the trigger cur/thr text, as the CLI)
+    trigger: int  # current_trigger
+    trigger_threshold: int  # signed: calibration can make it zero or negative
+    maintain: int  # current_maintain
+    maintain_threshold: int
+
+
+class LiveData(Out):
+    device_id: str
+    at: float  # epoch s of the tag55 push behind this frame
+    pir: bool | None  # session.last_pir; None: not seen in this stream yet
+    sub_sensor_presence: list[bool]  # S1..S3, the device's own presence call
+    zones: list[LiveZone]
+
+
+class Countdown(Out):
+    batch_id: str
+    fire_at: float  # epoch s (server clock)
+    remaining_s: float  # fire_at - ts, never below 0
+
+
+# -- M3: preflight and batch calibration -------------------------------------------------
+
+
+class PreflightRequest(In):
+    device_ids: Annotated[list[DeviceId], Field(min_length=1, max_length=32)]
+    window_s: Annotated[float, Field(ge=0.2, le=10.0)] = 3.0  # calibration.PREFLIGHT_WINDOW_S
+
+
+class PresenceView(Out):
+    device_id: str
+    samples: int  # tag55 pushes seen in the window
+    presence: bool | None  # any sub-sensor presence; None: no sample
+    pir: bool | None  # PIR seen detected; None: no PIR value seen
+    occupied: bool | None  # presence or pir; None: neither seen
+    error: str | None  # e.g. "not connected"
+
+
+class PreflightResult(Out):
+    checked_at: float  # epoch s
+    results: list[PresenceView]  # request order
+
+
+StartMode = Literal["now", "delay", "at"]
+
+
+class BatchStart(In):
+    start: StartMode = "now"
+    delay_s: Annotated[int, Field(ge=1, le=3600)] | None = None  # required iff start == "delay"
+    at: AwareDatetime | None = None  # required iff start == "at"; ISO 8601 with an offset
+
+    @model_validator(mode="after")
+    def _check_start(self) -> "BatchStart":
+        if (self.start == "delay") != (self.delay_s is not None):
+            raise ValueError("delay_s is required with start='delay', and only then")
+        if (self.start == "at") != (self.at is not None):
+            raise ValueError("at is required with start='at', and only then")
+        return self
+
+
+class BatchCreate(BatchStart):
+    device_ids: Annotated[list[DeviceId], Field(min_length=1, max_length=32)]
+    presence_override: bool = False  # the operator started despite an occupied preflight
+
+    @model_validator(mode="after")
+    def _check_ids(self) -> "BatchCreate":
+        if len(set(self.device_ids)) != len(self.device_ids):
+            raise ValueError("device_ids has duplicates")
+        return self
+
+
+class BatchRetry(BatchStart):
+    device_ids: Annotated[list[DeviceId], Field(min_length=1, max_length=32)] | None = None  # None: every retryable
+
+
+class ZonePair(Out):
+    trigger: int
+    maintain: int
+
+
+class CalibrationJobView(Out):
+    batch_id: str
+    device_id: str
+    attempt: int  # 1, +1 each time a retry includes this sensor
+    state: CalibrationState  # "idle": waiting for the fire time
+    started: bool  # tag52=4 was sent (lost + started: dropped while learning)
+    elapsed_s: float | None  # since LEARNING began, last CalibrationProgress; None before LEARNING
+    error: str | None
+    detail: str
+    before: list[ZonePair] | None  # tag51 just before STARTING
+    after: list[ZonePair] | None  # tag51 read back after SUCCEEDED
+    history_saved: bool
+    retryable: bool  # state is failed, lost or timeout
+
+
+class BatchView(Out):
+    batch_id: str  # stable across retries (the first round's core batch id)
+    state: BatchState  # of the current round
+    round: int  # 1, +1 per retry
+    start: StartMode  # of the current round
+    fire_at: float  # epoch s, current round
+    created_at: float  # epoch s, first round
+    expected_s: float  # progress denominator: EXPECTED_CALIBRATION_S / sim speed (not device progress)
+    presence_override: bool
+    device_ids: list[str]  # every sensor of the batch, selection order
+    round_ids: list[str]  # the sensors of the current round
+    jobs: list[CalibrationJobView]  # device_ids order
+
+
 class StateSnapshot(Out):
     seq: int
     server: ServerInfo
@@ -155,6 +291,7 @@ class StateSnapshot(Out):
     sites: list[SiteView]
     sensors: list[SensorView]
     pending: list[PendingView]
+    batch: BatchView | None  # the current or last batch, kept until the next one (late joiners)
 
 
 class ImportResult(Out):
@@ -164,7 +301,7 @@ class ImportResult(Out):
 
 ErrorCode = Literal[
     "unauthorized", "forbidden_origin", "not_found", "already_exists", "busy",
-    "not_connected", "invalid", "invalid_request", "invalid_file", "storage", "internal",
+    "not_connected", "invalid", "invalid_request", "invalid_file", "storage", "internal", "batch_active",
 ]
 
 
@@ -251,11 +388,39 @@ class NoticeMessage(Out):
     data: Notice
 
 
+class BatchMessage(Out):
+    type: Literal["batch"] = "batch"
+    seq: int
+    ts: float
+    data: BatchView
+
+
+class CalibrationJobMessage(Out):
+    type: Literal["calibration_job"] = "calibration_job"
+    seq: int
+    ts: float
+    data: CalibrationJobView
+
+
+class LiveMessage(Out):  # transient: no seq, only to subscribers, coalesced per sensor
+    type: Literal["live"] = "live"
+    seq: None = None
+    ts: float
+    data: LiveData
+
+
+class CountdownMessage(Out):  # transient: no seq, 1 Hz while a batch waits
+    type: Literal["countdown"] = "countdown"
+    seq: None = None
+    ts: float
+    data: Countdown
+
+
 class ServerMessage(
     RootModel[
         Annotated[
             SnapshotMessage | SensorMessage | SensorRemovedMessage | SitesMessage | PendingMessage
-            | GatherMessage | NoticeMessage,
+            | GatherMessage | NoticeMessage | BatchMessage | CalibrationJobMessage | LiveMessage | CountdownMessage,
             Field(discriminator="type"),
         ]
     ]
@@ -263,8 +428,14 @@ class ServerMessage(
     pass
 
 
-REQUEST_MODELS = (SiteCreate, SensorCreate, SensorUpdate, ReleaseRequest, SensorInfoImport)
-RESPONSE_MODELS = (Health, StateSnapshot, SiteView, SensorView, ImportResult, ApiError, ServerMessage)
+REQUEST_MODELS = (
+    SiteCreate, SensorCreate, SensorUpdate, ReleaseRequest, SensorInfoImport,
+    PreflightRequest, BatchCreate, BatchRetry, ClientMessage,
+)
+RESPONSE_MODELS = (
+    Health, StateSnapshot, SiteView, SensorView, ImportResult, ApiError, ServerMessage,
+    PreflightResult, BatchView,
+)
 
 
 def openapi_document() -> dict:

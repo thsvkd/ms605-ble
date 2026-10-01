@@ -21,6 +21,7 @@
 | `EXPECTED_CALIBRATION_S` | `calibration.py` | 180.0 | **미측정**. GUI_PLAN 1장 "최대 약 3분", 시뮬레이터 가정과 같다. 진행 막대의 분모로만 쓴다 |
 | `CALIBRATION_TIMEOUT_S` | `protocol.py`(기존) | 200.0 | 기존 값 유지 |
 | `PREFLIGHT_WINDOW_S` | `calibration.py` | 3.0 | tag55 주기 약 1초(시뮬레이터 가정) → 표본 약 3개 |
+| `IDENTIFY_WAIT_S` | `calibration.py` | 2.0 | (M3) 재수집 직후의 `"identify"` 잠금은 tag 읽기 한 번(응답 대기 최대 `WRITE_TIMEOUT_S`보다 훨씬 짧다)이다. 보정이 그 잠금을 기다리는 상한(5.2절) |
 | `GATHER_PAUSE_S` | `fleet.py` | 1.0 | 기존 `--collect` 스캔 루프의 쉬는 시간 |
 
 측정 결과 중 설계에 직접 반영한 것:
@@ -78,6 +79,16 @@ models ← events ← session ← calibration ← fleet
 | `errors.py` | `SessionBusyError(MS605Error)`: `reason: str` 속성. `StorageError(MS605Error)` | 9장 오류 계약 |
 | `models.py` | `FALLBACK_DISTANCES_M`, `zone_distances(cfg)`를 `cli.py`에서 그대로 옮긴다 | 보정 기록(`build_calibration_record`)이 코어로 오기 때문 |
 | `driver.py` | `start_auto_calibration(..., on_started: Callable[[], None] \| None = None)`. tag52=4의 ACK를 받고 오래된 tag62 검사를 마친 직후 한 번 호출한다. 콜백 예외는 로그만 남긴다 | `CalibrationJob`이 STARTING → LEARNING 전이를 알 수 있는 유일한 지점 |
+
+### 2.2 M3에서 더한 것
+
+GUI M3(`docs/GUI_API.md` 14장)가 코어에 요구하는 변경은 아래 세 가지뿐이다. 그 밖의 M3 기능은 GUI 서버가 이 문서의 기존 표면을 감싸서 만든다.
+
+| 파일 | 변경 | 이유 |
+|------|------|------|
+| `session.py` | `DeviceInfo`에 마지막 필드 `zone_distances_m: tuple[float, ...] \| None = None`을 더한다. `read_info()`는 같은 `read_raw()` 한 번에 tag53(`TAG_ZONE_DISTANCES`)도 읽고, 값이 있으면 `decode_zone_distances(value)`, 없거나 비면 `None`을 넣는다(4.1절) | GUI 실시간 막대가 존 거리를 표시한다. 따로 `operation("read")`로 설정을 읽으면 그 순간 발사된 배치가 `busy: read`로 실패하므로, 이미 잡는 `"identify"` 읽기에 tag 하나를 더한다. 기본값이 있으므로 기존 생성 코드는 그대로다 |
+| `models.py` | `zone_distances(cfg)`의 본문은 그대로 두고, 인자 타입만 `HasZoneDistances`로 넓힌다: `class HasZoneDistances(Protocol)`에 읽기 전용 속성 `zone_distances_m: Sequence[float] \| None` 하나. `MS605Config`와 `DeviceInfo`가 둘 다 맞는다(`None`이면 `FALLBACK_DISTANCES_M`) | `models`는 `session`을 import할 수 없다(2장 의존 방향). 본문이 이미 `cfg.zone_distances_m or ()`만 읽으므로 동작은 같다 |
+| `calibration.py` | `IDENTIFY_WAIT_S = 2.0`, `CalibrationJob(..., identify_wait: float = IDENTIFY_WAIT_S)`. `run()`이 `"identify"` 잠금만은 이 시간까지 기다린다(5.2절 첫 행) | M1의 열린 문제: 재수집 직후 세션이 잠깐 `"identify"`를 잡고 있는데, 그 사이 발사된 배치가 곧바로 `FAILED("busy: identify")`가 됐다 |
 
 ## 3. `events.py`
 
@@ -174,6 +185,7 @@ class DeviceInfo:
     battery_pct: int | None           # tag23 첫 바이트
     version: tuple[int, ...] | None   # tag21, decode_supported_tags()
     light_lux: int | None             # tag36, big-endian 정수
+    zone_distances_m: tuple[float, ...] | None = None   # (M3) tag53, decode_zone_distances(). 없으면 None
 
 class DeviceSession:
     def __init__(
@@ -230,7 +242,7 @@ class DeviceSession:
   `MS605ConnectionError("session closed while connecting")`로 끝나며, 상태는 DISCONNECTED로 남는다.
   드라이버를 건드리는 연결 시도는 한 번에 하나다. `close()` 뒤에 시작한 연결은 늦게 끝나는 이전 시도가 자기 링크를
   끊을 때까지 기다린다. 그래서 이전 시도의 정리가 새 링크를 끊지 않는다.
-- `read_info()`: 작업 잠금(`"identify"`)을 잡고 tag30/23/21/36을 `read_raw()` 한 번으로 읽는다. tag30이
+- `read_info()`: 작업 잠금(`"identify"`)을 잡고 tag30/23/21/36/53(53은 M3, 2.2절)을 `read_raw()` 한 번으로 읽는다. tag30이
   없거나 비어 있으면 `MS605Error`를 낸다. 성공하면 `device_id`와 `info`를 채운다.
 - `acquire_live()` / `release_live()`: 실시간 출력(tag54)의 참조 카운트다. 여러 화면이 같은 센서를 볼 수 있기 때문에
   필요하다(D11). 4.3절을 보라.
@@ -345,6 +357,7 @@ class CalibrationJob:
         timeout: float = CALIBRATION_TIMEOUT_S,
         expected_s: float = EXPECTED_CALIBRATION_S,
         progress_interval: float = 1.0,
+        identify_wait: float = IDENTIFY_WAIT_S,      # (M3) 5.2절 첫 행
     ) -> None: ...
     session: DeviceSession
     state: CalibrationState          # 처음에는 IDLE
@@ -368,6 +381,7 @@ UI가 둘을 따로 보여 줄 수 있다. 사전점검은 경고일 뿐 보정�
 
 | 현재 | 트리거 | 다음 | 비고 |
 |------|--------|------|------|
+| IDLE | `run()`, 잠금이 `"identify"` | (IDLE에서 대기) | (M3) 기기 I/O 없이 `identify_wait`초까지 50 ms 간격으로 `session.busy`를 다시 본다. 풀리면 아래 행들을 차례로 적용한다(잠금 확인과 획득 사이에 `await`가 없으므로 경쟁이 없다). 기한을 넘기면 다음 행대로 FAILED. 대기 중 `cancel()`이면 I/O 없이 CANCELLED(`started=False`). `"identify"`만 기다리는 이유: 사람이 시작한 작업이 아니라 세션이 스스로 잡는 tag 읽기 한 번이기 때문이다. 다른 이유(`"read"`, `"apply"`, `"calibration"`)는 지금처럼 즉시 실패한다(D11) |
 | IDLE | `run()`, 잠금이 잡혀 있음 | FAILED | `error="busy: <이유>"`, `started=False` |
 | IDLE | `run()`, CONNECTED가 아님 | LOST | `detail`=세션의 마지막 끊김 이유, `started=False` |
 | IDLE | `run()`, 보정 전 tag51 읽기 실패 | LOST(`MS605ConnectionError`) / FAILED(그 밖) | `started=False` |
@@ -776,7 +790,8 @@ class Storage:
   드라이버의 send lock이 프레임 조각이 섞이지 않게 막는다.
 - 기기 사이: 연결, 식별, 사전점검, 보정은 기기 수만큼 동시에 한다. 초안 적용만 순차다(6.4절).
 - 수집 루프는 Fleet당 하나다. 수집과 배치 보정은 동시에 돌 수 있다. 보정 중 스캔의 영향은 측정되지 않았으므로
-  CLI는 지금처럼 발사 전에 수집을 끝낸다. GUI는 M3에서 정한다.
+  CLI는 지금처럼 발사 전에 수집을 끝낸다. GUI는 배치가 RUNNING이 되면 모으기를 멈춘다(`docs/GUI_API.md` 14.1절 G20).
+- (M3) `CalibrationJob.run()`은 `"identify"` 잠금만 `identify_wait`(기본 2초)까지 기다린다(5.2절). 그 밖의 잠금 규칙은 위와 같다.
 - 동시 링크 수는 제한하지 않는다(2대까지만 확인). 한도를 넘으면 연결 실패가 `GatherFailed`로 보인다. 한도 측정은 M5로 넘긴다.
 - 취소: 모든 공개 코루틴은 취소되면 잠금을 놓고, 만든 태스크를 정리하고, `CancelledError`를 다시 올린다.
   보정 중 취소만 링크를 끊는다(5.3절).
@@ -933,7 +948,9 @@ M2 서버는 이 표면을 감싸기만 한다.
 |------|--------------|
 | `tests/test_events.py` | 구독 순서, 해제 함수, 디스패치 중 해제, 콜백 예외 → `HandlerFailed` 후 다음 구독자 실행, `HandlerFailed` 처리 중 예외는 재귀하지 않음, 스트림 drop-oldest와 `dropped`, `close()` 후 `StopAsyncIteration`, `asdict`→`json.dumps` 가능 |
 | `tests/test_session.py` | 4.2절 표의 전이 각각, 유휴 끊김 없이 keep-alive로 유지, `drop_link()` → LOST, `KeepAliveMissed`(`inject_status`/`drop_responses`), 잠금 즉시 실패와 `BusyChanged`, 미연결 시 `operation()` 거절, `reconnect()`이 버튼을 다시 누를 때까지 기다림·기한 초과·취소, live 참조 카운트와 재연결 후 tag54 다시 쓰기, 짧은 tag55 → `FrameDropped`, `PirChanged`는 바뀔 때만 |
-| `tests/test_calibration.py` | 성공(`before`/`after`, 이력 한 줄과 `device_id`), `calibration_result=0` → FAILED, 보정 중 `drop_link()` → LOST, 결과 없음 → TIMEOUT, tag52 status 오류 → FAILED, 잠금 충돌 → FAILED(`busy`), 미연결 → LOST(`started=False`), LEARNING 중 `cancel()` → 링크가 끊기고 기기 tag51이 그대로, 외부 태스크 취소도 같음, 진행 이벤트, 보정 중 세션 ping이 멈추고 끝난 뒤 즉시 ping, 사전점검의 재실/부재/표본 없음 |
+| `tests/test_calibration.py` | 성공(`before`/`after`, 이력 한 줄과 `device_id`), `calibration_result=0` → FAILED, 보정 중 `drop_link()` → LOST, 결과 없음 → TIMEOUT, tag52 status 오류 → FAILED, 잠금 충돌 → FAILED(`busy`), 미연결 → LOST(`started=False`), LEARNING 중 `cancel()` → 링크가 끊기고 기기 tag51이 그대로, 외부 태스크 취소도 같음, 진행 이벤트, 보정 중 세션 ping이 멈추고 끝난 뒤 즉시 ping, 사전점검의 재실/부재/표본 없음. (M3) `"identify"` 대기: 0.3초 뒤 풀리면 SUCCEEDED, `identify_wait=0.2`인데 1초 잡혀 있으면 0.2초 이상 기다린 뒤 FAILED(`busy: identify`), 대기 중 `cancel()` → CANCELLED이고 tag52 쓰기 없음, `"read"` 잠금은 기다리지 않고 즉시 FAILED |
+| `tests/test_session.py` (M3) | `read_info()`의 `info.zone_distances_m`이 시뮬레이터 tag53과 같음(`zone_distances(info) == (0.8, 1.6, 2.4, 3.2, 4.0, 4.8, 5.6)`), tag53을 지운 기기는 `None`이고 `zone_distances(info) == FALLBACK_DISTANCES_M` |
+| `tests/test_fleet.py` (M3) | **재수집 직후 발사 회귀**: `SimFleet(1, speed=100)`, 수집 중인 센서에 `dev.response_delay = 10.0`(벽시계 0.1초: identify 읽기가 그만큼 잠금을 잡는다)을 주고 `drop_link()` → `press_button()`. 재수집이 잡는 `BusyChanged(busy="identify")`를 버스 콜백이 보는 즉시 `fleet.calibrate([id])` → 결과 SUCCEEDED(수정 전에는 `FAILED("busy: identify")`). `CONNECTED`가 아니라 잠금 이벤트에 거는 이유: 그래야 발사가 잠금 구간 안에 확실히 들어간다 |
 | `tests/test_fleet.py` | 수집이 광고 중인 장치만 연결, 알려진/새 센서 이벤트, 대기 항목 해결, 연결 실패 → `GatherFailed` 후 다음 스캔에서 재시도, LOST 세션이 버튼을 누르면 같은 세션으로 복귀, `stop_gather()` 뒤 새 링크 없음, 중복 ID, 배치 즉시/N초/시각, 대기 중 취소, 7대 중 1대를 보정 중 끊어도 6대 성공(M3 기준을 코어에서 먼저), `retry_ids()` 재배치, 상대·절대 초안과 범위 초과 → 그 센서만 FAILED, `per_sensor` 섹션 덮어쓰기, `apply_delay` 아래에서 폴링 검증 OK, `inject_status` → FAILED + 스냅샷, `rollback()`으로 복원, 클론 |
 | `tests/test_registry.py` | 사이트·센서 CRUD와 오류, 변경마다 저장, `import_sensor_info`의 주석·빈 줄·따옴표·MAC 주소·잘못된 줄(줄 번호, 전부 아니면 전무)·다시 가져오기, 호스트별 주소 캐시 |
 | `tests/test_storage.py` | `MS605_DATA_DIR` 우선순위, 원자적 쓰기(실패 시 기존 파일 유지, 임시 파일 정리), 깨진 JSON → `StorageError`, 이력 깨진 줄 건너뛰기와 예전 줄 주소 매칭, 스냅샷 이름 순서와 왕복 |

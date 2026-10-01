@@ -1,8 +1,9 @@
-import { Bluetooth, LayoutGrid, Radar } from 'lucide-react'
+import { Activity, Bluetooth, Crosshair, LayoutGrid, Radar } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { Link, useRoute } from 'wouter'
-import { useStore } from '../store/store'
+import { selectBatchActive, useStore } from '../store/store'
 import { t } from '../strings'
+import { CalibrationPill } from './CalibrationPill'
 import { ConnectionBanner } from './ConnectionBanner'
 import { GatherPill } from './GatherPill'
 import { LanBadge } from './LanBadge'
@@ -23,6 +24,7 @@ function NavLink({ href, className, children }: { href: string; className?: stri
 export function AppShell({ children }: { children: ReactNode }) {
   const open = useStore((s) => s.conn === 'open')
   const gathering = useStore((s) => s.gather.gathering)
+  const batchActive = useStore(selectBatchActive)
   return (
     <div className={styles.app}>
       <header className={styles.header}>
@@ -31,7 +33,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             <span className={styles.brandMark} aria-hidden>
               <Radar size={18} />
             </span>
-            MS605
+            <span className={styles.squeeze}>MS605</span>
           </Link>
           <nav className={styles.tabs} aria-label={t.nav.label}>
             <NavLink href="/" className={styles.tab}>
@@ -42,8 +44,17 @@ export function AppShell({ children }: { children: ReactNode }) {
               <Bluetooth size={18} aria-hidden />
               {t.nav.gather}
             </NavLink>
+            <NavLink href="/monitor" className={styles.tab}>
+              <Activity size={18} aria-hidden />
+              {t.nav.monitor}
+            </NavLink>
+            <NavLink href="/calibrate" className={styles.tab}>
+              <Crosshair size={18} aria-hidden />
+              {t.nav.calibrate}
+            </NavLink>
           </nav>
           <div className={styles.headerEnd}>
+            <CalibrationPill />
             <GatherPill />
             <LanBadge />
             <ThemeToggle />
@@ -61,6 +72,15 @@ export function AppShell({ children }: { children: ReactNode }) {
           <Bluetooth size={22} aria-hidden />
           {gathering && <span className={styles.navDot} aria-hidden />}
           {t.nav.gather}
+        </NavLink>
+        <NavLink href="/monitor" className={styles.bottomLink}>
+          <Activity size={22} aria-hidden />
+          {t.nav.monitor}
+        </NavLink>
+        <NavLink href="/calibrate" className={styles.bottomLink}>
+          <Crosshair size={22} aria-hidden />
+          {batchActive && <span className={styles.navDot} aria-hidden />}
+          {t.nav.calibrate}
         </NavLink>
       </nav>
       <Notices />

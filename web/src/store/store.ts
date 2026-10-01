@@ -1,12 +1,26 @@
 import { create } from 'zustand'
-import type { SensorView, SiteView } from '../api/types'
-import { type AppState, type ConnState, type IncomingMessage, initialState, reduce } from './reducer'
+import type { BatchView, SensorView, SiteView } from '../api/types'
+import {
+  addWatch,
+  type AppState,
+  type ConnState,
+  type IncomingMessage,
+  initialState,
+  reduce,
+  removeWatch,
+} from './reducer'
+
+export { selectBatchTally } from '../calibration'
 
 interface Actions {
   /** Feed one WS message through the reducer. Returns true when the caller must resync. */
   applyMessage: (msg: IncomingMessage) => boolean
   setConn: (conn: ConnState, failures?: number) => void
   setUnauthorized: () => void
+  /** Ref-counted live subscription (useLiveWatch); api/ws.ts mirrors `watch` to the server. */
+  /** 14.8.2 calls these `watch`/`unwatch`; renamed because `watch` is also the refcount field. */
+  watchLive: (ids: readonly string[]) => void
+  unwatchLive: (ids: readonly string[]) => void
 }
 
 export type Store = AppState & Actions
@@ -24,6 +38,12 @@ export const useStore = create<Store>()((set, get) => ({
     set(failures === undefined ? { conn } : { conn, failures })
   },
   setUnauthorized: () => set({ conn: 'unauthorized' }),
+  watchLive: (ids) => {
+    if (ids.length) set(addWatch(get(), ids))
+  },
+  unwatchLive: (ids) => {
+    if (ids.length) set(removeWatch(get(), ids))
+  },
 }))
 
 /** Back to the initial data (tests). */
@@ -90,6 +110,39 @@ export function selectGathered({ sensors }: Sensors): SensorView[] {
   return Object.values(sensors)
     .filter((s) => s.live !== null)
     .sort((a, b) => (b.live?.gathered_at ?? 0) - (a.live?.gathered_at ?? 0))
+}
+
+/** Sensors with a session: by site name then alias, unregistered ones last (pickers, 14.8.5). */
+export function selectSessions({ sensors, sites }: Pick<AppState, 'sensors' | 'sites'>): SensorView[] {
+  const siteName = (s: SensorView) => (s.registry ? (sites[s.registry.site_id]?.name ?? s.registry.site_id) : null)
+  return Object.values(sensors)
+    .filter((s) => s.live !== null)
+    .sort((a, b) => {
+      const sa = siteName(a)
+      const sb = siteName(b)
+      if (sa === null || sb === null) {
+        if (sa !== sb) return sa === null ? 1 : -1
+        return ko(sensorName(a), sensorName(b))
+      }
+      return ko(sa, sb) || ko(sensorName(a), sensorName(b))
+    })
+}
+
+/** Alias, else BLE name, else address, else id. */
+export function sensorName(s: SensorView | undefined, fallback = ''): string {
+  return s?.registry?.alias ?? s?.live?.name ?? s?.live?.address ?? (s?.device_id || fallback)
+}
+
+/** The current round is waiting or running. */
+export function selectBatchActive({ batch }: Pick<AppState, 'batch'>): boolean {
+  return batch !== null && (batch.state === 'waiting' || batch.state === 'running')
+}
+
+const NO_MEMBERS: ReadonlySet<string> = new Set()
+
+/** The sensors of the active round (operation lock, G22); empty when nothing runs. */
+export function selectBatchMembers({ batch }: { batch: BatchView | null }): ReadonlySet<string> {
+  return selectBatchActive({ batch }) && batch ? new Set(batch.round_ids) : NO_MEMBERS
 }
 
 export function selectSites({ sites }: Pick<AppState, 'sites'>): SiteView[] {

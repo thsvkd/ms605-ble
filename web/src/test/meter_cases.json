@@ -1,0 +1,202 @@
+[
+  {
+    "value": 60,
+    "threshold": 60,
+    "width": 16,
+    "tick_at": 5,
+    "plain": "█████┃──────────",
+    "over": false
+  },
+  {
+    "value": 61,
+    "threshold": 60,
+    "width": 16,
+    "tick_at": 5,
+    "plain": "█████┃█─────────",
+    "over": true
+  },
+  {
+    "value": 59,
+    "threshold": 60,
+    "width": 16,
+    "tick_at": 5,
+    "plain": "████─┃──────────",
+    "over": false
+  },
+  {
+    "value": 55,
+    "threshold": 60,
+    "width": 16,
+    "tick_at": 5,
+    "plain": "████─┃──────────",
+    "over": false
+  },
+  {
+    "value": 70,
+    "threshold": 60,
+    "width": 16,
+    "tick_at": 5,
+    "plain": "█████┃█─────────",
+    "over": true
+  },
+  {
+    "value": 77,
+    "threshold": 60,
+    "width": 16,
+    "tick_at": 5,
+    "plain": "█████┃██────────",
+    "over": true
+  },
+  {
+    "value": 120,
+    "threshold": 60,
+    "width": 16,
+    "tick_at": 5,
+    "plain": "█████┃█████─────",
+    "over": true
+  },
+  {
+    "value": 0,
+    "threshold": 60,
+    "width": 16,
+    "tick_at": 5,
+    "plain": "─────┃──────────",
+    "over": false
+  },
+  {
+    "value": 999,
+    "threshold": 10,
+    "width": 16,
+    "tick_at": 5,
+    "plain": "█████┃██████████",
+    "over": true
+  },
+  {
+    "value": -999,
+    "threshold": 10,
+    "width": 16,
+    "tick_at": 5,
+    "plain": "─────┃──────────",
+    "over": false
+  },
+  {
+    "value": 0,
+    "threshold": 0,
+    "width": 16,
+    "tick_at": 5,
+    "plain": "█████┃──────────",
+    "over": false
+  },
+  {
+    "value": 5,
+    "threshold": 0,
+    "width": 16,
+    "tick_at": 5,
+    "plain": "█████┃█████─────",
+    "over": true
+  },
+  {
+    "value": -1,
+    "threshold": 0,
+    "width": 16,
+    "tick_at": 5,
+    "plain": "████─┃──────────",
+    "over": false
+  },
+  {
+    "value": 1,
+    "threshold": 1,
+    "width": 16,
+    "tick_at": 5,
+    "plain": "█████┃──────────",
+    "over": false
+  },
+  {
+    "value": 2,
+    "threshold": 1,
+    "width": 16,
+    "tick_at": 5,
+    "plain": "█████┃█─────────",
+    "over": true
+  },
+  {
+    "value": 0,
+    "threshold": 1,
+    "width": 16,
+    "tick_at": 5,
+    "plain": "████─┃──────────",
+    "over": false
+  },
+  {
+    "value": -33,
+    "threshold": -33,
+    "width": 16,
+    "tick_at": 5,
+    "plain": "█████┃──────────",
+    "over": false
+  },
+  {
+    "value": -34,
+    "threshold": -33,
+    "width": 16,
+    "tick_at": 5,
+    "plain": "████─┃──────────",
+    "over": false
+  },
+  {
+    "value": -10,
+    "threshold": -33,
+    "width": 16,
+    "tick_at": 5,
+    "plain": "█████┃████──────",
+    "over": true
+  },
+  {
+    "value": 0,
+    "threshold": -33,
+    "width": 16,
+    "tick_at": 5,
+    "plain": "█████┃█████─────",
+    "over": true
+  },
+  {
+    "value": 10,
+    "threshold": 10,
+    "width": 20,
+    "tick_at": 6,
+    "plain": "██████┃─────────────",
+    "over": false
+  },
+  {
+    "value": 200,
+    "threshold": 200,
+    "width": 20,
+    "tick_at": 6,
+    "plain": "██████┃─────────────",
+    "over": false
+  },
+  {
+    "value": 0,
+    "threshold": 200,
+    "width": 20,
+    "tick_at": 6,
+    "plain": "──────┃─────────────",
+    "over": false
+  },
+  {
+    "value": 101,
+    "threshold": 100,
+    "width": 24,
+    "tick_at": 8,
+    "plain": "████████┃█──────────────",
+    "over": true
+  },
+  {
+    "value": 40,
+    "threshold": 100,
+    "width": 24,
+    "tick_at": 8,
+    "plain": "███─────┃───────────────",
+    "over": false
+  }
+]

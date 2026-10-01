@@ -12,7 +12,7 @@ export function GatherPill() {
   return (
     <Link href="/gather" className={styles.pill}>
       <Loader2 size={16} className="spin" aria-hidden />
-      {t.gather.pill}
+      <span className={styles.squeeze}>{t.gather.pill}</span>
       {connecting > 0 && (
         <span className={styles.pillCount} aria-label={t.gather.connecting(connecting)}>
           {connecting}

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { backoffMs, connectWs, type SocketLike, type WsHandle } from '../api/ws'
 import { useStore } from '../store/store'
-import { NOW_S, sensor, snapshotMsg } from './fixtures'
+import { deviceId, NOW_S, sensor, snapshotMsg } from './fixtures'
 
 class FakeSocket implements SocketLike {
   readyState = 0
@@ -10,6 +10,8 @@ class FakeSocket implements SocketLike {
   onclose: ((ev: CloseEvent) => void) | null = null
   onerror: ((ev: Event) => void) | null = null
   closedWith: number | undefined | null = null
+  /** Frames the client sent (live_subscribe / live_unsubscribe). */
+  readonly outbox: { type: string; data: { device_ids: string[] } }[] = []
   readonly url: string
 
   constructor(url: string) {
@@ -21,13 +23,17 @@ class FakeSocket implements SocketLike {
     this.readyState = 3
   }
 
+  send(data: string) {
+    this.outbox.push(JSON.parse(data))
+  }
+
   // -- server side
   open() {
     this.readyState = 1
     this.onopen?.(new Event('open'))
   }
 
-  send(msg: unknown) {
+  deliver(msg: unknown) {
     this.onmessage?.(new MessageEvent('message', { data: JSON.stringify(msg) }))
   }
 
@@ -56,7 +62,7 @@ const last = () => sockets[sockets.length - 1] as FakeSocket
 
 function connectWithSnapshot(seq = 10) {
   last().open()
-  last().send(snapshotMsg({ seq }))
+  last().deliver(snapshotMsg({ seq }))
 }
 
 beforeEach(() => {
@@ -115,11 +121,11 @@ describe('connectWs', () => {
     start()
     connectWithSnapshot(10)
     const first = last()
-    first.send({ type: 'sensor', seq: 12, ts: NOW_S, data: sensor(1) })
+    first.deliver({ type: 'sensor', seq: 12, ts: NOW_S, data: sensor(1) })
     expect(first.closedWith).not.toBeNull()
     expect(sockets).toHaveLength(2)
     last().open()
-    last().send(snapshotMsg({ seq: 40 }))
+    last().deliver(snapshotMsg({ seq: 40 }))
     expect(useStore.getState()).toMatchObject({ conn: 'open', lastSeq: 40 })
   })
 
@@ -182,7 +188,7 @@ describe('connectWs', () => {
     vi.advanceTimersByTime(60_000)
     expect(sockets).toHaveLength(2)
     last().open()
-    last().send(snapshotMsg({ seq: 20 }))
+    last().deliver(snapshotMsg({ seq: 20 }))
     expect(useStore.getState()).toMatchObject({ conn: 'open', lastSeq: 20 })
   })
 
@@ -190,5 +196,65 @@ describe('connectWs', () => {
     expect(backoffMs(0, () => 0)).toBeCloseTo(400)
     expect(backoffMs(0, () => 1)).toBeCloseTo(600)
     expect(backoffMs(99, () => 0.5)).toBe(5000)
+  })
+})
+
+describe('connectWs: live subscriptions follow `watch` (14.8.3)', () => {
+  const ids = (s: FakeSocket, type: string) => s.outbox.filter((m) => m.type === type).flatMap((m) => m.data.device_ids)
+
+  it('sends nothing before the snapshot, then every watched id once', () => {
+    useStore.getState().watchLive([deviceId(1), deviceId(2)])
+    start()
+    last().open()
+    useStore.getState().watchLive([deviceId(3)])
+    expect(last().outbox).toEqual([])
+    last().deliver(snapshotMsg())
+    expect(last().outbox).toHaveLength(1)
+    expect(ids(last(), 'live_subscribe').sort()).toEqual([1, 2, 3].map(deviceId).sort())
+  })
+
+  it('sends only the difference when watch changes', () => {
+    start()
+    connectWithSnapshot()
+    const { watchLive, unwatchLive } = useStore.getState()
+    watchLive([deviceId(1)])
+    watchLive([deviceId(1)]) // a second view of the same sensor: no new frame
+    watchLive([deviceId(2)])
+    unwatchLive([deviceId(1)]) // one view left
+    expect(last().outbox).toEqual([
+      { type: 'live_subscribe', data: { device_ids: [deviceId(1)] } },
+      { type: 'live_subscribe', data: { device_ids: [deviceId(2)] } },
+    ])
+    unwatchLive([deviceId(1)])
+    expect(last().outbox.at(-1)).toEqual({ type: 'live_unsubscribe', data: { device_ids: [deviceId(1)] } })
+  })
+
+  it('splits 33 ids into 32 + 1', () => {
+    start()
+    connectWithSnapshot()
+    useStore.getState().watchLive(Array.from({ length: 33 }, (_, i) => `id-${i}`))
+    expect(last().outbox.map((m) => m.data.device_ids.length)).toEqual([32, 1])
+  })
+
+  it('subscribes everything again on the new snapshot after a reconnect', () => {
+    start()
+    connectWithSnapshot()
+    useStore.getState().watchLive([deviceId(1), deviceId(2)])
+    last().serverClose(1013)
+    expect(sockets).toHaveLength(2)
+    last().open()
+    expect(last().outbox).toEqual([])
+    last().deliver(snapshotMsg({ seq: 30 }))
+    expect(ids(last(), 'live_subscribe').sort()).toEqual([deviceId(1), deviceId(2)].sort())
+  })
+
+  it('stops mirroring once stopped', () => {
+    start()
+    connectWithSnapshot()
+    const s = last()
+    handle?.stop()
+    handle = null
+    useStore.getState().watchLive([deviceId(1)])
+    expect(s.outbox).toEqual([])
   })
 })

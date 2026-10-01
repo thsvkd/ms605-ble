@@ -10,6 +10,7 @@ import logging
 import time
 from collections.abc import Callable
 
+from pydantic import ValidationError
 from starlette.websockets import WebSocket
 
 from ms605.errors import StorageError
@@ -33,12 +34,18 @@ from ms605.events import (
 )
 from ms605.fleet import Fleet
 
+from .batch import BatchService
+from .live import LiveFeed
 from .schemas import (
+    BatchMessage,
+    CalibrationJobMessage,
     CalibrationSummary,
+    ClientMessage,
     ConnectingDevice,
     GatherMessage,
     GatherStatus,
     LiveInfo,
+    LiveSubscribeMessage,
     Notice,
     NoticeMessage,
     PendingData,
@@ -64,33 +71,41 @@ SEND_TIMEOUT_S = 10.0
 NOTICE_SUPPRESS_S = 10.0
 CLOSE_TOO_SLOW = 1013
 CLOSE_GOING_AWAY = 1001
+MAX_CLIENT_FRAME = 4096  # bytes; a longer client frame is dropped (14.6.1)
 _UNREAD = object()  # the history index has not been built
 
 # Every ms605.events class (but the DeviceEvent base) is in exactly one of these;
 # tests/test_gui_ws.py checks it, so a new core event fails there first.
 HANDLED_EVENTS: frozenset[type[Event]] = frozenset(
-    {LinkStateChanged, BusyChanged, SensorGathered, GatherFailed, HandlerFailed, KeepAliveMissed, FrameDropped}
-)
-IGNORED_EVENTS: frozenset[type[Event]] = frozenset(
     {
-        LiveRadar,  # M3: live_radar
-        PirChanged,  # M3: live_pir
+        LinkStateChanged,
+        BusyChanged,
+        SensorGathered,
+        GatherFailed,
+        HandlerFailed,
+        KeepAliveMissed,
+        FrameDropped,
+        LiveRadar,
+        PirChanged,
         CalibrationStateChanged,
         CalibrationProgress,
         CalibrationResult,
         BatchChanged,
-        ApplyResult,
     }
 )
+IGNORED_EVENTS: frozenset[type[Event]] = frozenset({ApplyResult})  # M4
 
 
 class Client:
     """One /ws connection's ordered outbound queue. Overflow closes the
-    connection (1013) instead of dropping a message (G5)."""
+    connection (1013) instead of dropping a message (G5). Transient messages
+    (`live`, `countdown`) go to latest-value slots instead (G14)."""
 
     def __init__(self, ws: WebSocket, maxsize: int) -> None:
         self.ws = ws
         self.queue: asyncio.Queue[str | None] = asyncio.Queue(maxsize)
+        self.slots: dict[str, str] = {}  # key -> latest serialized message; never counts toward the queue
+        self._wake = asyncio.Event()  # set by put(), put_slot() and close()
         self.close_code: int | None = None
 
     def put(self, text: str) -> None:
@@ -100,6 +115,18 @@ class Client:
             self.queue.put_nowait(text)
         except asyncio.QueueFull:
             self.close(CLOSE_TOO_SLOW)
+            return
+        self._wake.set()
+
+    def put_slot(self, key: str, text: str) -> None:
+        if self.close_code is not None:
+            return
+        self.slots.pop(key, None)  # re-insert at the end: sensors take turns
+        self.slots[key] = text
+        self._wake.set()
+
+    def drop_slot(self, key: str) -> None:
+        self.slots.pop(key, None)
 
     def close(self, code: int) -> None:
         """Discard what is queued and have the sender close with `code`."""
@@ -108,14 +135,23 @@ class Client:
         self.close_code = code
         while not self.queue.empty():
             self.queue.get_nowait()
+        self.slots.clear()
         self.queue.put_nowait(None)
+        self._wake.set()
 
     async def run(self) -> None:
-        """Send queued messages in order until closed or the peer is gone."""
+        """Send queued messages in order, then slot values, until closed or the peer is gone."""
         while True:
-            text = await self.queue.get()
-            if text is None:
-                break
+            if not self.queue.empty():
+                text = self.queue.get_nowait()
+                if text is None:
+                    break
+            elif self.slots:
+                text = self.slots.pop(next(iter(self.slots)))
+            else:
+                self._wake.clear()
+                await self._wake.wait()
+                continue
             try:
                 await asyncio.wait_for(self.ws.send_text(text), SEND_TIMEOUT_S)
             except asyncio.TimeoutError:
@@ -130,7 +166,7 @@ class Client:
 class Hub:
     """Turns core events into view messages for every connected client."""
 
-    def __init__(self, fleet: Fleet, server: ServerInfo, *, queue_size: int = 512) -> None:
+    def __init__(self, fleet: Fleet, server: ServerInfo, *, queue_size: int = 512, speed: float = 1.0) -> None:
         self.fleet = fleet
         self.registry = fleet.registry
         self.storage = fleet.storage
@@ -143,7 +179,8 @@ class Hub:
         self._notices: list[Notice] = []
         self._notice_last: dict[tuple[str, str | None], float] = {}
         self._dirty_sensors: set[str] = set()
-        self._dirty_sites = self._dirty_pending = self._dirty_gather = False
+        self._dirty_jobs: set[str] = set()
+        self._dirty_sites = self._dirty_pending = self._dirty_gather = self._dirty_batch = False
         self._scheduled = False
         self._loop: asyncio.AbstractEventLoop | None = None
         self._unsubscribe: Callable[[], None] | None = None
@@ -152,6 +189,8 @@ class Hub:
         self._history_key: object = _UNREAD
         self._history_by_id: dict[str, tuple[int, dict]] = {}
         self._history_by_address: dict[str, tuple[int, dict]] = {}
+        self.live = LiveFeed(fleet, self)
+        self.batches = BatchService(fleet, self, speed=speed)
 
     # -- lifecycle -------------------------------------------------------------
 
@@ -171,9 +210,13 @@ class Hub:
     # -- events -> dirty marks ---------------------------------------------------
 
     def on_event(self, ev: Event) -> None:
+        if isinstance(ev, (LiveRadar, PirChanged)):
+            self.live.on_event(ev)  # throttled slot values, no seq
+            return
         if isinstance(ev, LinkStateChanged):
             if ev.device_id is not None:
                 self.mark_sensor(ev.device_id)
+                self.live.on_event(ev)
             elif ev.state is LinkState.CONNECTING:
                 self._connecting[ev.address.lower()] = ConnectingDevice(address=ev.address, since=ev.at)
                 self.mark_gather()
@@ -189,6 +232,7 @@ class Hub:
             self._forget_connecting(ev.address)
             if ev.resolved_pending:
                 self.mark_pending()
+            self.live.on_event(ev)
         elif isinstance(ev, GatherFailed):
             self._forget_connecting(ev.address)
             self._notice(ev.at, "warning", "gather_failed", ev.error, ev.device_id, ev.address, ev.name)
@@ -196,6 +240,8 @@ class Hub:
             self._notice(ev.at, "error", "internal", f"{ev.event_type}: {ev.error}", None, None, None)
         elif isinstance(ev, (KeepAliveMissed, FrameDropped)):
             _log.debug("%s", ev)
+        elif isinstance(ev, (BatchChanged, CalibrationStateChanged, CalibrationProgress, CalibrationResult)):
+            self.batches.on_event(ev)
         else:
             return  # IGNORED_EVENTS
         self._schedule()
@@ -231,6 +277,13 @@ class Hub:
     def mark_gather(self) -> None:
         self._dirty_gather = True
 
+    def mark_batch(self) -> None:
+        self._dirty_batch = True
+        self._schedule()
+
+    def mark_job(self, device_id: str) -> None:
+        self._dirty_jobs.add(device_id)
+
     def clear_connecting(self) -> None:
         if self._connecting:
             self._connecting.clear()
@@ -239,7 +292,8 @@ class Hub:
     # -- dirty marks -> messages -------------------------------------------------
 
     def flush(self) -> None:
-        """Publish everything marked, in the order sites, pending, sensors (by id), gather, notices."""
+        """Publish everything marked, in the order sites, pending, sensors (by id), batch or
+        calibration jobs (by id), gather, notices."""
         self._scheduled = False
         if self._dirty_sites:
             self._dirty_sites = False
@@ -254,6 +308,15 @@ class Hub:
                 self._publish(SensorRemovedMessage, SensorRemoved(device_id=device_id))
             else:
                 self._publish(SensorMessage, view)
+        jobs, self._dirty_jobs = sorted(self._dirty_jobs), set()
+        if self._dirty_batch:  # the batch carries every job
+            self._dirty_batch = False
+            batch = self.batches.view()
+            if batch is not None:
+                self._publish(BatchMessage, batch)
+        elif self.batches.current is not None:
+            for device_id in jobs:
+                self._publish(CalibrationJobMessage, self.batches.job_view(device_id))
         if self._dirty_gather:
             self._dirty_gather = False
             self._publish(GatherMessage, self.gather_status())
@@ -266,6 +329,14 @@ class Hub:
         text = cls(seq=self.seq, ts=time.time(), data=data).model_dump_json()
         for client in list(self.clients):
             client.put(text)
+
+    def put_slot_all(self, key: str, text: str) -> None:
+        for client in list(self.clients):
+            client.put_slot(key, text)
+
+    def drop_slot_all(self, key: str) -> None:
+        for client in list(self.clients):
+            client.drop_slot(key)
 
     # -- clients -------------------------------------------------------------------
 
@@ -284,16 +355,41 @@ class Hub:
     async def serve(self, ws: WebSocket) -> None:
         """Run one accepted /ws connection until either side ends it."""
         client = self.add_client(ws)
-        tasks = {asyncio.create_task(client.run()), asyncio.create_task(_drain(ws))}
+        tasks = {asyncio.create_task(client.run()), asyncio.create_task(self._receive(ws, client))}
         try:
             await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
         finally:
             self.remove_client(client)
+            self.live.drop_client(client)
             for task in tasks:
                 task.cancel()
             # wait, not gather: a gather cancelled mid-way raises a CancelledError of its own,
             # which an outer cancel scope (e.g. anyio's, in the TestClient) cannot recognise
             await asyncio.wait(tasks)
+
+    async def _receive(self, ws: WebSocket, client: Client) -> None:
+        """Hand each ClientMessage to the live feed until the peer disconnects. A frame that
+        is binary, over MAX_CLIENT_FRAME bytes or not a ClientMessage is dropped (14.6.1)."""
+        try:
+            while True:
+                message = await ws.receive()
+                if message["type"] == "websocket.disconnect":
+                    return
+                text = message.get("text")
+                if text is None or len(text.encode()) > MAX_CLIENT_FRAME:
+                    _log.warning("dropped a binary or oversized websocket frame")
+                    continue
+                try:
+                    parsed = ClientMessage.model_validate_json(text).root
+                except ValidationError as exc:
+                    _log.warning("dropped an invalid websocket message: %s", exc.errors()[:1])
+                    continue
+                if isinstance(parsed, LiveSubscribeMessage):
+                    self.live.subscribe(client, parsed.data.device_ids)
+                else:
+                    self.live.unsubscribe(client, parsed.data.device_ids)
+        except Exception as exc:  # noqa: BLE001 - the connection is gone either way
+            _log.debug("websocket receive ended: %s", exc)
 
     # -- views (always rebuilt from the core's current state) -------------------------
 
@@ -320,6 +416,7 @@ class Hub:
             sites=self.sites(),
             sensors=sensors,
             pending=self.pending(),
+            batch=self.batches.view(),
         )
 
     def sensor_view(self, device_id: str) -> SensorView | None:
@@ -413,14 +510,3 @@ class Hub:
             _log.warning("reading the last snapshot of %s failed: %s", device_id, exc)
             return None
         return SnapshotSummary(name=snap.name, taken_at=snap.taken_at, reason=snap.reason)
-
-
-async def _drain(ws: WebSocket) -> None:
-    """Read (and drop) client frames until the peer disconnects (M2 has no client messages)."""
-    try:
-        while True:
-            message = await ws.receive()
-            if message["type"] == "websocket.disconnect":
-                return
-    except Exception as exc:  # noqa: BLE001 - the connection is gone either way
-        _log.debug("websocket receive ended: %s", exc)

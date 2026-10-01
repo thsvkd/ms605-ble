@@ -102,6 +102,11 @@
   margin-right: auto;
 }
 
+.lockNote {
+  color: var(--text-muted);
+  font-size: var(--font-sm);
+}
+
 .dangerZone {
   display: flex;
   flex-wrap: wrap;

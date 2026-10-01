@@ -11,6 +11,145 @@ export interface components {
         ApiError: {
             error: components["schemas"]["ErrorBody"];
         };
+        /** BatchCreate */
+        BatchCreate: {
+            /**
+             * At
+             * @default null
+             */
+            at: string | null;
+            /**
+             * Delay S
+             * @default null
+             */
+            delay_s: number | null;
+            /** Device Ids */
+            device_ids: string[];
+            /**
+             * Presence Override
+             * @default false
+             */
+            presence_override: boolean;
+            /**
+             * Start
+             * @default now
+             * @enum {string}
+             */
+            start: "now" | "delay" | "at";
+        };
+        /** BatchMessage */
+        BatchMessage: {
+            data: components["schemas"]["BatchView"];
+            /** Seq */
+            seq: number;
+            /** Ts */
+            ts: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "batch";
+        };
+        /** BatchRetry */
+        BatchRetry: {
+            /**
+             * At
+             * @default null
+             */
+            at: string | null;
+            /**
+             * Delay S
+             * @default null
+             */
+            delay_s: number | null;
+            /**
+             * Device Ids
+             * @default null
+             */
+            device_ids: string[] | null;
+            /**
+             * Start
+             * @default now
+             * @enum {string}
+             */
+            start: "now" | "delay" | "at";
+        };
+        /**
+         * BatchState
+         * @enum {string}
+         */
+        BatchState: "waiting" | "running" | "done" | "cancelled";
+        /** BatchView */
+        BatchView: {
+            /** Batch Id */
+            batch_id: string;
+            /** Created At */
+            created_at: number;
+            /** Device Ids */
+            device_ids: string[];
+            /** Expected S */
+            expected_s: number;
+            /** Fire At */
+            fire_at: number;
+            /** Jobs */
+            jobs: components["schemas"]["CalibrationJobView"][];
+            /** Presence Override */
+            presence_override: boolean;
+            /** Round */
+            round: number;
+            /** Round Ids */
+            round_ids: string[];
+            /**
+             * Start
+             * @enum {string}
+             */
+            start: "now" | "delay" | "at";
+            state: components["schemas"]["BatchState"];
+        };
+        /** CalibrationJobMessage */
+        CalibrationJobMessage: {
+            data: components["schemas"]["CalibrationJobView"];
+            /** Seq */
+            seq: number;
+            /** Ts */
+            ts: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "calibration_job";
+        };
+        /** CalibrationJobView */
+        CalibrationJobView: {
+            /** After */
+            after: components["schemas"]["ZonePair"][] | null;
+            /** Attempt */
+            attempt: number;
+            /** Batch Id */
+            batch_id: string;
+            /** Before */
+            before: components["schemas"]["ZonePair"][] | null;
+            /** Detail */
+            detail: string;
+            /** Device Id */
+            device_id: string;
+            /** Elapsed S */
+            elapsed_s: number | null;
+            /** Error */
+            error: string | null;
+            /** History Saved */
+            history_saved: boolean;
+            /** Retryable */
+            retryable: boolean;
+            /** Started */
+            started: boolean;
+            state: components["schemas"]["CalibrationState"];
+        };
+        /**
+         * CalibrationState
+         * @enum {string}
+         */
+        CalibrationState: "idle" | "starting" | "learning" | "succeeded" | "failed" | "lost" | "timeout" | "cancelled";
         /** CalibrationSummary */
         CalibrationSummary: {
             /** Detect Mode */
@@ -20,6 +159,8 @@ export interface components {
             /** Timestamp */
             timestamp: string;
         };
+        /** ClientMessage */
+        ClientMessage: components["schemas"]["LiveSubscribeMessage"] | components["schemas"]["LiveUnsubscribeMessage"];
         /** ConnectingDevice */
         ConnectingDevice: {
             /** Address */
@@ -27,13 +168,38 @@ export interface components {
             /** Since */
             since: number;
         };
+        /** Countdown */
+        Countdown: {
+            /** Batch Id */
+            batch_id: string;
+            /** Fire At */
+            fire_at: number;
+            /** Remaining S */
+            remaining_s: number;
+        };
+        /** CountdownMessage */
+        CountdownMessage: {
+            data: components["schemas"]["Countdown"];
+            /**
+             * Seq
+             * @default null
+             */
+            seq: null;
+            /** Ts */
+            ts: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "countdown";
+        };
         /** ErrorBody */
         ErrorBody: {
             /**
              * Code
              * @enum {string}
              */
-            code: "unauthorized" | "forbidden_origin" | "not_found" | "already_exists" | "busy" | "not_connected" | "invalid" | "invalid_request" | "invalid_file" | "storage" | "internal";
+            code: "unauthorized" | "forbidden_origin" | "not_found" | "already_exists" | "busy" | "not_connected" | "invalid" | "invalid_request" | "invalid_file" | "storage" | "internal" | "batch_active";
             /** Message */
             message: string;
         };
@@ -80,6 +246,19 @@ export interface components {
          * @enum {string}
          */
         LinkState: "disconnected" | "connecting" | "connected" | "lost";
+        /** LiveData */
+        LiveData: {
+            /** At */
+            at: number;
+            /** Device Id */
+            device_id: string;
+            /** Pir */
+            pir: boolean | null;
+            /** Sub Sensor Presence */
+            sub_sensor_presence: boolean[];
+            /** Zones */
+            zones: components["schemas"]["LiveZone"][];
+        };
         /** LiveInfo */
         LiveInfo: {
             /** Address */
@@ -99,6 +278,64 @@ export interface components {
             lost_reason: string;
             /** Name */
             name: string | null;
+        };
+        /** LiveMessage */
+        LiveMessage: {
+            data: components["schemas"]["LiveData"];
+            /**
+             * Seq
+             * @default null
+             */
+            seq: null;
+            /** Ts */
+            ts: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "live";
+        };
+        /** LiveSubscribeMessage */
+        LiveSubscribeMessage: {
+            data: components["schemas"]["LiveWatch"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "live_subscribe";
+        };
+        /** LiveUnsubscribeMessage */
+        LiveUnsubscribeMessage: {
+            data: components["schemas"]["LiveWatch"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "live_unsubscribe";
+        };
+        /** LiveWatch */
+        LiveWatch: {
+            /** Device Ids */
+            device_ids: string[];
+        };
+        /** LiveZone */
+        LiveZone: {
+            /** Distance M */
+            distance_m: number;
+            /** Enabled */
+            enabled: boolean;
+            /** Index */
+            index: number;
+            /** Maintain */
+            maintain: number;
+            /** Maintain Threshold */
+            maintain_threshold: number;
+            /** Trigger */
+            trigger: number;
+            /** Trigger Active */
+            trigger_active: boolean;
+            /** Trigger Threshold */
+            trigger_threshold: number;
         };
         /** Notice */
         Notice: {
@@ -164,6 +401,38 @@ export interface components {
             site_id: string;
             /** Source */
             source: string;
+        };
+        /** PreflightRequest */
+        PreflightRequest: {
+            /** Device Ids */
+            device_ids: string[];
+            /**
+             * Window S
+             * @default 3
+             */
+            window_s: number;
+        };
+        /** PreflightResult */
+        PreflightResult: {
+            /** Checked At */
+            checked_at: number;
+            /** Results */
+            results: components["schemas"]["PresenceView"][];
+        };
+        /** PresenceView */
+        PresenceView: {
+            /** Device Id */
+            device_id: string;
+            /** Error */
+            error: string | null;
+            /** Occupied */
+            occupied: boolean | null;
+            /** Pir */
+            pir: boolean | null;
+            /** Presence */
+            presence: boolean | null;
+            /** Samples */
+            samples: number;
         };
         /** RegistryInfo */
         RegistryInfo: {
@@ -296,7 +565,7 @@ export interface components {
             version: string;
         };
         /** ServerMessage */
-        ServerMessage: components["schemas"]["SnapshotMessage"] | components["schemas"]["SensorMessage"] | components["schemas"]["SensorRemovedMessage"] | components["schemas"]["SitesMessage"] | components["schemas"]["PendingMessage"] | components["schemas"]["GatherMessage"] | components["schemas"]["NoticeMessage"];
+        ServerMessage: components["schemas"]["SnapshotMessage"] | components["schemas"]["SensorMessage"] | components["schemas"]["SensorRemovedMessage"] | components["schemas"]["SitesMessage"] | components["schemas"]["PendingMessage"] | components["schemas"]["GatherMessage"] | components["schemas"]["NoticeMessage"] | components["schemas"]["BatchMessage"] | components["schemas"]["CalibrationJobMessage"] | components["schemas"]["LiveMessage"] | components["schemas"]["CountdownMessage"];
         /** SimInfo */
         SimInfo: {
             /** Count */
@@ -363,6 +632,7 @@ export interface components {
         };
         /** StateSnapshot */
         StateSnapshot: {
+            batch: components["schemas"]["BatchView"] | null;
             gather: components["schemas"]["GatherStatus"];
             /** Pending */
             pending: components["schemas"]["PendingView"][];
@@ -373,6 +643,13 @@ export interface components {
             server: components["schemas"]["ServerInfo"];
             /** Sites */
             sites: components["schemas"]["SiteView"][];
+        };
+        /** ZonePair */
+        ZonePair: {
+            /** Maintain */
+            maintain: number;
+            /** Trigger */
+            trigger: number;
         };
     };
     responses: never;

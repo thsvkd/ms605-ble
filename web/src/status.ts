@@ -3,7 +3,7 @@ import type { SensorView } from './api/types'
 import { relativeTime } from './format'
 import { t } from './strings'
 
-export type StatusKind = 'ok' | 'progress' | 'warn' | 'off'
+export type StatusKind = 'ok' | 'progress' | 'warn' | 'danger' | 'off'
 
 export interface SensorStatus {
   kind: StatusKind

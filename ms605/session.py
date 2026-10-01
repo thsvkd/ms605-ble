@@ -34,7 +34,13 @@ from .events import (
     LiveRadar,
     PirChanged,
 )
-from .models import RadarOutputSnapshot, decode_pir_state, decode_radar_output, decode_supported_tags
+from .models import (
+    RadarOutputSnapshot,
+    decode_pir_state,
+    decode_radar_output,
+    decode_supported_tags,
+    decode_zone_distances,
+)
 from .protocol import (
     TAG_AMBIENT_LIGHT,
     TAG_BATTERY,
@@ -42,6 +48,7 @@ from .protocol import (
     TAG_LIVE_RADAR_OUTPUT,
     TAG_PIR_STATE,
     TAG_VERSION,
+    TAG_ZONE_DISTANCES,
     WRITE_TIMEOUT_S,
     ParsedFrame,
 )
@@ -62,6 +69,7 @@ class DeviceInfo:
     battery_pct: int | None  # tag23 first byte
     version: tuple[int, ...] | None  # tag21, decode_supported_tags()
     light_lux: int | None  # tag36, big-endian integer
+    zone_distances_m: tuple[float, ...] | None = None  # tag53, decode_zone_distances(); None if absent
 
 
 class DeviceSession:
@@ -240,18 +248,20 @@ class DeviceSession:
 
     async def read_info(self) -> DeviceInfo:
         async with self.operation("identify") as ms:
-            frame = await ms.read_raw([TAG_DEVICE_ID, TAG_BATTERY, TAG_VERSION, TAG_AMBIENT_LIGHT])
+            frame = await ms.read_raw([TAG_DEVICE_ID, TAG_BATTERY, TAG_VERSION, TAG_AMBIENT_LIGHT, TAG_ZONE_DISTANCES])
         raw_id = frame.get(TAG_DEVICE_ID)
         if not raw_id:
             raise MS605Error("device did not return tag 30 (device id)")
         battery = frame.get(TAG_BATTERY)
         version = frame.get(TAG_VERSION)
         light = frame.get(TAG_AMBIENT_LIGHT)
+        distances = frame.get(TAG_ZONE_DISTANCES)
         self.info = DeviceInfo(
             device_id=raw_id.hex(),
             battery_pct=battery[0] if battery else None,
             version=decode_supported_tags(version) if version else None,
             light_lux=int.from_bytes(light, "big") if light else None,
+            zone_distances_m=decode_zone_distances(distances) if distances else None,
         )
         self.device_id = self.info.device_id
         return self.info

@@ -4,12 +4,14 @@ Every handler is `async def`: the core runs on this one event loop (8.3)."""
 
 from __future__ import annotations
 
+import asyncio
 import importlib.metadata
 import importlib.resources
 import logging
 import re
 import secrets
 import tempfile
+import time
 from collections.abc import Collection, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
@@ -24,19 +26,27 @@ from starlette.responses import FileResponse, JSONResponse, PlainTextResponse, R
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from ms605.errors import MS605ConnectionError, SessionBusyError, StorageError
+from ms605.events import LinkState
 from ms605.fleet import Fleet
 from ms605.registry import Registry
 from ms605.sim import SimFleet
 from ms605.storage import Storage
 
+from .batch import MAX_SCHEDULE_AHEAD_S
 from .schemas import (
     NEW_SITE_ID_PATTERN,
     ApiError,
+    BatchCreate,
+    BatchRetry,
+    BatchStart,
     ErrorBody,
     GatherStatus,
     Health,
     ImportResult,
     PendingView,
+    PreflightRequest,
+    PreflightResult,
+    PresenceView,
     ReleaseRequest,
     SensorCreate,
     SensorInfoImport,
@@ -207,7 +217,9 @@ def create_app(
         static_dir = Path(str(importlib.resources.files("ms605.gui") / "static"))
     static_root = static_dir.resolve()
     sim_info = SimInfo(count=len(sim.devices), speed=sim.devices[0].speed) if sim and sim.devices else None
-    hub = Hub(fleet, ServerInfo(version=server_version(), lan=lan, sim=sim_info), queue_size=ws_queue_size)
+    speed = sim.devices[0].speed if sim and sim.devices else 1.0
+    server_info = ServerInfo(version=server_version(), lan=lan, sim=sim_info)
+    hub = Hub(fleet, server_info, queue_size=ws_queue_size, speed=speed)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -217,7 +229,9 @@ def create_app(
         finally:
             hub.close_clients()
             try:
-                await fleet.aclose()  # stop gathering, release every link (D5)
+                await hub.live.aclose()
+                await hub.batches.aclose()
+                await fleet.aclose()  # cancel an unfinished batch, stop gathering, release every link (D5)
             finally:
                 hub.detach()
 
@@ -347,9 +361,19 @@ def create_app(
         hub.flush()
         return _json(hub.gather_status())
 
+    # G22: a release and a batch create/retry never interleave. Otherwise a batch created while a
+    # release awaits (stop_gather, connect cancels) passes its checks and then loses its links.
+    operation = asyncio.Lock()
+
     @app.post("/api/release")
     async def release(body: ReleaseRequest) -> Response:
+        async with operation:
+            return await release_locked(body)
+
+    async def release_locked(body: ReleaseRequest) -> Response:
         if body.device_ids is None:  # everything: stop gathering first, or it reconnects what is still advertising
+            if hub.batches.active():  # G22: before anything changes
+                raise ApiFailure(409, "batch_active", "a calibration batch is in progress")
             await fleet.stop_gather()
             hub.clear_connecting()
             ids = list(fleet.sessions)
@@ -358,9 +382,13 @@ def create_app(
             missing = [i for i in ids if i not in fleet.sessions]
             if missing:  # checked before anything is closed
                 raise ApiFailure(404, "not_found", f"no session: {', '.join(missing)}")
+            calibrating = [i for i in ids if i in hub.batches.members()]
+            if calibrating:  # G22: dropping the link resets the learning
+                raise ApiFailure(409, "batch_active", f"in a calibration batch: {', '.join(calibrating)}")
             if fleet.gathering:  # the button window outlasts the link: keep this gather run off them
                 released.update(fleet.sessions[i].address.lower() for i in ids)
         await fleet.release(body.device_ids)
+        hub.live.refresh(ids)  # release() leaves `sessions` only after the close events
         for device_id in ids:
             hub.mark_sensor(device_id)
         hub.mark_gather()
@@ -400,6 +428,99 @@ def create_app(
         hub.flush()
         views = [PendingView(site_id=p.site_id, alias=p.alias, address=p.address, source=p.source) for p in added]
         return _json(ImportResult(site_id=site_id, added=views))
+
+    # -- preflight and batch calibration (14.5) --
+
+    def need_sessions(device_ids: Sequence[str]) -> None:
+        missing = [i for i in device_ids if i not in fleet.sessions]
+        if missing:
+            raise ApiFailure(404, "not_found", f"no session: {', '.join(missing)}")
+
+    def check_targets(device_ids: Sequence[str]) -> None:
+        """14.5.3 steps 2-4: a session each, CONNECTED, and no lock but a transient "identify"."""
+        need_sessions(device_ids)
+        offline = [i for i in device_ids if fleet.sessions[i].state is not LinkState.CONNECTED]
+        if offline:
+            raise ApiFailure(409, "not_connected", f"not connected: {', '.join(offline)}")
+        locked = [i for i in device_ids if fleet.sessions[i].busy not in (None, "identify")]  # G22
+        busy = [f"{i}: {fleet.sessions[i].busy}" for i in locked]
+        if busy:
+            raise ApiFailure(409, "busy", ", ".join(busy))
+
+    def start_of(body: BatchStart):
+        if body.start == "delay":
+            return float(body.delay_s)  # a human delay: not divided by the simulator speed
+        if body.start == "at":
+            if body.at.timestamp() - time.time() > MAX_SCHEDULE_AHEAD_S:
+                raise ApiFailure(422, "invalid", "at is more than 24 h ahead")
+            return body.at  # a past time: the core's ValueError -> 422 invalid
+        return 0.0
+
+    def our_batch(batch_id: str) -> None:
+        if hub.batches.batch_id != batch_id:
+            raise ApiFailure(404, "not_found", f"not found: batch {batch_id}")
+
+    def no_active_batch() -> None:
+        if hub.batches.active():
+            raise ApiFailure(409, "batch_active", "a calibration batch is in progress")
+
+    @app.post("/api/preflight")
+    async def preflight(body: PreflightRequest) -> JSONResponse:
+        need_sessions(body.device_ids)
+        members = hub.batches.members()
+        busy = [i for i in body.device_ids if fleet.sessions[i].busy == "calibration" or i in members]
+        if busy:
+            raise ApiFailure(409, "busy", f"calibrating: {', '.join(busy)}")
+        snapshots = await fleet.preflight(body.device_ids, window_s=body.window_s)
+        fields = ("samples", "presence", "pir", "occupied", "error")
+        results = [PresenceView(device_id=i, **{f: getattr(snapshots[i], f) for f in fields}) for i in body.device_ids]
+        return _json(PreflightResult(checked_at=time.time(), results=results))
+
+    @app.post("/api/batches")
+    async def create_batch(body: BatchCreate) -> JSONResponse:
+        async with operation:
+            no_active_batch()
+            check_targets(body.device_ids)
+            start = start_of(body)
+            view = hub.batches.create(body.device_ids, body.start, start, presence_override=body.presence_override)
+            hub.flush()
+            return _json(view, 202)
+
+    @app.get("/api/batches/{batch_id}")
+    async def get_batch(batch_id: str) -> JSONResponse:
+        our_batch(batch_id)
+        return _json(hub.batches.view())
+
+    @app.post("/api/batches/{batch_id}/cancel")
+    async def cancel_batch(batch_id: str) -> JSONResponse:
+        our_batch(batch_id)
+        view = await hub.batches.cancel()
+        hub.flush()
+        return _json(view)
+
+    @app.post("/api/batches/{batch_id}/retry")
+    async def retry_batch(batch_id: str, body: BatchRetry) -> JSONResponse:
+        async with operation:
+            return retry_locked(batch_id, body)
+
+    def retry_locked(batch_id: str, body: BatchRetry) -> JSONResponse:
+        our_batch(batch_id)
+        no_active_batch()
+        candidates = hub.batches.retryable_ids()
+        if body.device_ids is None:
+            ids = [i for i in candidates if i in fleet.sessions and fleet.sessions[i].state is LinkState.CONNECTED]
+            if not ids:
+                raise ApiFailure(409, "not_connected", "no retryable sensor is connected")
+        else:
+            ids = list(dict.fromkeys(body.device_ids))
+            wrong = [i for i in ids if i not in candidates]
+            if wrong:
+                raise ApiFailure(422, "invalid", f"not retryable: {', '.join(wrong)}")
+        check_targets(ids)
+        start = start_of(body)
+        view = hub.batches.retry(ids, body.start, start)
+        hub.flush()
+        return _json(view, 202)
 
     if sim is not None:
 

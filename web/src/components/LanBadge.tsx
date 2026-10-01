@@ -11,13 +11,13 @@ export function LanBadge() {
       {lan && (
         <span className={`${styles.chip} ${styles.chipLan}`}>
           <Wifi size={12} aria-hidden />
-          {t.badge.lan}
+          <span className={styles.squeeze}>{t.badge.lan}</span>
         </span>
       )}
       {sim && (
         <span className={styles.chip}>
           <FlaskConical size={12} aria-hidden />
-          {t.badge.sim}
+          <span className={styles.squeeze}>{t.badge.sim}</span>
         </span>
       )}
     </>

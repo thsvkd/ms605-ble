@@ -21,6 +21,7 @@ from ms605.events import (
     ApplyStatus,
     BatchChanged,
     BatchState,
+    BusyChanged,
     CalibrationState,
     GatherFailed,
     LinkState,
@@ -282,10 +283,11 @@ def test_a_regathered_address_answering_with_another_device_id_is_refused(tmp_pa
             await _until(lambda: _of(events, GatherFailed))
             failed = _of(events, GatherFailed)[0]
             assert failed.device_id == device_id and "device id changed" in failed.error
+            # stopped first: while the button window is open the gather loop may be trying the address again
+            await fleet.stop_gather()
             assert session.device_id == device_id and session.info.device_id == device_id
             assert fleet.sessions[device_id] is session and session.state is not LinkState.CONNECTED
             assert len(_of(events, SensorGathered)) == 1
-            await fleet.stop_gather()
             assert not dev.connected
 
     asyncio.run(main())
@@ -953,5 +955,46 @@ def test_aclose_cancels_a_waiting_batch_and_results_carry_the_session_address(tm
         assert all(r.state is S.CANCELLED for r in batch.results.values())
         assert fleet._batches == set() and fleet.sessions == {}
         assert not any(_writes(dev, TAG_DETECT_MODE) for dev in sim.devices)
+
+    asyncio.run(main())
+
+
+# -- M3: a batch fired right after a re-gather (docs/CORE_API.md 14) ------------------------
+
+
+def test_batch_fired_inside_the_regather_identify_lock_waits_for_it(tmp_path):
+    async def main():
+        sim, fleet, events = _make(tmp_path, 1, connectable_window=20)  # a 0.2 s window
+        dev = sim.devices[0]
+        device_id = _id(dev)
+        batches: list = []
+        armed = [False]
+
+        def fire_inside_the_lock(ev) -> None:
+            # BusyChanged("identify") is emitted with the lock already held: a batch made
+            # here is certain to fire inside the window (a CONNECTED trigger could race past it)
+            if armed[0] and isinstance(ev, BusyChanged) and ev.busy == "identify":
+                armed[0] = False
+                batches.append(fleet.calibrate([device_id], timeout=TIMEOUT))
+
+        fleet.bus.subscribe(fire_inside_the_lock)
+        async with fleet:
+            fleet.start_gather()
+            dev.press_button()
+            await _until(lambda: device_id in fleet.sessions)
+            session = fleet.sessions[device_id]
+            await asyncio.sleep(0.3)  # the window closes; keep-alive holds the link
+            dev.drop_link()
+            await _until(lambda: session.state is LinkState.LOST)
+
+            dev.response_delay = 10.0  # 0.1 s of wall time: the identify read holds the lock that long
+            armed[0] = True
+            dev.press_button()
+            await _until(lambda: batches)
+            (batch,) = batches
+            results = await asyncio.wait_for(batch.wait(), 5)
+            assert results[device_id].state is S.SUCCEEDED, results[device_id]  # was FAILED("busy: identify")
+            assert results[device_id].started and results[device_id].after == tuple(DEFAULT_LEARNED_THRESHOLDS)
+            assert fleet.sessions[device_id] is session
 
     asyncio.run(main())

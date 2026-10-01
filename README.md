@@ -87,9 +87,10 @@ asyncio.run(main())
 
 ## GUI
 
-A local web dashboard for gathering sensors and naming them (live monitor and
-calibration screens are planned). It is a FastAPI server plus a React app that
-ships pre-built inside the package, so Node is not needed to use it.
+A local web dashboard for gathering sensors, naming them, watching them live and
+auto-calibrating several at once (threshold editing is planned). It is a FastAPI
+server plus a React app that ships pre-built inside the package, so Node is not
+needed to use it.
 
 ```bash
 ./scripts/setup.sh                   # or: uv sync  (installs the GUI dependencies)
@@ -105,6 +106,22 @@ uv run ms605 gui --sim 7 --speed 20  # demo with 7 simulated sensors, no hardwar
   network you trust.
 - With `--sim`, press virtual sensor buttons from the gather screen. Demo data
   lives in `cal_results/sim/` and never touches the real registry.
+- Monitor (`/monitor`): per-zone bars for the sensors you pick, with the same
+  meaning as the CLI meter (the bar turns red when the value is over the
+  threshold), plus PIR and the sensor's own presence call. Live output is
+  limited to 4 updates per second per sensor and is on only while a monitor
+  screen is open; closing it switches the sensor's live output off.
+- Calibrate (`/calibrate`): pick sensors, run the preflight presence check, then
+  start now, after N seconds, or at a set time. Leave the room before it starts;
+  an occupied-room warning must be confirmed explicitly for a start "now".
+  Gathering stops when the round starts. One batch runs at a time and every
+  open screen (phone and laptop) shows the same progress and can cancel it.
+  Progress is based on the expected time, not on a value the sensor reports. A
+  sensor that drops mid-run does not stop the others; after it reconnects (turn
+  gathering on and press its button again), retry only the failed or lost
+  sensors. Results show before and after thresholds and are appended to
+  `cal_results/calibration_history.jsonl`. Disconnecting is blocked while a
+  round is running.
 - `--port 0` picks a free port. The wire contract is in
   [docs/GUI_API.md](docs/GUI_API.md).
 

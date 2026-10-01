@@ -125,6 +125,12 @@
   background: var(--off-bg);
 }
 
+/* StatusBadge kind (a failed calibration); `.danger` alone is the button variant */
+.badge.danger {
+  color: var(--danger);
+  background: var(--danger-bg);
+}
+
 /* The "alive" mark on a connected sensor: a slow heartbeat ring around the dot. */
 .pulse {
   position: relative;
@@ -241,6 +247,11 @@ textarea.control {
 .error {
   font-size: var(--font-sm);
   color: var(--danger);
+}
+
+.note {
+  font-size: var(--font-sm);
+  color: var(--text-muted);
 }
 
 /* -- Dialog: centred card on wide screens, bottom sheet on phones ---------------------- */

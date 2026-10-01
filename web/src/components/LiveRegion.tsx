@@ -1,12 +1,35 @@
 import { useEffect, useRef, useState } from 'react'
-import { type Store, useStore } from '../store/store'
+import { batchTotals } from '../calibration'
+import { sensorName, type Store, useStore } from '../store/store'
 import { t } from '../strings'
+
+/** Batch news (14.8.10): the round starts running, the batch ends, a sensor drops mid-calibration. */
+function batchAnnouncements(prev: Store, next: Store): string[] {
+  const a = prev.batch
+  const b = next.batch
+  if (!b || a === b) return []
+  const out: string[] = []
+  const same = a?.batch_id === b.batch_id
+  if (b.state === 'running' && (!same || a?.state !== 'running' || a.round !== b.round))
+    out.push(t.announce.batchStarted)
+  const before = new Map((same ? (a?.jobs ?? []) : []).map((j) => [j.device_id, j.state]))
+  for (const j of b.jobs) {
+    if (j.state === 'lost' && before.get(j.device_id) !== 'lost')
+      out.push(t.announce.jobLost(sensorName(next.sensors[j.device_id], j.device_id)))
+  }
+  if (b.state === 'done' && !(same && a?.state === 'done' && a.round === b.round)) {
+    const all = batchTotals(b)
+    out.push(t.announce.batchDone(all.succeeded, all.failed))
+  }
+  return out
+}
 
 /** What changed between two store states that a screen-reader user should hear (9.7). */
 export function announcements(prev: Store, next: Store): string[] {
   // a fresh snapshot (first load, reconnect) is not news
-  if (prev.conn !== 'open' || (prev.sensors === next.sensors && prev.gather === next.gather)) return []
-  const out: string[] = []
+  if (prev.conn !== 'open') return []
+  const out = batchAnnouncements(prev, next)
+  if (prev.sensors === next.sensors && prev.gather === next.gather) return out
   for (const [id, s] of Object.entries(next.sensors)) {
     const before = prev.sensors[id]
     const was = before?.live?.link
