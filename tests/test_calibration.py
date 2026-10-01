@@ -53,7 +53,12 @@ def _setup(**sim_kw):
     events: list = []
     bus.subscribe(events.append)
     session = DeviceSession(
-        dev.ble_device, bus, scan=fleet.discover, client_factory=fleet.client_factory, keepalive_interval=KEEPALIVE
+        dev.ble_device,
+        bus,
+        scan=fleet.discover,
+        client_factory=fleet.client_factory,
+        keepalive_interval=KEEPALIVE,
+        pir_poll_interval=None,  # these tests drive tag56 by push; the poll has its own (test_session.py)
     )
     return dev, session, events
 

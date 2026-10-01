@@ -60,6 +60,10 @@ KEEPALIVE_INTERVAL_S = 15.0
 # The connectable window after a button press is >= 117 s (lower bound).
 RECONNECT_TIMEOUT_S = 120.0
 RELEASE_TIMEOUT_S = 5.0
+# Outside calibration the device does not push tag56 with the live stream (the GUI monitor's
+# PIR stayed unknown on hardware), so it is read at this pace while live output is watched.
+PIR_POLL_INTERVAL_S = 1.0
+_PIR_READ_TIMEOUT_S = 3.0
 _RECONNECT_PAUSE_S = 2.0  # pause between reconnect() attempts
 
 
@@ -84,6 +88,7 @@ class DeviceSession:
         scan: Callable[[float], Awaitable[list[BLEDevice]]] | None = None,
         client_factory: Callable[..., object] | None = None,
         keepalive_interval: float = KEEPALIVE_INTERVAL_S,
+        pir_poll_interval: float | None = PIR_POLL_INTERVAL_S,
         connect_timeout: float = 10.0,
         scan_secs: float = 5.0,
     ) -> None:
@@ -98,6 +103,7 @@ class DeviceSession:
         self.last_radar: RadarOutputSnapshot | None = None
         self.last_pir: bool | None = None
         self.keepalive_interval = keepalive_interval
+        self.pir_poll_interval = pir_poll_interval  # None: rely on tag56 pushes alone
         self._scan = scan or MS605.scan
         self._connect_timeout = connect_timeout
         self._scan_secs = scan_secs
@@ -110,7 +116,10 @@ class DeviceSession:
         self._connect_lock = asyncio.Lock()
         self._suspended = False
         self._keepalive_task: asyncio.Task | None = None
+        self._pir_task: asyncio.Task | None = None
         self._kick = asyncio.Event()  # set: ping now and restart the interval
+        self._pir_wake = asyncio.Event()  # set: read tag56 now (a viewer just arrived)
+        self._stream = 0  # bumped whenever last_pir is reset: a poll read from an older stream is dropped
         self.ms.add_push_handler(self._on_push)
         self.ms.on_disconnect = lambda: self._lose("BLE link lost")
 
@@ -138,6 +147,7 @@ class DeviceSession:
         task, self._keepalive_task = self._keepalive_task, None
         if task is not None and task is not asyncio.current_task():
             task.cancel()
+        self._stop_pir_poll()
         self._last_reason = reason
         self._set_state(LinkState.LOST, reason)
 
@@ -160,6 +170,7 @@ class DeviceSession:
         closes = self._closes
         # values seen on an earlier link are not current: the first push of this one counts as a change
         self.last_radar = self.last_pir = None
+        self._stream += 1
         self._set_state(LinkState.CONNECTING)
         try:
             if rescan:
@@ -191,6 +202,8 @@ class DeviceSession:
         self._last_reason = ""
         self._set_state(LinkState.CONNECTED)
         self._keepalive_task = asyncio.create_task(self._keepalive_loop())
+        if self.pir_poll_interval is not None:
+            self._pir_task = asyncio.create_task(self._pir_poll_loop())
         if self._live > 0 and self.busy != "calibration":
             try:
                 await self.ms.set_live_output(True)
@@ -229,6 +242,7 @@ class DeviceSession:
         task, self._keepalive_task = self._keepalive_task, None
         if task is not None:
             task.cancel()
+        pir_task = self._stop_pir_poll()
         self._closes += 1  # also stops a reconnect() loop that is between attempts
         self._last_reason = ""
         try:
@@ -239,6 +253,8 @@ class DeviceSession:
             # awaited only now: a ping stuck mid-write ends once the link is dropped above
             if task is not None:
                 await asyncio.gather(task, return_exceptions=True)
+            if pir_task is not None:
+                await asyncio.gather(pir_task, return_exceptions=True)
 
     async def _disconnect(self) -> None:
         try:
@@ -281,6 +297,7 @@ class DeviceSession:
         live_before = self._live > 0
         if reason == "calibration" and not live_before:
             self.last_pir = None  # the device starts streaming on its own: a new stream
+            self._stream += 1
         self.bus.emit(BusyChanged(address=self.address, device_id=self.device_id, busy=reason))
         try:
             yield self.ms
@@ -336,6 +353,52 @@ class DeviceSession:
         _log.warning("keep-alive on %s missed: %s", self.address, exc)
         self.bus.emit(KeepAliveMissed(address=self.address, device_id=self.device_id, error=str(exc), kind=kind))
 
+    # -- PIR poll ---------------------------------------------------------------------
+
+    def _stop_pir_poll(self) -> asyncio.Task | None:
+        task, self._pir_task = self._pir_task, None
+        if task is not None and task is not asyncio.current_task():
+            task.cancel()
+        return task
+
+    async def _pir_poll_loop(self) -> None:
+        """Read tag56 every pir_poll_interval while live output is watched and no operation
+        holds the lock. A failed read is skipped; the read gets the driver's full write-stall
+        budget, like the keep-alive, so a slow write does not give the link up sooner than before.
+        Ends once the link is gone or a newer poll owns the session (a stall can detach the link
+        from inside this task, where _lose() cannot cancel it)."""
+        assert self.pir_poll_interval is not None
+        me = asyncio.current_task()
+        self._pir_wake.clear()
+        while True:
+            try:
+                await asyncio.wait_for(self._pir_wake.wait(), self.pir_poll_interval)
+            except asyncio.TimeoutError:
+                pass
+            self._pir_wake.clear()
+            if self._pir_task is not me or self.state is not LinkState.CONNECTED:
+                return
+            if self._live == 0 or self.busy is not None:
+                continue
+            stream = self._stream
+            try:
+                frame = await self.ms.read_raw(
+                    [TAG_PIR_STATE], timeout=_PIR_READ_TIMEOUT_S, write_timeout=WRITE_TIMEOUT_S
+                )
+            except MS605Error as exc:
+                _log.debug("reading PIR on %s failed: %s", self.address, exc)
+                continue
+            except Exception:  # noqa: BLE001 - never let one bad read end the poll
+                _log.exception("reading PIR on %s failed", self.address)
+                continue
+            value = frame.get(TAG_PIR_STATE)
+            if not value:  # absent or empty: unknown, not "no motion"
+                _log.debug("PIR read on %s returned no tag56 value", self.address)
+                continue
+            # released, locked or restarted meanwhile: the value belongs to no current stream
+            if self._live > 0 and self.busy is None and self._stream == stream and self._pir_task is me:
+                self._note_pir(bool(decode_pir_state(value)))
+
     # -- live output -----------------------------------------------------------------
 
     async def acquire_live(self) -> None:
@@ -344,6 +407,8 @@ class DeviceSession:
         self._live += 1
         if self._live == 1 and self.state is LinkState.CONNECTED and self.busy != "calibration":
             self.last_pir = None  # a new stream: its first tag56 is reported even if unchanged
+            self._stream += 1
+            self._pir_wake.set()  # PIR now, not one poll interval later
             await self.ms.set_live_output(True)
 
     async def release_live(self) -> None:
@@ -371,7 +436,9 @@ class DeviceSession:
                 self.last_radar = snapshot
                 self.bus.emit(LiveRadar(address=self.address, device_id=self.device_id, snapshot=snapshot))
             elif tag == TAG_PIR_STATE:
-                detected = bool(decode_pir_state(value))
-                if detected != self.last_pir:
-                    self.last_pir = detected
-                    self.bus.emit(PirChanged(address=self.address, device_id=self.device_id, detected=detected))
+                self._note_pir(bool(decode_pir_state(value)))
+
+    def _note_pir(self, detected: bool) -> None:
+        if detected != self.last_pir:
+            self.last_pir = detected
+            self.bus.emit(PirChanged(address=self.address, device_id=self.device_id, detected=detected))

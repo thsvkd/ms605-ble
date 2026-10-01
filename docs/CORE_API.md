@@ -17,6 +17,7 @@
 | `KEEPALIVE_INTERVAL_S` | `session.py` | 15.0 | 유휴 끊김 29.6초(1회), 25초 주기는 유지·30초는 끊김. 현재 15초는 안전 |
 | `RECONNECT_TIMEOUT_S` | `session.py` | 120.0 | 버튼 후 연결 가능 시간은 117초 이상(하한). 사람이 버튼을 누르기를 기다리는 상한 |
 | `RELEASE_TIMEOUT_S` | `session.py` | 5.0 | 기존 CLI의 bounded disconnect와 같다 |
+| `PIR_POLL_INTERVAL_S` | `session.py` | 1.0 | 기기가 실시간 출력과 함께 tag56을 push하지 않는다(4.5절). 응답 대기는 3초 |
 | `VERIFY_TIMEOUT_S` / `VERIFY_INTERVAL_S` | `fleet.py` | 3.0 / 0.4 | tag51 쓰기는 즉시 읽으면 이전 값, 1초 뒤에는 반영. 기존 `confirm_profile_applied` 값 유지 |
 | `EXPECTED_CALIBRATION_S` | `calibration.py` | 180.0 | **미측정**. GUI_PLAN 1장 "최대 약 3분", 시뮬레이터 가정과 같다. 진행 막대의 분모로만 쓴다 |
 | `CALIBRATION_TIMEOUT_S` | `protocol.py`(기존) | 200.0 | 기존 값 유지 |
@@ -216,6 +217,7 @@ class DeviceSession:
         scan: Callable[[float], Awaitable[list[BLEDevice]]] | None = None,   # 기본 MS605.scan
         client_factory: Callable[..., object] | None = None,                 # MS605(client_factory=)에 전달
         keepalive_interval: float = KEEPALIVE_INTERVAL_S,
+        pir_poll_interval: float | None = PIR_POLL_INTERVAL_S,     # 4.5절. None: tag56 push만
         connect_timeout: float = 10.0,
         scan_secs: float = 5.0,
     ) -> None: ...
@@ -255,8 +257,8 @@ class DeviceSession:
   `MS605TimeoutError`, 취소되면 이전 상태(LOST 또는 DISCONNECTED)로 되돌리고 `CancelledError`를 다시 올린다.
   매 시도 전에 이미 CONNECTED면(다른 호출자나 수집 루프가 먼저 붙였으면) 바로 돌아오고, CONNECTING이면 시도하지 않고 기다린다.
   도중에 `close()`가 불리면 더 시도하지 않고 `MS605ConnectionError("session closed")`로 끝난다(앱이 놓은 세션을 되살리지 않는다).
-- `close()`: DISCONNECTED로 가고, `RELEASE_TIMEOUT_S` 안에서 `ms.disconnect()`를 시도한 뒤(실패는 무시) keep-alive
-  태스크가 끝나기를 기다린다. 끊기가 먼저다: 쓰기 중에 멈춘 ping은 링크가 끊겨야 끝나므로, 순서가 바뀌면 해제가
+- `close()`: DISCONNECTED로 가고, `RELEASE_TIMEOUT_S` 안에서 `ms.disconnect()`를 시도한 뒤(실패는 무시) keep-alive와
+  PIR 폴링(4.5절) 태스크가 끝나기를 기다린다. 끊기가 먼저다: 쓰기 중에 멈춘 ping은 링크가 끊겨야 끝나므로, 순서가 바뀌면 해제가
   ping 타임아웃(최대 10초)만큼 늦어진다. 여러 번 불러도 된다. 작업 잠금이 잡혀 있어도 부를 수 있고, 진행 중인 요청은 드라이버
   계약대로 `MS605ConnectionError`로 끝난다. CONNECTING 중에도 부를 수 있다. 그 연결은 끝난 뒤 링크를 바로 끊고
   `MS605ConnectionError("session closed while connecting")`로 끝나며, 상태는 DISCONNECTED로 남는다.
@@ -342,6 +344,13 @@ keep-alive를 멈추고 드라이버 keep-alive 하나만 쓴다)을 유지한�
 - 새 스트림이 시작되면 `last_pir`를 `None`으로 되돌린다. 그래서 그 스트림의 첫 tag56은 값이 같아도 `PirChanged`가 된다.
   새 스트림은 연결 시도 시작(이때 `last_radar`도 `None`), `acquire_live()`의 tag54=1 쓰기, 실시간 카운트가 0일 때의
   `"calibration"` 잠금이다. 이전 링크나 이전 스트림의 값이 현재 값처럼 보이지 않게 하기 위해서다.
+- 기기는 보정 중이 아니면 실시간 출력과 함께 tag56을 push하지 않는다(실기기에서 모니터의 PIR이 계속 `?`였다). 그래서 세션은
+  실시간 출력을 보는 사람이 있고(`_live > 0`) 잠금이 비어 있는 동안 `pir_poll_interval`(기본 `PIR_POLL_INTERVAL_S = 1.0`)마다 tag56을
+  읽고(카운트가 0→1이 되면 곧바로 한 번), 그 값도 위와 같이 바뀔 때만 `PirChanged`로 낸다. 응답이 없거나 값이 비면 건너뛴다(`?` 유지).
+  읽기는 keep-alive와 같은 쓰기 기한(`WRITE_TIMEOUT_S`)을 받으므로, 쓰기가 그만큼 멈춘 때에만 드라이버가 링크를 놓는다(전과 같은 기준).
+  읽는 동안 놓아졌거나 잠금이 잡혔거나 새 스트림이 시작됐으면 그 값은 버린다. 폴링 작업은 keep-alive와 함께 연결 때 시작하고
+  끊김·`close()`에서 멈춘다. 자기 읽기가 링크를 놓게 한 경우에도 다음 차례에 스스로 끝나므로, 재연결 뒤에 둘이 되지 않는다.
+  `pir_poll_interval=None`이면 push만 쓴다.
 - tag62와 그 밖의 tag는 무시한다. tag62는 드라이버의 push waiter가 `start_auto_calibration()`으로 전달한다.
 
 ## 5. `calibration.py`

@@ -1302,8 +1302,8 @@ def render_monitor(state: dict, dists: Sequence[float]) -> Panel:
 
 
 async def _flow_live_monitor_plain(session: DeviceSession) -> None:
-    """Headless monitor: one line per push (no Live region), for piped/logged
-    runs where a full-screen bar graph can't render."""
+    """Headless monitor: one line per tag55 push or PIR change (no Live region),
+    for piped/logged runs where a full-screen bar graph can't render."""
     _ui.muted("기기가 보내는 값을 그대로 표시합니다. 종료하려면 Enter를 누르세요.\n")
 
     def on_event(ev: Event) -> None:
@@ -1331,9 +1331,10 @@ async def _flow_live_monitor_plain(session: DeviceSession) -> None:
 async def flow_live_monitor(session: DeviceSession) -> None:
     """Real-time view of PIR state, per-zone radar current/threshold values,
     per-sub-sensor presence (the device's own final call -- not host-computed),
-    and per-zone trigger state, straight from tag55/56 pushes. On a terminal
-    this is a live bar graph (redrawn on each push); headless it degrades to one
-    line per push. Enter stops it."""
+    and per-zone trigger state, straight from tag55 pushes (PIR: tag56, which the
+    session reads while live output is on). On a terminal this is a live bar
+    graph (redrawn on each update); headless it degrades to one line per update.
+    Enter stops it."""
     await ensure(session)
     _ui.header("실시간 감지값 모니터링", "PIR · 레이더 존별 · 센서별 재실 · 구역별 재실")
     if not _ui.interactive():

@@ -379,7 +379,7 @@
   color: var(--text-muted);
 }
 
-/* -- Z0..Z6: vertical meter() cells ------------------------------------------------------------- */
+/* -- Z0..Z6: vertical trigger meters on the tile's shared scale -------------------------------- */
 .zones {
   position: relative;
   display: grid;
@@ -418,44 +418,51 @@ span.zone {
 }
 
 .track {
-  display: flex;
-  flex-direction: column-reverse; /* cell 0 at the bottom */
-  gap: 1px;
-  width: min(calc(100% - 8px), 22px); /* room for the tick's overhang inside the column */
+  --v: 0; /* the value's height on the scale, 0..1 */
+  --t: 0; /* the threshold's */
+  position: relative;
+  width: min(calc(100% - 8px), 22px); /* room for the rule's overhang inside the column */
   height: 54px;
   border-radius: 3px;
   background: color-mix(in srgb, var(--text-muted) 9%, transparent);
 }
 
-.track i {
-  position: relative;
-  flex: 1;
-  border-radius: 1px;
-}
-
-.track i[data-cell='fill'] {
+.fill {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: calc(var(--v) * 100%);
+  border-radius: 3px;
   background: var(--ok);
+  transition: height 180ms linear;
 }
 
-.track[data-over='true'] i[data-cell='fill'] {
+.track[data-over='true'] .fill {
   background: var(--danger);
 }
 
-/* the threshold: the same row for every zone, a rule that stands proud of the track on both sides */
-.track i[data-cell='tick'] {
-  background: transparent;
+/* past the top of the scale: a cap says the bar is cut off */
+.track[data-clip] .fill {
+  border-top: 3px solid color-mix(in srgb, var(--danger) 55%, var(--text));
 }
 
-.track i[data-cell='tick']::after {
-  content: '';
+/* the calibrated threshold: a rule at its own height, standing proud of the track on both sides */
+.rule {
   position: absolute;
-  top: 50%;
+  bottom: calc(var(--t) * 100%);
   left: -4px;
   right: -4px;
   height: 2px;
-  transform: translateY(-50%);
+  transform: translateY(50%);
   border-radius: 1px;
   background: var(--text);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fill {
+    transition: none;
+  }
 }
 
 .track[data-off] {
@@ -588,7 +595,7 @@ span.zone {
     height: 46px;
   }
 
-  .track i[data-cell='tick']::after {
+  .rule {
     left: -3px;
     right: -3px;
   }

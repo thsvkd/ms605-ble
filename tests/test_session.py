@@ -23,7 +23,13 @@ from ms605.events import (
     PirChanged,
 )
 from ms605.models import FALLBACK_DISTANCES_M, zone_distances
-from ms605.protocol import TAG_LIVE_OUTPUT_ENABLE, TAG_LIVE_RADAR_OUTPUT, TAG_PIR_STATE, TAG_ZONE_DISTANCES
+from ms605.protocol import (
+    TAG_LIVE_OUTPUT_ENABLE,
+    TAG_LIVE_RADAR_OUTPUT,
+    TAG_PIR_STATE,
+    TAG_READ_REQUEST,
+    TAG_ZONE_DISTANCES,
+)
 from ms605.session import DeviceSession
 from ms605.sim import SimBLEDevice, SimFleet
 
@@ -33,8 +39,9 @@ SPEED = 100.0
 KEEPALIVE = 15 / SPEED  # the real 15 s interval, scaled like the simulator's idle drop (30 s -> 0.3 s)
 
 
-def _setup(**sim_kw):
-    """One simulated device (button pressed) and an unconnected session on it."""
+def _setup(pir_poll_interval: float | None = None, **sim_kw):
+    """One simulated device (button pressed) and an unconnected session on it. The tag56
+    poll is off unless asked for: the push tests below drive tag56 themselves."""
     sim_kw.setdefault("speed", SPEED)
     fleet = SimFleet(1, **sim_kw)
     dev = fleet.devices[0]
@@ -43,7 +50,12 @@ def _setup(**sim_kw):
     events: list = []
     bus.subscribe(events.append)
     session = DeviceSession(
-        dev.ble_device, bus, scan=fleet.discover, client_factory=fleet.client_factory, keepalive_interval=KEEPALIVE
+        dev.ble_device,
+        bus,
+        scan=fleet.discover,
+        client_factory=fleet.client_factory,
+        keepalive_interval=KEEPALIVE,
+        pir_poll_interval=pir_poll_interval,
     )
     return dev, session, events
 
@@ -66,6 +78,11 @@ async def _until(pred, timeout: float = 2.0) -> None:
 
 def _live_writes(dev) -> list[int]:
     return [v[0] for f in dev.frames_in for t, v in f.attributes if t == TAG_LIVE_OUTPUT_ENABLE]
+
+
+def _pir_reads(dev) -> int:
+    read = (TAG_READ_REQUEST, bytes([TAG_PIR_STATE]))
+    return sum(1 for f in dev.frames_in for a in f.attributes if tuple(a) == read)
 
 
 def _bare_pings(dev) -> int:
@@ -702,6 +719,128 @@ def test_pir_values_from_an_earlier_link_or_stream_are_not_current():
         dev._push([(TAG_PIR_STATE, b"\x01")])
         await _until(lambda: len(_of(events, PirChanged)) == 3)
         assert [e.detected for e in _of(events, PirChanged)] == [True, True, True]
+        await session.close()
+
+    asyncio.run(main())
+
+
+def test_pir_is_read_while_live_output_is_watched():
+    """The device does not push tag56 with the live stream: the session reads it."""
+
+    async def main():
+        dev, session, events = _setup(pir_poll_interval=0.02)
+        await session.connect()
+        await asyncio.sleep(0.1)
+        assert _pir_reads(dev) == 0 and session.last_pir is None  # nobody watches: no traffic
+        await session.acquire_live()
+        await _until(lambda: session.last_pir is False)
+        dev.tags[TAG_PIR_STATE] = b"\x01"
+        await _until(lambda: session.last_pir is True)
+        dev.tags[TAG_PIR_STATE] = b"\x00"
+        await _until(lambda: session.last_pir is False)
+        assert [e.detected for e in _of(events, PirChanged)] == [False, True, False]  # changes only
+        await session.release_live()
+        await asyncio.sleep(0.05)  # a read in flight at the release is dropped
+        reads = _pir_reads(dev)
+        await asyncio.sleep(0.1)
+        assert _pir_reads(dev) == reads
+        await session.close()
+
+    asyncio.run(main())
+
+
+def test_pir_poll_pauses_for_operations_and_survives_a_missed_read(monkeypatch):
+    monkeypatch.setattr(session_mod, "_PIR_READ_TIMEOUT_S", 0.2)
+
+    async def main():
+        dev, session, events = _setup(pir_poll_interval=0.02)
+        await session.connect()
+        await session.acquire_live()
+        await _until(lambda: _pir_reads(dev) >= 1)
+        async with session.operation("read"):
+            reads = _pir_reads(dev)
+            await asyncio.sleep(0.1)
+            assert _pir_reads(dev) == reads
+        session.keepalive_interval = 100.0  # the next frame is the poll's read
+        await asyncio.sleep(0.05)
+        dev.drop_responses(1)  # one read times out; the poll keeps going and the link stays up
+        dev.tags[TAG_PIR_STATE] = b"\x01"
+        reads = _pir_reads(dev)
+        await _until(lambda: session.last_pir is True)
+        assert _pir_reads(dev) >= reads + 2  # the dropped one and the one that answered
+        assert session.state is LinkState.CONNECTED
+        await session.release_live()
+        await session.close()
+
+    asyncio.run(main())
+
+
+def test_pir_poll_stops_with_the_link():
+    async def main():
+        dev, session, events = _setup(pir_poll_interval=0.02)
+        await session.connect()
+        await session.acquire_live()
+        await _until(lambda: _pir_reads(dev) >= 1)
+        dev.drop_link()
+        await _until(lambda: session.state is LinkState.LOST)
+        reads = _pir_reads(dev)
+        await asyncio.sleep(0.1)
+        assert _pir_reads(dev) == reads
+        await session.close()
+
+    asyncio.run(main())
+
+
+def _pir_pollers() -> int:
+    return sum(1 for t in asyncio.all_tasks() if not t.done() and t.get_coro().__name__ == "_pir_poll_loop")
+
+
+def test_pir_poll_that_stalls_the_link_ends_and_never_doubles(monkeypatch):
+    """A PIR read whose write stalls detaches the link from inside the poll task itself."""
+    monkeypatch.setattr(session_mod, "WRITE_TIMEOUT_S", 0.2)
+
+    async def main():
+        dev, session, events = _setup(pir_poll_interval=0.02)
+        session.keepalive_interval = 100.0  # only the poll writes
+        await session.connect()
+        await session.acquire_live()
+        await _until(lambda: session.last_pir is False)
+
+        async def forever(*_a, **_kw):
+            await asyncio.Event().wait()
+
+        session.ms._client.write_gatt_char = forever
+        await _until(lambda: session.state is LinkState.LOST)
+        await _until(lambda: _pir_pollers() == 0)
+        dev.press_button()
+        await session.connect()
+        await asyncio.sleep(0.1)
+        assert _pir_pollers() == 1
+        await session.release_live()
+        await session.close()
+        assert _pir_pollers() == 0
+
+    asyncio.run(main())
+
+
+def test_pir_read_uses_the_full_write_budget():
+    """A slow write must not give the link up sooner than the keep-alive would."""
+
+    async def main():
+        dev, session, events = _setup(pir_poll_interval=0.02)
+        await session.connect()
+        calls = []
+        real = session.ms.read_raw
+
+        async def spy(tags, **kw):
+            calls.append(kw)
+            return await real(tags, **kw)
+
+        session.ms.read_raw = spy
+        await session.acquire_live()
+        await _until(lambda: calls)
+        assert calls[0]["write_timeout"] == session_mod.WRITE_TIMEOUT_S
+        await session.release_live()
         await session.close()
 
     asyncio.run(main())

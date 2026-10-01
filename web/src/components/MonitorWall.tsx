@@ -13,7 +13,6 @@ import {
 import { Link } from 'wouter'
 import type { LiveZone } from '../api/types'
 import { useNow } from '../hooks/useNow'
-import { type MeterModel, meter } from '../meter'
 import { presenceOf, presenceTally, type SignalKind, signalTone, type Tri } from '../presence'
 import { sensorStatus } from '../status'
 import { sensorName, useStore } from '../store/store'
@@ -237,6 +236,34 @@ export function zoneDetailParts(z: LiveZone): string[] {
 
 export const zoneDetail = (z: LiveZone) => zoneDetailParts(z).join(' · ')
 
+/** The value range one tile's meters share. */
+export interface ZoneScale {
+  lo: number
+  hi: number
+}
+
+/** Round up to a multiple of 5·10^(digits-2): 742 -> 750, 88 -> 90, 3 -> 3. */
+function niceCeil(x: number): number {
+  const step = Math.max(1, 5 * 10 ** (Math.floor(Math.log10(x)) - 1))
+  return Math.ceil(x / step) * step
+}
+
+/**
+ * One scale for all of a sensor's zones, so each threshold rule stands at its calibrated height and zones
+ * compare at a glance. It reaches 1.5x the highest enabled trigger threshold (headroom to see a value cross
+ * it) and follows only the thresholds, which change on calibration, never the values: the scale holds still
+ * while the bars move. Below 0 only when a threshold is negative (a calibration transient).
+ */
+export function zoneScale(zones: readonly LiveZone[]): ZoneScale {
+  const thresholds = zones.filter((z) => z.enabled).map((z) => z.trigger_threshold)
+  const top = Math.max(1, ...thresholds)
+  const bottom = Math.min(0, ...thresholds)
+  return { lo: bottom < 0 ? -niceCeil(-bottom * 1.5) : 0, hi: niceCeil(top * 1.5) }
+}
+
+/** Where `v` stands on the scale, 0..1 (clamped). */
+export const scaleAt = (v: number, { lo, hi }: ZoneScale) => Math.min(1, Math.max(0, (v - lo) / (hi - lo)))
+
 /**
  * Z0..Z6 as vertical trigger meters. Each one is a button: hover, focus or a tap shows its numbers above the
  * strip (the readout spans the strip, so it never runs off a narrow tile). A second tap, Escape or a tap
@@ -272,6 +299,7 @@ function ZoneStrip({ zones }: { zones: LiveZone[] | undefined }) {
   }
 
   const shown = open === null ? undefined : zones.find((z) => z.index === open)
+  const scale = zoneScale(zones)
   const handlers = (index: number) => ({
     onPointerEnter: (e: ReactPointerEvent<HTMLButtonElement>) => e.pointerType === 'mouse' && setOpen(index),
     onPointerLeave: (e: ReactPointerEvent<HTMLButtonElement>) =>
@@ -309,7 +337,7 @@ function ZoneStrip({ zones }: { zones: LiveZone[] | undefined }) {
         </span>
       )}
       {zones.map((z) => (
-        <ZoneMeter key={z.index} zone={z} active={open === z.index} {...handlers(z.index)} />
+        <ZoneMeter key={z.index} zone={z} scale={scale} active={open === z.index} {...handlers(z.index)} />
       ))}
     </div>
   )
@@ -317,6 +345,7 @@ function ZoneStrip({ zones }: { zones: LiveZone[] | undefined }) {
 
 type ZoneMeterProps = {
   zone: LiveZone
+  scale: ZoneScale
   active: boolean
 } & Pick<
   ButtonHTMLAttributes<HTMLButtonElement>,
@@ -324,21 +353,25 @@ type ZoneMeterProps = {
 >
 
 /** One zone: its trigger meter (or hatching when off) and Z{i}; the accessible name carries the numbers. */
-function ZoneMeter({ zone: z, active, ...on }: ZoneMeterProps) {
+function ZoneMeter({ zone: z, scale, active, ...on }: ZoneMeterProps) {
   const detail = zoneDetail(z)
-  const model = z.enabled ? meter(z.trigger, z.trigger_threshold) : null
+  const over = z.enabled ? z.trigger > z.trigger_threshold : undefined
   return (
     <button
       type="button"
       className={styles.zone}
       data-active={active}
       data-off={!z.enabled || undefined}
-      data-over={model?.over}
+      data-over={over}
       data-rf={(z.enabled && z.trigger_active) || undefined}
-      aria-label={model ? `${detail}, ${t.monitor.zoneOver(model.over)}` : detail}
+      aria-label={over === undefined ? detail : `${detail}, ${t.monitor.zoneOver(over)}`}
       {...on}
     >
-      {model ? <VerticalMeter model={model} /> : <span className={styles.track} data-off />}
+      {z.enabled ? (
+        <VerticalMeter value={z.trigger} threshold={z.trigger_threshold} scale={scale} />
+      ) : (
+        <span className={styles.track} data-off />
+      )}
       <span className={styles.zoneRf} aria-hidden>
         {z.enabled && z.trigger_active && <Radio size={11} />}
       </span>
@@ -350,15 +383,21 @@ function ZoneMeter({ zone: z, active, ...on }: ZoneMeterProps) {
 }
 
 /**
- * meter()'s cells stood on end: cell 0 at the bottom, the tick at the same fixed row for every zone, the fill
- * red iff value > threshold. No scale of its own: the same model the horizontal Meter draws.
+ * A trigger meter on its tile's shared scale: the fill rises to the value (red iff value > threshold) and the
+ * rule stands at the calibrated threshold. A value past the top of the scale gets a cap.
  */
-export function VerticalMeter({ model }: { model: MeterModel }) {
+export function VerticalMeter({ value, threshold, scale }: { value: number; threshold: number; scale: ZoneScale }) {
+  const style = { '--v': scaleAt(value, scale), '--t': scaleAt(threshold, scale) } as CSSProperties
   return (
-    <span className={styles.track} data-over={model.over} data-meter="vertical">
-      {model.cells.map((c, i) => (
-        <i key={i} data-cell={c} />
-      ))}
+    <span
+      className={styles.track}
+      style={style}
+      data-over={value > threshold}
+      data-clip={value > scale.hi || undefined}
+      data-meter="vertical"
+    >
+      <i className={styles.fill} />
+      <i className={styles.rule} />
     </span>
   )
 }

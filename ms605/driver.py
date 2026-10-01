@@ -590,13 +590,14 @@ class MS605:
         return applied
 
     async def read_raw(
-        self, tags: Sequence[int], *, timeout: float = WRITE_TIMEOUT_S
+        self, tags: Sequence[int], *, timeout: float = WRITE_TIMEOUT_S, write_timeout: float | None = None
     ) -> ParsedFrame:
         """Multi-read arbitrary `tags` and return the raw parsed response frame
         (use ParsedFrame.get(tag) to pull individual values). Useful for device
-        metadata (tag 30 id, 36 ambient light, 21 version, 23 battery, ...)."""
+        metadata (tag 30 id, 36 ambient light, 21 version, 23 battery, ...).
+        `write_timeout` (default: `timeout`) is as for ping()."""
         attrs = [(TAG_READ_REQUEST, bytes([t])) for t in tags]
-        response = await self._send(attrs, timeout=timeout)
+        response = await self._send(attrs, timeout=timeout, write_timeout=write_timeout)
         assert response is not None
         return response
 

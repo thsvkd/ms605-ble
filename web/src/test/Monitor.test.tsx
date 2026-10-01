@@ -3,21 +3,11 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it } from 'vitest'
 import { LiveStrip } from '../components/LiveStrip'
 import { Meter } from '../components/Meter'
-import { VerticalMeter } from '../components/MonitorWall'
+import { VerticalMeter, zoneScale } from '../components/MonitorWall'
 import { meter } from '../meter'
 import { idsParam, MonitorScreen } from '../screens/Monitor'
 import { resetStore, useStore } from '../store/store'
-import { deviceId, live, liveData, NOW_S, registry, SITE_A, sensor, storeState } from './fixtures'
-import cases from './meter_cases.json'
-
-interface MeterCase {
-  value: number
-  threshold: number
-  width: number
-  tick_at: number
-  plain: string
-  over: boolean
-}
+import { deviceId, live, liveData, liveZone, NOW_S, registry, SITE_A, sensor, storeState } from './fixtures'
 
 const at = (path: string) => window.history.replaceState(null, '', path)
 const pushLive = (n: number, patch: Parameters<typeof liveData>[1] = {}) =>
@@ -57,18 +47,64 @@ describe('Meter', () => {
   })
 })
 
-describe('VerticalMeter', () => {
-  const plain = (cells: (string | null)[]) => cells.map((c) => (c === 'fill' ? '█' : c === 'tick' ? '┃' : '─')).join('')
+describe('zoneScale', () => {
+  const thresholds = (ts: number[]) => ts.map((t, i) => liveZone(i, { trigger_threshold: t }))
 
-  it.each(cases as MeterCase[])('stands meter() on end: $value/$threshold (w=$width, tick=$tick_at)', (c) => {
-    const model = meter(c.value, c.threshold, c.width, c.tick_at)
-    const { container } = render(<VerticalMeter model={model} />)
+  it('reaches 1.5x the highest trigger threshold, rounded up', () => {
+    // a real calibration profile: high near the sensor, low far away
+    expect(zoneScale(thresholds([463, 500, 255, 253, 157, 82, 60]))).toEqual({ lo: 0, hi: 750 })
+    expect(zoneScale(thresholds([60, 55]))).toEqual({ lo: 0, hi: 90 })
+    expect(zoneScale(thresholds([0, 0]))).toEqual({ lo: 0, hi: 2 })
+  })
+
+  it('follows enabled thresholds only, never the values', () => {
+    const zones = [
+      liveZone(0, { trigger: 9000, trigger_threshold: 100 }),
+      liveZone(1, { enabled: false, trigger_threshold: 9000 }),
+    ]
+    expect(zoneScale(zones)).toEqual({ lo: 0, hi: 150 })
+  })
+
+  it('goes below 0 only for a negative threshold', () => {
+    expect(zoneScale(liveData(1).zones)).toEqual({ lo: -50, hi: 90 })
+  })
+})
+
+describe('VerticalMeter', () => {
+  const draw = (value: number, threshold: number, scale = { lo: 0, hi: 750 }) => {
+    const { container } = render(<VerticalMeter value={value} threshold={threshold} scale={scale} />)
     const track = container.querySelector('[data-meter="vertical"]') as HTMLElement
-    // DOM order is cell 0 first; the track stacks it bottom-up (column-reverse), so the tick row never moves
-    const cells = [...track.querySelectorAll('[data-cell]')].map((el) => el.getAttribute('data-cell'))
-    expect(cells).toEqual(model.cells)
-    expect(plain(cells)).toBe(c.plain)
-    expect(track).toHaveAttribute('data-over', String(c.over))
+    return {
+      track,
+      v: Number(track.style.getPropertyValue('--v')),
+      t: Number(track.style.getPropertyValue('--t')),
+    }
+  }
+
+  it('puts the rule at the calibrated threshold on the shared scale', () => {
+    const near = draw(120, 500)
+    const far = draw(120, 82)
+    expect(near.t).toBeCloseTo(500 / 750)
+    expect(far.t).toBeCloseTo(82 / 750)
+    expect(near.v).toBeCloseTo(120 / 750)
+    expect(near.track).toHaveAttribute('data-over', 'false')
+    expect(far.track).toHaveAttribute('data-over', 'true')
+  })
+
+  it('caps a value past the top and clamps below the bottom', () => {
+    const high = draw(900, 500)
+    expect(high.v).toBe(1)
+    expect(high.track).toHaveAttribute('data-clip')
+    const low = draw(-20, 82)
+    expect(low.v).toBe(0)
+    expect(low.track).not.toHaveAttribute('data-clip')
+  })
+
+  it('reads a negative threshold on a scale that dips below 0', () => {
+    const m = draw(-10, -33, { lo: -50, hi: 90 })
+    expect(m.t).toBeCloseTo(17 / 140)
+    expect(m.v).toBeCloseTo(40 / 140)
+    expect(m.track).toHaveAttribute('data-over', 'true')
   })
 })
 
@@ -112,7 +148,7 @@ describe('MonitorScreen', () => {
     fireEvent.click(more)
     expect(more).toHaveAttribute('aria-expanded', 'true')
     expect(screen.getByText('기기 판정 (S1~S3 중 하나라도) · PIR 포함 여부 미확인')).toBeInTheDocument()
-    expect(screen.getByText(/가로선 = 임계값\(고정 위치\)/)).toBeInTheDocument()
+    expect(screen.getByText(/가로선 = 보정된 임계값/)).toBeInTheDocument()
   })
 
   it('a tile leads with the device call: ? before a frame, then 재실 (blue) or 부재, with PIR / RF blocks', () => {
@@ -149,7 +185,7 @@ describe('MonitorScreen', () => {
     expect(within(tile).getByRole('img', { name: 'PIR: 알 수 없음, 아직 받은 값 없음' })).toHaveTextContent('PIR ?')
   })
 
-  it('draws Z0..Z6 as vertical trigger meters from meter(), with disabled zones hatched', () => {
+  it('draws Z0..Z6 as vertical trigger meters on one scale, with disabled zones hatched', () => {
     resetStore(storeState({ sensors: sensors() }))
     at('/monitor')
     render(<MonitorScreen />)
@@ -157,17 +193,18 @@ describe('MonitorScreen', () => {
     const tile = tileOf('센서 1')
     const zones = within(within(tile).getByRole('group', { name: '존별 재실 트리거' })).getAllByRole('button')
     expect(zones.map((b) => b.textContent)).toEqual(['Z0', 'Z1', 'Z2', 'Z3', 'Z4', 'Z5', 'Z6'])
-    const frame = liveData(1)
-    for (const z of frame.zones.filter((z) => z.enabled)) {
-      const cells = [...zones[z.index]!.querySelectorAll('[data-cell]')].map((c) => c.getAttribute('data-cell'))
-      expect(cells).toEqual(meter(z.trigger, z.trigger_threshold).cells)
-    }
+    // the fixture's scale is -50..90: each rule stands at its own threshold
+    const ruleAt = (i: number) =>
+      Number((zones[i]!.querySelector('[data-meter]') as HTMLElement).style.getPropertyValue('--t'))
+    expect(ruleAt(0)).toBeCloseTo(110 / 140) // 60
+    expect(ruleAt(1)).toBeCloseTo(105 / 140) // 55
+    expect(ruleAt(2)).toBeCloseTo(17 / 140) // -33
     expect(zones[0]).toHaveAttribute('data-over', 'true') // 64 > 60
     expect(zones[1]).toHaveAttribute('data-over', 'false')
     expect(zones[2]).toHaveAttribute('data-over', 'true') // -10 > -33
     const off = zones[6]!
     expect(off).toHaveAttribute('data-off')
-    expect(off.querySelector('[data-cell]')).toBeNull()
+    expect(off.querySelector('[data-meter]')).toBeNull()
     expect(off.querySelector('[data-off]')).toBeInTheDocument()
     expect(off).toHaveAccessibleName('Z6 · 5.6 m · 꺼짐')
   })

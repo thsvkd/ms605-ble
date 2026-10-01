@@ -198,7 +198,7 @@ export const t = {
     legendMeterShort: '막대 = 존 트리거 · 가로선 = 임계값',
     legendMore: '범례 자세히',
     legendMeterKey: '막대',
-    legendMeter: '존별 재실 트리거, 세로 · 가로선 = 임계값(고정 위치) · 넘으면 빨강',
+    legendMeter: '존별 재실 트리거, 세로 · 가로선 = 보정된 임계값 · 넘으면 빨강 · 한 센서의 존은 같은 눈금(가장 높은 임계값의 1.5배까지)',
     legendZoneKey: 'Z0~Z6',
     legendZone: '막대를 가리키거나 누르면 거리와 트리거 · 유지 값(현재/임계값)',
     zonesLabel: '존별 재실 트리거',
