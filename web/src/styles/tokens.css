@@ -1,0 +1,104 @@
+/* Theme tokens (docs/GUI_API.md 9.6). Dark values live in two places that must stay equal:
+   the system preference (unless the user chose light) and an explicit data-theme="dark". */
+:root {
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --surface-2: #eef0f3;
+  --border: #d9dde3;
+  --text: #1b1f24;
+  --text-muted: #5b6470;
+  --primary: #2457d6;
+  --on-primary: #ffffff;
+  --focus: #2457d6;
+  --ok: #1a7f37;
+  --ok-bg: #e6f4ea;
+  --progress: #2457d6;
+  --progress-bg: #e8eefc;
+  --warn: #b35900;
+  --warn-bg: #fff1e0;
+  --danger: #c62828;
+  --danger-bg: #fdecea;
+  --off: #6b7280;
+  --off-bg: #eef0f3;
+
+  --shadow: 0 1px 2px rgb(16 24 40 / 6%), 0 1px 3px rgb(16 24 40 / 8%);
+  --shadow-lift: 0 4px 16px rgb(16 24 40 / 10%);
+  --scrim: rgb(15 18 22 / 45%);
+
+  --radius-sm: 6px;
+  --radius: 12px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --font-sm: 14px;
+  --font: 16px;
+  --font-lg: 20px;
+  --font-xl: 24px;
+  --font-hero: 32px;
+  --tap: 48px;
+
+  --font-family: system-ui, -apple-system, 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  --header-h: 56px;
+  --bottom-nav-h: 64px;
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --bg: #0f1216;
+    --surface: #171b21;
+    --surface-2: #1f242c;
+    --border: #2d333c;
+    --text: #e8eaed;
+    --text-muted: #a0a8b3;
+    --primary: #7aa2ff;
+    --on-primary: #0f1216;
+    --focus: #7aa2ff;
+    --ok: #4cc26b;
+    --ok-bg: #13301c;
+    --progress: #7aa2ff;
+    --progress-bg: #1a2540;
+    --warn: #f0a24a;
+    --warn-bg: #3a2810;
+    --danger: #ff6b6b;
+    --danger-bg: #3b1414;
+    --off: #9aa3ad;
+    --off-bg: #242a32;
+    --shadow: 0 1px 2px rgb(0 0 0 / 30%);
+    --shadow-lift: 0 6px 20px rgb(0 0 0 / 45%);
+    --scrim: rgb(0 0 0 / 60%);
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme='dark'] {
+  --bg: #0f1216;
+  --surface: #171b21;
+  --surface-2: #1f242c;
+  --border: #2d333c;
+  --text: #e8eaed;
+  --text-muted: #a0a8b3;
+  --primary: #7aa2ff;
+  --on-primary: #0f1216;
+  --focus: #7aa2ff;
+  --ok: #4cc26b;
+  --ok-bg: #13301c;
+  --progress: #7aa2ff;
+  --progress-bg: #1a2540;
+  --warn: #f0a24a;
+  --warn-bg: #3a2810;
+  --danger: #ff6b6b;
+  --danger-bg: #3b1414;
+  --off: #9aa3ad;
+  --off-bg: #242a32;
+  --shadow: 0 1px 2px rgb(0 0 0 / 30%);
+  --shadow-lift: 0 6px 20px rgb(0 0 0 / 45%);
+  --scrim: rgb(0 0 0 / 60%);
+  color-scheme: dark;
+}

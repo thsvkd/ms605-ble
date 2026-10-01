@@ -213,6 +213,10 @@ class Registry:
             if pending is not None:
                 self._pending.remove(pending)
                 sensor = self._sensors[device_id] = Sensor(device_id, pending.site_id, pending.alias)
+            else:  # already registered: a pending import of the same address is now moot
+                self._pending = [
+                    p for p in self._pending if not (p.host == self.host and p.address.lower() == address.lower())
+                ]
             sensor.addresses[self.host] = address
             sensor.last_seen = datetime.now(timezone.utc).isoformat()
             sensor.battery_pct = battery_pct

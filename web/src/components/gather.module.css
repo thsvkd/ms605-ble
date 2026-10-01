@@ -1,0 +1,444 @@
+.screen {
+  display: grid;
+  gap: var(--space-4);
+  max-width: 640px;
+  margin: 0 auto;
+  /* room for the fixed toggle above the bottom nav */
+  padding-bottom: calc(64px + var(--space-5));
+}
+
+.side {
+  display: grid;
+  gap: var(--space-4);
+  align-content: start;
+}
+
+.listArea {
+  display: grid;
+  gap: var(--space-3);
+  align-content: start;
+}
+
+/* -- hero ------------------------------------------------------------------------------- */
+.hero {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-3);
+  padding: var(--space-6) var(--space-4) var(--space-5);
+  text-align: center;
+  border-radius: 20px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.hero[data-state='idle'] {
+  background: var(--surface);
+}
+
+.hero[data-state='press'] {
+  background: radial-gradient(120% 90% at 50% 0%, var(--progress-bg), var(--surface) 70%);
+  border-color: color-mix(in srgb, var(--progress) 30%, var(--border));
+}
+
+.heroTitle {
+  font-size: var(--font-xl);
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+
+.hero[data-state='press'] .heroTitle {
+  font-size: var(--font-hero);
+  line-height: 1.25;
+}
+
+.heroBody {
+  color: var(--text-muted);
+  max-width: 30ch;
+}
+
+/* Sonar: the Bluetooth glyph sends out rings while the server is listening for button presses. */
+.sonar {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 136px;
+  height: 136px;
+  margin-bottom: var(--space-2);
+}
+
+.sonarCore {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  background: var(--surface-2);
+  color: var(--off);
+}
+
+.hero[data-state='press'] .sonarCore {
+  background: var(--primary);
+  color: var(--on-primary);
+  box-shadow: 0 0 0 6px color-mix(in srgb, var(--primary) 18%, transparent);
+}
+
+.ring {
+  position: absolute;
+  inset: 32px;
+  border-radius: 50%;
+  border: 2px solid var(--progress);
+  opacity: 0;
+  animation: sonar 2.6s var(--ease) infinite;
+}
+
+.ring:nth-child(2) {
+  animation-delay: 0.87s;
+}
+
+.ring:nth-child(3) {
+  animation-delay: 1.73s;
+}
+
+@keyframes sonar {
+  0% {
+    transform: scale(0.6);
+    opacity: 0.55;
+  }
+  100% {
+    transform: scale(1.9);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ring {
+    display: none;
+  }
+}
+
+.connecting {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: var(--progress-bg);
+  color: var(--progress);
+  font-size: var(--font-sm);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* compact one-liner once something has been gathered (single-column widths only) */
+.compact {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius);
+  background: var(--progress-bg);
+  color: var(--progress);
+  font-weight: 700;
+}
+
+.compactIcon {
+  flex: none;
+  animation: breathe 2s var(--ease) infinite;
+}
+
+@keyframes breathe {
+  50% {
+    opacity: 0.45;
+  }
+}
+
+.compactText {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 var(--space-2);
+  min-width: 0;
+}
+
+.compactSub {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* -- toggle ------------------------------------------------------------------------------ */
+.toggleDock {
+  position: fixed;
+  z-index: 19;
+  left: 0;
+  right: 0;
+  bottom: calc(var(--bottom-nav-h) + env(safe-area-inset-bottom));
+  padding: var(--space-3) var(--space-4);
+  background: linear-gradient(to bottom, transparent, var(--bg) 35%);
+}
+
+.toggleInner {
+  max-width: 640px;
+  margin: 0 auto;
+}
+
+.stopping {
+  background: var(--surface);
+  color: var(--text);
+  border-color: var(--border);
+  box-shadow: var(--shadow-lift);
+}
+
+/* -- gathered list ------------------------------------------------------------------------- */
+.listTitle {
+  font-size: var(--font);
+  font-weight: 700;
+}
+
+.list {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.item {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  transition:
+    background-color 600ms var(--ease),
+    border-color 600ms var(--ease),
+    box-shadow 600ms var(--ease);
+}
+
+.itemNew {
+  border-color: color-mix(in srgb, var(--primary) 45%, var(--border));
+}
+
+/* the 5 s highlight: the only cue for "this is the one you just pressed" */
+.fresh {
+  background: var(--progress-bg);
+  border-color: var(--progress);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--progress) 20%, transparent);
+  animation: arrive 420ms var(--ease);
+}
+
+@keyframes arrive {
+  from {
+    transform: translateY(-6px) scale(0.98);
+    opacity: 0;
+  }
+}
+
+.itemRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  min-height: 32px;
+}
+
+.itemName {
+  font-weight: 700;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.itemLocation {
+  color: var(--text-muted);
+  font-size: var(--font-sm);
+}
+
+.itemEnd {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: auto;
+}
+
+.registered {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--font-sm);
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.newBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--primary);
+  color: var(--on-primary);
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.nameHint {
+  color: var(--primary);
+  font-weight: 600;
+  font-size: var(--font-sm);
+}
+
+.itemMessage {
+  font-size: var(--font-sm);
+  color: var(--text-muted);
+}
+
+.itemLink {
+  font-size: var(--font-sm);
+  color: var(--text-muted);
+  min-height: var(--tap);
+  display: inline-flex;
+  align-items: center;
+}
+
+/* -- name form ----------------------------------------------------------------------------- */
+.nameForm {
+  display: grid;
+  gap: var(--space-3);
+  padding-top: var(--space-2);
+  border-top: 1px dashed var(--border);
+}
+
+.formFields {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.formError {
+  color: var(--danger);
+  font-size: var(--font-sm);
+}
+
+.formActions {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.saveButton {
+  min-width: 128px;
+}
+
+/* -- secondary (collapsible) areas ----------------------------------------------------------- */
+.details {
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--tap);
+  padding: 0 var(--space-4);
+  font-weight: 600;
+  cursor: pointer;
+  list-style: none;
+}
+
+.summary::-webkit-details-marker {
+  display: none;
+}
+
+.chevron {
+  color: var(--text-muted);
+  transition: transform 150ms var(--ease);
+}
+
+.details[open] .chevron {
+  transform: rotate(90deg);
+}
+
+.detailsBody {
+  display: grid;
+  gap: var(--space-3);
+  padding: 0 var(--space-4) var(--space-4);
+}
+
+.fileInput {
+  font-size: var(--font-sm);
+  max-width: 100%;
+}
+
+.fileInput::file-selector-button {
+  min-height: var(--tap);
+  margin-right: var(--space-3);
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.result {
+  font-size: var(--font-sm);
+  color: var(--ok);
+  font-weight: 600;
+}
+
+.resultError {
+  color: var(--danger);
+}
+
+.simGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+  gap: var(--space-2);
+}
+
+@media (min-width: 640px) {
+  .screen {
+    padding-bottom: 0;
+  }
+
+  .toggleDock {
+    position: static;
+    padding: 0;
+    background: none;
+  }
+
+  .formFields {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .formFields > :last-child {
+    grid-column: 1 / -1;
+  }
+
+  .formActions {
+    justify-content: flex-end;
+  }
+}
+
+@media (min-width: 1024px) {
+  .screen {
+    max-width: none;
+    grid-template-columns: minmax(340px, 400px) 1fr;
+    align-items: start;
+    gap: var(--space-5);
+  }
+
+  .side {
+    position: sticky;
+    top: calc(var(--header-h) + var(--space-5));
+  }
+}

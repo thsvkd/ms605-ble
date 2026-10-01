@@ -268,6 +268,18 @@ def test_match_registered_sensor_updates_cache_and_saves(reg, storage):
     assert reg.sensors[ID1].battery_pct is None  # unknown this time, so not carried over
 
 
+def test_match_of_a_registered_sensor_drops_a_pending_import_of_its_address(reg, storage, tmp_path):
+    reg.add_site("lab-a", "Lab A")
+    reg.add_sensor(ID1, "lab-a", "Sensor 1")  # named while connected, before any import resolved it
+    path = tmp_path / "sensor_info_lab.yaml"
+    path.write_text(f"Old name: {ADDR1}\n", encoding="utf-8")
+    reg.import_sensor_info(path, "lab-a")
+    assert len(reg.pending) == 1
+    reg.match(ID1, ADDR1.lower())
+    assert reg.pending == ()
+    assert _file(storage)["pending"] == []
+
+
 def test_match_unknown_device_returns_none_and_saves_nothing(reg, storage):
     assert reg.match(ID1, ADDR1, battery_pct=50) == MatchResult(None, False)
     assert ID1 not in reg.sensors

@@ -11,9 +11,14 @@ requires-python = ">=3.10"
 license = "Apache-2.0"
 dependencies = [
     "bleak>=0.22",
+    "fastapi>=0.142.2",
     "platformdirs>=4.0",
+    "pydantic>=2.7",
     "questionary>=2.1.1",
     "rich>=15.0.0",
+    "segno>=1.6.6",
+    "uvicorn>=0.54.0",
+    "websockets>=16.1.1",
 ]
 
 [project.urls]
@@ -27,7 +32,9 @@ ms605-driver = "ms605.cli.ble:main"
 
 [dependency-groups]
 dev = [
+    "httpx>=0.28.1",
     "pytest>=8.0",
+    "pytest-timeout>=2.4.0",
     "ruff>=0.6",
 ]
 
@@ -36,7 +43,10 @@ dev = [
 # (matches the original Linux venv's 3.12 line.)
 
 [tool.setuptools]
-packages = ["ms605", "ms605.cli"]
+packages = ["ms605", "ms605.cli", "ms605.gui"]
+
+[tool.setuptools.package-data]
+"ms605.gui" = ["static/*", "static/**/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

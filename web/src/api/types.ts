@@ -1,0 +1,28 @@
+import type { components } from './schema'
+
+type S = components['schemas']
+
+export type LinkState = S['LinkState']
+export type SiteView = S['SiteView']
+export type RegistryInfo = S['RegistryInfo']
+export type LiveInfo = S['LiveInfo']
+export type CalibrationSummary = S['CalibrationSummary']
+export type SnapshotSummary = S['SnapshotSummary']
+export type SensorView = S['SensorView']
+export type PendingView = S['PendingView']
+export type ConnectingDevice = S['ConnectingDevice']
+export type GatherStatus = S['GatherStatus']
+export type SimInfo = S['SimInfo']
+export type ServerInfo = S['ServerInfo']
+export type StateSnapshot = S['StateSnapshot']
+export type ImportResult = S['ImportResult']
+export type ErrorCode = S['ErrorBody']['code']
+export type ApiError = S['ApiError']
+export type Notice = S['Notice']
+export type ServerMessage = S['ServerMessage']
+
+export type SiteCreate = S['SiteCreate']
+export type SensorCreate = S['SensorCreate']
+export type SensorUpdate = S['SensorUpdate']
+export type ReleaseRequest = S['ReleaseRequest']
+export type SensorInfoImport = S['SensorInfoImport']

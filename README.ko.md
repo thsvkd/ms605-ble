@@ -82,6 +82,34 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
+## GUI
+
+센서를 모으고 이름을 붙이는 로컬 웹 대시보드입니다(실시간 모니터·보정 화면은 예정). FastAPI 서버와 React 앱으로
+이루어져 있고, 앱은 빌드된 채로 패키지에 들어 있어 사용할 때 Node는 필요 없습니다.
+
+```bash
+./scripts/setup.sh                   # 또는: uv sync  (GUI 의존성 포함 설치)
+uv run ms605 gui                     # http://127.0.0.1:8605/?t=<토큰> 출력, 브라우저로 열기
+uv run ms605 gui --lan               # LAN 주소와 폰용 QR 코드도 출력
+uv run ms605 gui --lan --lan-host 192.0.2.10  # QR에 이 주소를 사용 (VPN, 여러 네트워크)
+uv run ms605 gui --sim 7 --speed 20  # 실기기 없이 가상 센서 7대로 데모
+```
+
+- 출력된 주소를 한 번 열면 토큰이 HttpOnly 쿠키로 바뀝니다. 토큰은 실행할 때마다 새로 만들어집니다. 주소를 가진 사람은 누구나
+  센서를 조작할 수 있고 `--lan`은 평문 HTTP이므로, 신뢰하는 네트워크에서만 쓰세요.
+- `--sim`에서는 모으기 화면에서 가상 센서의 버튼을 누를 수 있습니다. 데모 데이터는 `cal_results/sim/`에만 저장되어 실제
+  레지스트리를 건드리지 않습니다.
+- `--port 0`은 빈 포트를 고릅니다. 통신 규약은 [docs/GUI_API.md](docs/GUI_API.md)에 있습니다.
+
+프런트엔드 다시 빌드(Node 22, npm. 결과는 `ms605/gui/static/`에 생성):
+
+```bash
+cd web
+npm ci
+npm run typegen    # 백엔드 OpenAPI에서 src/api/schema.ts 재생성
+npm test && npm run build
+```
+
 ## 주요 명령
 
 | 명령 | 용도 | 지원 상태 |

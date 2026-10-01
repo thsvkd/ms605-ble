@@ -85,6 +85,38 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
+## GUI
+
+A local web dashboard for gathering sensors and naming them (live monitor and
+calibration screens are planned). It is a FastAPI server plus a React app that
+ships pre-built inside the package, so Node is not needed to use it.
+
+```bash
+./scripts/setup.sh                   # or: uv sync  (installs the GUI dependencies)
+uv run ms605 gui                     # prints http://127.0.0.1:8605/?t=<token>; open it
+uv run ms605 gui --lan               # also prints a LAN URL and a QR code for a phone
+uv run ms605 gui --lan --lan-host 192.0.2.10  # put this address in the QR (VPN, several interfaces)
+uv run ms605 gui --sim 7 --speed 20  # demo with 7 simulated sensors, no hardware
+```
+
+- Open the printed URL once. The token in it is swapped for an HttpOnly cookie
+  and a new token is generated on every start. Anyone holding the URL can
+  control your sensors, and `--lan` serves plain HTTP, so use it only on a
+  network you trust.
+- With `--sim`, press virtual sensor buttons from the gather screen. Demo data
+  lives in `cal_results/sim/` and never touches the real registry.
+- `--port 0` picks a free port. The wire contract is in
+  [docs/GUI_API.md](docs/GUI_API.md).
+
+Rebuilding the frontend (Node 22 and npm; output goes to `ms605/gui/static/`):
+
+```bash
+cd web
+npm ci
+npm run typegen    # regenerate src/api/schema.ts from the backend's OpenAPI
+npm test && npm run build
+```
+
 ## Main commands
 
 | Command | Purpose | Support status |

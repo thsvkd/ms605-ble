@@ -116,6 +116,8 @@ from ms605.events import (
     SensorGathered,
 )
 from ms605.fleet import Draft, Fleet, SensorChanges, ThresholdChange, apply_changes
+from ms605.gui.cli import add_parser as add_gui_parser
+from ms605.gui.cli import run_gui
 from ms605.models import (
     FALLBACK_DISTANCES_M,
     PROFILE_SECTION_KEYS,
@@ -1907,6 +1909,7 @@ def build_parser() -> argparse.ArgumentParser:
         p_zone_enable, p_sensor_zones, p_sensor_timing,
     ):
         _add_target_args(p_sub, suppress_defaults=True)
+    add_gui_parser(sub)
 
     return ap
 
@@ -2033,6 +2036,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         coro = _run_flow(
             scan_secs, ct, flow_subsensor_timing, show_header=False, auto_select=True, prefer_address=addr,
         )
+    elif cmd == "gui":
+        coro = run_gui(args, scan_secs=scan_secs, connect_timeout=ct)
     else:  # pragma: no cover - argparse restricts choices to the above
         build_parser().print_help()
         return 2

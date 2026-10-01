@@ -1,0 +1,1102 @@
+{
+  "components": {
+    "schemas": {
+      "ApiError": {
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/ErrorBody"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "title": "ApiError",
+        "type": "object"
+      },
+      "CalibrationSummary": {
+        "properties": {
+          "detect_mode": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detect Mode"
+          },
+          "sensitivity": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sensitivity"
+          },
+          "timestamp": {
+            "title": "Timestamp",
+            "type": "string"
+          }
+        },
+        "required": [
+          "timestamp",
+          "sensitivity",
+          "detect_mode"
+        ],
+        "title": "CalibrationSummary",
+        "type": "object"
+      },
+      "ConnectingDevice": {
+        "properties": {
+          "address": {
+            "title": "Address",
+            "type": "string"
+          },
+          "since": {
+            "title": "Since",
+            "type": "number"
+          }
+        },
+        "required": [
+          "address",
+          "since"
+        ],
+        "title": "ConnectingDevice",
+        "type": "object"
+      },
+      "ErrorBody": {
+        "properties": {
+          "code": {
+            "enum": [
+              "unauthorized",
+              "forbidden_origin",
+              "not_found",
+              "already_exists",
+              "busy",
+              "not_connected",
+              "invalid",
+              "invalid_request",
+              "invalid_file",
+              "storage",
+              "internal"
+            ],
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "ErrorBody",
+        "type": "object"
+      },
+      "GatherMessage": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/GatherStatus"
+          },
+          "seq": {
+            "title": "Seq",
+            "type": "integer"
+          },
+          "ts": {
+            "title": "Ts",
+            "type": "number"
+          },
+          "type": {
+            "const": "gather",
+            "default": "gather",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "seq",
+          "ts",
+          "data"
+        ],
+        "title": "GatherMessage",
+        "type": "object"
+      },
+      "GatherStatus": {
+        "properties": {
+          "connecting": {
+            "items": {
+              "$ref": "#/components/schemas/ConnectingDevice"
+            },
+            "title": "Connecting",
+            "type": "array"
+          },
+          "gathering": {
+            "title": "Gathering",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "gathering",
+          "connecting"
+        ],
+        "title": "GatherStatus",
+        "type": "object"
+      },
+      "Health": {
+        "properties": {
+          "status": {
+            "const": "ok",
+            "default": "ok",
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "version"
+        ],
+        "title": "Health",
+        "type": "object"
+      },
+      "ImportResult": {
+        "properties": {
+          "added": {
+            "items": {
+              "$ref": "#/components/schemas/PendingView"
+            },
+            "title": "Added",
+            "type": "array"
+          },
+          "site_id": {
+            "title": "Site Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "site_id",
+          "added"
+        ],
+        "title": "ImportResult",
+        "type": "object"
+      },
+      "LinkState": {
+        "enum": [
+          "disconnected",
+          "connecting",
+          "connected",
+          "lost"
+        ],
+        "title": "LinkState",
+        "type": "string"
+      },
+      "LiveInfo": {
+        "properties": {
+          "address": {
+            "title": "Address",
+            "type": "string"
+          },
+          "battery_pct": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Battery Pct"
+          },
+          "busy": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Busy"
+          },
+          "firmware": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Firmware"
+          },
+          "gathered_at": {
+            "title": "Gathered At",
+            "type": "number"
+          },
+          "light_lux": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Light Lux"
+          },
+          "link": {
+            "$ref": "#/components/schemas/LinkState"
+          },
+          "lost_reason": {
+            "title": "Lost Reason",
+            "type": "string"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "required": [
+          "address",
+          "name",
+          "link",
+          "busy",
+          "lost_reason",
+          "battery_pct",
+          "firmware",
+          "light_lux",
+          "gathered_at"
+        ],
+        "title": "LiveInfo",
+        "type": "object"
+      },
+      "Notice": {
+        "properties": {
+          "address": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Address"
+          },
+          "at": {
+            "title": "At",
+            "type": "number"
+          },
+          "code": {
+            "enum": [
+              "gather_failed",
+              "internal"
+            ],
+            "title": "Code",
+            "type": "string"
+          },
+          "device_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Device Id"
+          },
+          "level": {
+            "enum": [
+              "info",
+              "warning",
+              "error"
+            ],
+            "title": "Level",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "required": [
+          "level",
+          "code",
+          "message",
+          "device_id",
+          "address",
+          "name",
+          "at"
+        ],
+        "title": "Notice",
+        "type": "object"
+      },
+      "NoticeMessage": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/Notice"
+          },
+          "seq": {
+            "title": "Seq",
+            "type": "integer"
+          },
+          "ts": {
+            "title": "Ts",
+            "type": "number"
+          },
+          "type": {
+            "const": "notice",
+            "default": "notice",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "seq",
+          "ts",
+          "data"
+        ],
+        "title": "NoticeMessage",
+        "type": "object"
+      },
+      "PendingData": {
+        "properties": {
+          "pending": {
+            "items": {
+              "$ref": "#/components/schemas/PendingView"
+            },
+            "title": "Pending",
+            "type": "array"
+          }
+        },
+        "required": [
+          "pending"
+        ],
+        "title": "PendingData",
+        "type": "object"
+      },
+      "PendingMessage": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/PendingData"
+          },
+          "seq": {
+            "title": "Seq",
+            "type": "integer"
+          },
+          "ts": {
+            "title": "Ts",
+            "type": "number"
+          },
+          "type": {
+            "const": "pending",
+            "default": "pending",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "seq",
+          "ts",
+          "data"
+        ],
+        "title": "PendingMessage",
+        "type": "object"
+      },
+      "PendingView": {
+        "properties": {
+          "address": {
+            "title": "Address",
+            "type": "string"
+          },
+          "alias": {
+            "title": "Alias",
+            "type": "string"
+          },
+          "site_id": {
+            "title": "Site Id",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "site_id",
+          "alias",
+          "address",
+          "source"
+        ],
+        "title": "PendingView",
+        "type": "object"
+      },
+      "RegistryInfo": {
+        "properties": {
+          "alias": {
+            "title": "Alias",
+            "type": "string"
+          },
+          "battery_pct": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Battery Pct"
+          },
+          "last_seen": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Seen"
+          },
+          "location": {
+            "title": "Location",
+            "type": "string"
+          },
+          "notes": {
+            "title": "Notes",
+            "type": "string"
+          },
+          "site_id": {
+            "title": "Site Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "site_id",
+          "alias",
+          "location",
+          "notes",
+          "last_seen",
+          "battery_pct"
+        ],
+        "title": "RegistryInfo",
+        "type": "object"
+      },
+      "ReleaseRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "device_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "pattern": "^[0-9a-f]{2,128}$",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Device Ids"
+          }
+        },
+        "title": "ReleaseRequest",
+        "type": "object"
+      },
+      "SensorCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "alias": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Alias",
+            "type": "string"
+          },
+          "device_id": {
+            "pattern": "^[0-9a-f]{2,128}$",
+            "title": "Device Id",
+            "type": "string"
+          },
+          "location": {
+            "default": "",
+            "maxLength": 200,
+            "title": "Location",
+            "type": "string"
+          },
+          "notes": {
+            "default": "",
+            "maxLength": 2000,
+            "title": "Notes",
+            "type": "string"
+          },
+          "site_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Site Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "device_id",
+          "site_id",
+          "alias"
+        ],
+        "title": "SensorCreate",
+        "type": "object"
+      },
+      "SensorInfoImport": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "maxLength": 65536,
+            "title": "Content",
+            "type": "string"
+          },
+          "filename": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Filename",
+            "type": "string"
+          },
+          "site_id": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Site Id"
+          },
+          "site_name": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Site Name"
+          }
+        },
+        "required": [
+          "filename",
+          "content"
+        ],
+        "title": "SensorInfoImport",
+        "type": "object"
+      },
+      "SensorMessage": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/SensorView"
+          },
+          "seq": {
+            "title": "Seq",
+            "type": "integer"
+          },
+          "ts": {
+            "title": "Ts",
+            "type": "number"
+          },
+          "type": {
+            "const": "sensor",
+            "default": "sensor",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "seq",
+          "ts",
+          "data"
+        ],
+        "title": "SensorMessage",
+        "type": "object"
+      },
+      "SensorRemoved": {
+        "properties": {
+          "device_id": {
+            "title": "Device Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "device_id"
+        ],
+        "title": "SensorRemoved",
+        "type": "object"
+      },
+      "SensorRemovedMessage": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/SensorRemoved"
+          },
+          "seq": {
+            "title": "Seq",
+            "type": "integer"
+          },
+          "ts": {
+            "title": "Ts",
+            "type": "number"
+          },
+          "type": {
+            "const": "sensor_removed",
+            "default": "sensor_removed",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "seq",
+          "ts",
+          "data"
+        ],
+        "title": "SensorRemovedMessage",
+        "type": "object"
+      },
+      "SensorUpdate": {
+        "additionalProperties": false,
+        "properties": {
+          "alias": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Alias"
+          },
+          "location": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Location"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Notes"
+          },
+          "site_id": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Site Id"
+          }
+        },
+        "title": "SensorUpdate",
+        "type": "object"
+      },
+      "SensorView": {
+        "properties": {
+          "device_id": {
+            "title": "Device Id",
+            "type": "string"
+          },
+          "last_calibration": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CalibrationSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "last_snapshot": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SnapshotSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "live": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LiveInfo"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "registry": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RegistryInfo"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "device_id",
+          "registry",
+          "live",
+          "last_calibration",
+          "last_snapshot"
+        ],
+        "title": "SensorView",
+        "type": "object"
+      },
+      "ServerInfo": {
+        "properties": {
+          "lan": {
+            "title": "Lan",
+            "type": "boolean"
+          },
+          "sim": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SimInfo"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "version",
+          "lan",
+          "sim"
+        ],
+        "title": "ServerInfo",
+        "type": "object"
+      },
+      "ServerMessage": {
+        "discriminator": {
+          "mapping": {
+            "gather": "#/components/schemas/GatherMessage",
+            "notice": "#/components/schemas/NoticeMessage",
+            "pending": "#/components/schemas/PendingMessage",
+            "sensor": "#/components/schemas/SensorMessage",
+            "sensor_removed": "#/components/schemas/SensorRemovedMessage",
+            "sites": "#/components/schemas/SitesMessage",
+            "snapshot": "#/components/schemas/SnapshotMessage"
+          },
+          "propertyName": "type"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/SnapshotMessage"
+          },
+          {
+            "$ref": "#/components/schemas/SensorMessage"
+          },
+          {
+            "$ref": "#/components/schemas/SensorRemovedMessage"
+          },
+          {
+            "$ref": "#/components/schemas/SitesMessage"
+          },
+          {
+            "$ref": "#/components/schemas/PendingMessage"
+          },
+          {
+            "$ref": "#/components/schemas/GatherMessage"
+          },
+          {
+            "$ref": "#/components/schemas/NoticeMessage"
+          }
+        ],
+        "title": "ServerMessage"
+      },
+      "SimInfo": {
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "speed": {
+            "title": "Speed",
+            "type": "number"
+          }
+        },
+        "required": [
+          "count",
+          "speed"
+        ],
+        "title": "SimInfo",
+        "type": "object"
+      },
+      "SiteCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "site_id": {
+            "anyOf": [
+              {
+                "pattern": "^[a-z0-9][a-z0-9-]{0,31}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Site Id"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "SiteCreate",
+        "type": "object"
+      },
+      "SiteView": {
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "site_id": {
+            "title": "Site Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "site_id",
+          "name"
+        ],
+        "title": "SiteView",
+        "type": "object"
+      },
+      "SitesData": {
+        "properties": {
+          "sites": {
+            "items": {
+              "$ref": "#/components/schemas/SiteView"
+            },
+            "title": "Sites",
+            "type": "array"
+          }
+        },
+        "required": [
+          "sites"
+        ],
+        "title": "SitesData",
+        "type": "object"
+      },
+      "SitesMessage": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/SitesData"
+          },
+          "seq": {
+            "title": "Seq",
+            "type": "integer"
+          },
+          "ts": {
+            "title": "Ts",
+            "type": "number"
+          },
+          "type": {
+            "const": "sites",
+            "default": "sites",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "seq",
+          "ts",
+          "data"
+        ],
+        "title": "SitesMessage",
+        "type": "object"
+      },
+      "SnapshotMessage": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/StateSnapshot"
+          },
+          "seq": {
+            "title": "Seq",
+            "type": "integer"
+          },
+          "ts": {
+            "title": "Ts",
+            "type": "number"
+          },
+          "type": {
+            "const": "snapshot",
+            "default": "snapshot",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "seq",
+          "ts",
+          "data"
+        ],
+        "title": "SnapshotMessage",
+        "type": "object"
+      },
+      "SnapshotSummary": {
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "taken_at": {
+            "title": "Taken At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "taken_at",
+          "reason"
+        ],
+        "title": "SnapshotSummary",
+        "type": "object"
+      },
+      "StateSnapshot": {
+        "properties": {
+          "gather": {
+            "$ref": "#/components/schemas/GatherStatus"
+          },
+          "pending": {
+            "items": {
+              "$ref": "#/components/schemas/PendingView"
+            },
+            "title": "Pending",
+            "type": "array"
+          },
+          "sensors": {
+            "items": {
+              "$ref": "#/components/schemas/SensorView"
+            },
+            "title": "Sensors",
+            "type": "array"
+          },
+          "seq": {
+            "title": "Seq",
+            "type": "integer"
+          },
+          "server": {
+            "$ref": "#/components/schemas/ServerInfo"
+          },
+          "sites": {
+            "items": {
+              "$ref": "#/components/schemas/SiteView"
+            },
+            "title": "Sites",
+            "type": "array"
+          }
+        },
+        "required": [
+          "seq",
+          "server",
+          "gather",
+          "sites",
+          "sensors",
+          "pending"
+        ],
+        "title": "StateSnapshot",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "title": "ms605 gui",
+    "version": "1"
+  },
+  "openapi": "3.1.0",
+  "paths": {}
+}
