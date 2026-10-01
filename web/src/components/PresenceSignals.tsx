@@ -16,7 +16,7 @@ export function signalAria(kind: SignalKind, value: Tri): string {
   return ARIA[kind][state(value)]
 }
 
-function signalIcon(kind: SignalKind, value: Tri): LucideIcon {
+export function signalIcon(kind: SignalKind, value: Tri): LucideIcon {
   if (value === null) return CircleHelp
   if (kind === 'pir') return value ? Eye : EyeOff
   if (kind === 'rf') return value ? Radio : RadioOff

@@ -2,8 +2,7 @@ import { Bluetooth } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useSearch } from 'wouter'
 import { buttonClass } from '../components/Button'
-import { MonitorSummary, MonitorTable } from '../components/MonitorTable'
-import { LegendTextRow, PresenceLegend } from '../components/PresenceSignals'
+import { MonitorLegend, MonitorSummary, MonitorWall } from '../components/MonitorWall'
 import { SensorPicker } from '../components/SensorPicker'
 import styles from '../components/live.module.css'
 import { useLiveWatch } from '../hooks/useLiveWatch'
@@ -97,16 +96,8 @@ export function MonitorScreen() {
           ) : (
             <>
               <MonitorSummary ids={shown} />
-              <PresenceLegend
-                extra={
-                  <>
-                    <LegendTextRow term={t.monitor.legendTagsKey}>{t.monitor.legendTags}</LegendTextRow>
-                    <LegendTextRow term={t.monitor.legendMeterKey}>{t.monitor.legend}</LegendTextRow>
-                    <LegendTextRow term={t.monitor.legendTriggerKey}>{t.monitor.legendTrigger}</LegendTextRow>
-                  </>
-                }
-              />
-              <MonitorTable ids={shown} />
+              <MonitorLegend />
+              <MonitorWall ids={shown} />
             </>
           )}
         </>

@@ -1,6 +1,6 @@
-/* Live monitor table (docs/GUI_API.md 14.8.5.1): one sensor per row, Z0..Z6 per column. The name and signal
-   columns are sticky and read as one block; the zones scroll sideways inside a focusable region (arrow keys
-   scroll it). */
+/* Live monitor wall (docs/GUI_API.md 14.8.5.1): one tile per watched sensor. The device's 재실 call leads in
+   large type, the raw PIR / RF blocks follow, and Z0..Z6 close the tile as vertical meter() cells whose
+   numbers open on hover, focus or tap. Built only from the M2 tokens. */
 
 /* -- summary bar ------------------------------------------------------------------------------- */
 .summary {
@@ -64,128 +64,174 @@
   color: var(--warn);
 }
 
-/* -- scroll region + table ---------------------------------------------------------------------- */
-.scroll {
-  --name-w: 168px;
-  --sig-w: 148px;
-  --zone-w: 124px;
-  overflow-x: auto;
-  overscroll-behavior-x: contain;
+/* -- compact legend ---------------------------------------------------------------------------- */
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px var(--space-3);
+  padding: 6px var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+.legendShort {
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px var(--space-4);
+  margin: 0;
+}
+
+.legendItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.legendChips {
+  display: inline-flex;
+  gap: 3px;
+}
+
+/* a vertical meter in miniature: green fill under the threshold rule */
+.glyph {
+  position: relative;
+  flex: none;
+  width: 7px;
+  height: 15px;
+  margin-inline: 3px;
+  border-radius: 1px;
+  background: linear-gradient(to top, var(--ok) 0 34%, color-mix(in srgb, var(--border) 80%, transparent) 34%);
+}
+
+.glyph::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: -3px;
+  right: -3px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--text);
+}
+
+.legendToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-height: 28px;
+  padding: 0 4px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--primary);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.legendToggle svg {
+  transition: transform 160ms var(--ease);
+}
+
+.legendToggle[aria-expanded='true'] svg {
+  transform: rotate(180deg);
+}
+
+.legendFull {
+  flex-basis: 100%;
+  padding-bottom: 4px;
+}
+
+.legendFull > dl {
+  padding: 6px 0 0;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  background: none;
+}
+
+/* -- wall ------------------------------------------------------------------------------------------ */
+.wall {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+@media (min-width: 720px) {
+  .wall {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1100px) {
+  .wall {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: var(--space-4);
+  }
+}
+
+.tile {
+  container-type: inline-size;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  --pad-x: 16px;
+  min-width: 0;
+  padding: 14px var(--pad-x) 10px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--surface);
   box-shadow: var(--shadow);
+  transition:
+    background-color 220ms var(--ease),
+    border-color 220ms var(--ease);
 }
 
-.scroll:focus-visible {
-  outline-offset: -2px; /* inside: the region bleeds to the screen edge on a phone */
+/* the device's 재실 call tints the whole tile (never on a lost sensor's history) */
+.tile[data-present='true'] {
+  border-color: color-mix(in srgb, var(--progress) 55%, transparent);
+  background: color-mix(in srgb, var(--progress-bg) 75%, var(--surface));
 }
 
-.table {
-  width: 100%;
-  min-width: calc(var(--name-w) + var(--sig-w) + 7 * var(--zone-w));
-  border-collapse: separate;
-  border-spacing: 0;
-  table-layout: fixed;
-}
-
-.table th,
-.table td {
-  padding: 0;
-  text-align: left;
-  vertical-align: middle;
-}
-
-.table thead th {
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface-2);
-  font-size: 13px;
-  font-weight: 800;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
-.headSub {
-  display: block;
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--text-muted);
-}
-
-/* the two sticky heads read as one: no rule between them, one rule after */
-.corner,
-.cornerSignals {
-  position: sticky;
-  z-index: 2;
-}
-
-.corner {
-  left: 0;
-  width: var(--name-w);
-}
-
-.cornerSignals {
-  left: var(--name-w);
-  width: var(--sig-w);
-  border-right: 1px solid var(--border);
-  color: var(--text-muted);
-  font-size: 11px !important;
-  font-weight: 700 !important;
-}
-
-.zoneHead {
-  width: var(--zone-w);
-}
-
-/* -- rows ----------------------------------------------------------------------------------------- */
-.row + .row > * {
-  border-top: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
-}
-
-.name,
-.signals {
-  position: sticky;
-  z-index: 1;
-  background: var(--surface);
-  vertical-align: top !important;
+.head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 8px;
+  min-width: 0;
 }
 
 .name {
-  left: 0;
-  width: var(--name-w);
-  padding: 10px 6px 10px 12px !important;
-  font-weight: 400;
-}
-
-.name > * {
-  display: block;
-}
-
-/* the device's 재실 call, as a blue rail on the name cell */
-.row[data-present='true'] .name {
-  box-shadow: inset 3px 0 0 var(--progress);
-}
-
-/* dim the contents, never a sticky cell itself: a see-through sticky cell would show the zones under it */
-.row[data-stale='true'] > td:not(.signals),
-.row[data-stale='true'] .signalLine {
-  opacity: 0.55;
+  min-width: 0;
+  max-width: 100%;
+  margin: 0;
+  overflow: hidden;
+  font-size: var(--font);
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .nameLink {
-  overflow: hidden;
-  font-weight: 700;
+  color: var(--text);
   text-decoration: none;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .nameLink:hover {
   text-decoration: underline;
 }
 
-.sub {
+.location {
+  min-width: 0;
   overflow: hidden;
   color: var(--text-muted);
   font-size: 12px;
@@ -193,10 +239,34 @@
   white-space: nowrap;
 }
 
-.warn {
-  color: var(--warn);
+.warn,
+.calibrating,
+.waiting {
+  margin: 0;
   font-size: 12px;
   font-weight: 700;
+  line-height: 1.4;
+}
+
+.warn {
+  color: var(--warn);
+}
+
+.waiting {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.calibrating {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  color: var(--progress);
+}
+
+.calibrating svg {
+  flex: none;
+  margin-top: 2px;
 }
 
 .hint {
@@ -204,129 +274,174 @@
   color: var(--text-muted);
   font-size: 11px;
   font-weight: 500;
-  line-height: 1.35;
 }
 
-.calibrating {
-  display: flex !important;
-  align-items: flex-start;
-  gap: 4px;
-  margin-top: 2px;
-  color: var(--progress);
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.calibrating svg {
-  flex: none;
-  margin-top: 3px;
-}
-
-/* PIR / RF on the first line (raw signals), the device's 재실 call and S1..S3 on the next */
-.signals {
-  left: var(--name-w);
-  width: var(--sig-w);
-  padding: 10px 10px 10px 6px !important;
-  border-right: 1px solid var(--border);
-}
-
-.signalLine {
+.body {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px;
+  flex: 1;
+  flex-direction: column;
+  gap: 10px;
+  transition: opacity 200ms var(--ease);
 }
 
-.signalLine + .signalLine {
+.tile[data-stale='true'] .body {
+  opacity: 0.55;
+}
+
+/* -- the device's 재실 call ---------------------------------------------------------------------- */
+.verdict {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   margin-top: 4px;
-}
-
-/* -- zone cells ------------------------------------------------------------------------------------- */
-.cell {
-  padding: 7px 9px !important;
-  border-left: 1px solid color-mix(in srgb, var(--border) 45%, transparent);
-  transition: background-color 160ms var(--ease);
-}
-
-.cell[data-over='trigger'] {
-  background: color-mix(in srgb, var(--danger-bg) 80%, transparent);
-}
-
-.cell[data-over='maintain'] {
-  background: color-mix(in srgb, var(--danger-bg) 38%, transparent);
-}
-
-.cell[data-off],
-.cell[data-empty] {
-  text-align: center !important;
-}
-
-.cell[data-off] {
-  background: repeating-linear-gradient(
-    -45deg,
-    transparent 0 6px,
-    color-mix(in srgb, var(--border) 35%, transparent) 6px 7px
-  );
-}
-
-.muted {
   color: var(--text-muted);
-  font-size: 12px;
 }
 
-/* this row's own zone distance, shown only when the watched sensors' distances differ */
-.cellDistance {
-  display: block;
-  margin-bottom: 2px;
-  font-family: var(--font-mono);
-  font-size: 10px;
-  color: var(--text-muted);
-  text-align: left;
+.verdictIcon {
+  flex: none;
+  width: 36px;
+  height: 36px;
 }
 
-/* -- mini meter: tag · 16-cell track · cur/thr -------------------------------------------------------- */
-.mini {
+.verdictText {
   display: grid;
-  grid-template-columns: 9px minmax(40px, 1fr) auto;
-  align-items: center;
-  gap: 5px;
   min-width: 0;
 }
 
-.mini + .mini {
-  margin-top: 4px;
+.verdictWord {
+  font-size: 40px;
+  font-weight: 800;
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+  color: var(--text);
 }
 
-.tag {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  font-weight: 700;
+.verdictNote {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.tile[data-tone='present'] .verdict,
+.tile[data-tone='present'] .verdictWord,
+.tile[data-tone='present'] .verdictNote {
+  color: var(--progress);
+}
+
+.tile[data-tone='unknown'] .verdictWord {
   color: var(--text-muted);
 }
 
-.track {
+/* -- raw PIR / RF ------------------------------------------------------------------------------ */
+.signals {
   display: grid;
-  grid-template-columns: repeat(16, 1fr);
+  gap: 6px;
+}
+
+@container (min-width: 230px) {
+  .signals {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.signal {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  padding: 7px 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: var(--off-bg);
+  color: var(--off);
+  font-size: var(--font-sm);
+  font-weight: 700;
+  white-space: nowrap;
+  transition:
+    background-color 160ms var(--ease),
+    color 160ms var(--ease);
+}
+
+.signal svg {
+  flex: none;
+}
+
+.signal[data-tone='hit'] {
+  border-color: color-mix(in srgb, var(--danger) 40%, transparent);
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+.signal[data-tone='unknown'] {
+  border: 1px dashed color-mix(in srgb, var(--text-muted) 70%, transparent);
+  background: transparent;
+  color: var(--text-muted);
+}
+
+/* -- Z0..Z6: vertical meter() cells ------------------------------------------------------------- */
+.zones {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 2px;
+  margin-top: auto; /* the strips line up across a row of tiles */
+  padding-top: 8px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+}
+
+.zone {
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  min-width: 0;
+  padding: 4px 0 2px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+span.zone {
+  cursor: default;
+}
+
+.zone[data-active='true'] {
+  background: color-mix(in srgb, var(--text) 7%, transparent);
+}
+
+.zone:focus-visible {
+  outline-offset: 0;
+}
+
+.track {
+  display: flex;
+  flex-direction: column-reverse; /* cell 0 at the bottom */
   gap: 1px;
-  height: 6px;
-  margin: 2px 0;
+  width: min(calc(100% - 8px), 22px); /* room for the tick's overhang inside the column */
+  height: 54px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--text-muted) 9%, transparent);
 }
 
 .track i {
   position: relative;
+  flex: 1;
   border-radius: 1px;
-  background: color-mix(in srgb, var(--border) 80%, transparent);
 }
 
 .track i[data-cell='fill'] {
   background: var(--ok);
 }
 
-.mini[data-over='true'] .track i[data-cell='fill'] {
+.track[data-over='true'] i[data-cell='fill'] {
   background: var(--danger);
 }
 
-/* the threshold: never moves, stands 2 px proud of the track */
+/* the threshold: the same row for every zone, a rule that stands proud of the track on both sides */
 .track i[data-cell='tick'] {
   background: transparent;
 }
@@ -334,59 +449,159 @@
 .track i[data-cell='tick']::after {
   content: '';
   position: absolute;
-  top: -2px;
-  bottom: -2px;
-  left: 50%;
-  width: 2px;
-  transform: translateX(-50%);
+  top: 50%;
+  left: -4px;
+  right: -4px;
+  height: 2px;
+  transform: translateY(-50%);
   border-radius: 1px;
   background: var(--text);
 }
 
-.value {
-  min-width: 6.5ch;
+.track[data-off] {
+  border: 1px solid color-mix(in srgb, var(--border) 90%, transparent);
+  border-radius: 3px;
+  background: repeating-linear-gradient(
+    -45deg,
+    transparent 0 4px,
+    color-mix(in srgb, var(--text-muted) 35%, transparent) 4px 5px
+  );
+}
+
+.track[data-empty] {
+  background: none;
+  border: 1px dashed color-mix(in srgb, var(--text-muted) 45%, transparent);
+  border-radius: 3px;
+}
+
+.zoneLabel {
   font-family: var(--font-mono);
   font-size: 11px;
+  font-weight: 700;
   font-variant-numeric: tabular-nums;
-  text-align: right;
-  white-space: nowrap;
   color: var(--text-muted);
 }
 
-.value small {
-  font-size: 10px;
-  opacity: 0.7;
-}
-
-.value[data-hot='true'] {
+.zone[data-over='true'] .zoneLabel {
   color: var(--danger);
-  font-weight: 700;
 }
 
-@media (hover: hover) {
-  /* the sticky .signals cell keeps its opaque surface, or the zones would show through it while scrolled */
-  .row:hover > td:not([data-over], [data-off], .signals) {
-    background-color: color-mix(in srgb, var(--surface-2) 55%, transparent);
+/* a fixed slot for the RF mark (zones whose device trigger flag is set: what lights the tile's RF), so
+   labels line up whether or not a zone carries it */
+.zoneRf {
+  display: grid;
+  place-items: center;
+  height: 11px;
+  color: var(--danger);
+}
+
+.zone[data-off] .zoneLabel {
+  opacity: 0.6;
+}
+
+/* the open zone's numbers: as wide as the strip, so it never runs off a narrow tile */
+.readout {
+  --at: 0;
+  --out: 4px; /* how far it stands past the strip on each side */
+  position: absolute;
+  z-index: 3;
+  right: calc(-1 * var(--out));
+  bottom: calc(100% + 2px);
+  left: calc(-1 * var(--out));
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0 12px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: var(--text);
+  box-shadow: var(--shadow-lift);
+  color: var(--bg);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.45;
+  pointer-events: none;
+  animation: readout-in 120ms var(--ease);
+}
+
+/* the caret points at the open zone's column */
+.readout::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: calc(var(--out) + (100% - 2 * var(--out)) * (var(--at) + 0.5) / 7);
+  border: 5px solid transparent;
+  border-top-color: var(--text);
+  transform: translateX(-50%);
+}
+
+.readoutWhere {
+  flex-basis: 100%;
+  font-weight: 800;
+  text-align: center;
+}
+
+/* kept in the text, not drawn: the layout separates the parts and a wrap never starts a line with one */
+.sep {
+  display: none;
+}
+
+@keyframes readout-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
   }
 }
 
-@media (max-width: 639px) {
-  .scroll {
-    --name-w: 92px;
-    --sig-w: 108px;
-    --zone-w: 116px;
-    /* bleed to the screen edges so the zones get the full width */
-    margin-inline: calc(-1 * var(--space-4));
-    border-radius: 0;
-    border-inline: 0;
+/* -- narrow tiles (two columns on a phone) ----------------------------------------------------- */
+@container (max-width: 229px) {
+  .verdictIcon {
+    width: 28px;
+    height: 28px;
   }
 
-  /* PIR and RF still share one line: the raw pair above, the device's call below */
-  .signals {
-    padding-inline: 4px 6px !important;
+  .verdictWord {
+    font-size: 32px;
   }
 
-  .name {
-    padding-inline: 10px 4px !important;
+  .verdict {
+    gap: 8px;
+  }
+
+  .signal {
+    padding: 5px 9px;
+    font-size: 13px;
+  }
+
+  /* the strip runs to the tile's border with no gaps, so each zone stays a 24px target (WCAG 2.5.8) */
+  .zones {
+    gap: 0;
+    margin-inline: calc(-1 * var(--pad-x));
+  }
+
+  .readout {
+    --out: 0px;
+  }
+
+  .track {
+    height: 46px;
+  }
+
+  .track i[data-cell='tick']::after {
+    left: -3px;
+    right: -3px;
+  }
+
+  .zoneLabel {
+    font-size: 10px;
+  }
+}
+
+@media (max-width: 479px) {
+  .tile {
+    --pad-x: 10px;
+    padding-top: 12px;
+    padding-bottom: 8px;
   }
 }
