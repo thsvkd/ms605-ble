@@ -34,3 +34,16 @@ class MS605DeviceError(MS605Error):
 
 class MS605ConnectionError(MS605Error):
     """A BLE/adapter-level failure, decorated with an actionable hint."""
+
+
+class StorageError(MS605Error):
+    """A registry, snapshot, history or import file could not be read or written."""
+
+
+class SessionBusyError(MS605Error):
+    """A device's operation lock is already held (fails at once, never waits).
+    `reason` is the holder's reason, e.g. "calibration"."""
+
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+        super().__init__(f"device busy: {reason}")

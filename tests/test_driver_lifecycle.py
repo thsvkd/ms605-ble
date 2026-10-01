@@ -16,8 +16,9 @@ from bleak.exc import BleakError
 
 import ms605.driver as driver_mod
 from ms605 import MS605, MS605ConnectionError, MS605DeviceError, MS605Error, MS605TimeoutError
-from ms605.cli._shared import LiveLink, _fmt_device_choice
+from ms605.cli._shared import _fmt_device_choice
 from ms605.errors import ProfileError
+from ms605.events import EventBus, LinkState
 from ms605.models import ConfigProfile, encode_segment_map
 from ms605.protocol import (
     PUSH_TRIGGER_SRC,
@@ -33,6 +34,7 @@ from ms605.protocol import (
     build_frame_raw,
     parse_frame,
 )
+from ms605.session import DeviceSession
 from ms605.sim import SimAdvertisement, SimFleet, SimMS605
 
 PAIRS = [(90, 41), (80, 41), (70, 41), (60, 41), (50, 41), (40, 31), (30, 21)]
@@ -117,19 +119,27 @@ def test_disconnect_fails_pending_and_resets_reassembler():
     _run(main())
 
 
+def _session(dev: SimMS605, keepalive_interval: float) -> DeviceSession:
+    # the CLI's keep-alive owner (it replaced cli._shared.LiveLink)
+    return DeviceSession(
+        dev.ble_device, EventBus(), client_factory=dev.client_factory, keepalive_interval=keepalive_interval
+    )
+
+
 def test_live_link_keepalive_survives_reconnect():
     async def main():
         dev = _dev()
-        ms = await _connect(dev)
-        link = LiveLink(ms, dev.ble_device, scan_secs=0.01, connect_timeout=1.0, keepalive_interval=0.01)
+        session = _session(dev, 0.05)  # each ping waits at most 0.05 s
+        await session.connect()
         dev.drop_responses(1)
-        link.start_keepalive()
         await _until(lambda: len(dev.frames_in) >= 1)  # first ping is waiting for an ACK
-        await ms.reconnect()
+        dev.drop_link()  # the link goes while that ping waits
+        await _until(lambda: session.state is LinkState.LOST)
+        await session.connect()  # back from LOST
         seen = len(dev.frames_in)
         await _until(lambda: len(dev.frames_in) >= seen + 2)  # pings keep flowing on the new link
-        assert not link._keepalive_task.done()
-        await link.stop_keepalive()
+        assert not session._keepalive_task.done()
+        await session.close()
 
     _run(main())
 
@@ -471,7 +481,7 @@ def test_invalid_profile_writes_nothing():
 
 def test_apply_profile_validates_only_the_selected_sections():
     async def main():
-        dev = _dev()
+        dev = _dev(apply_delay=None)  # the check below reads the device state right after the write
         ms = await _connect(dev)
         # a source that reports an out-of-range sensitivity (e.g. 0) still clones its thresholds
         profile = ConfigProfile(sensitivity=0, zone_thresholds=PAIRS)
@@ -725,18 +735,28 @@ def test_cancelling_calibration_while_it_awaits_a_stuck_keepalive_propagates():
 def test_cancelling_live_link_stop_keepalive_propagates():
     async def main():
         dev = _dev()
-        ms = await _connect(dev)
-        link = LiveLink(ms, dev.ble_device, scan_secs=0.01, connect_timeout=1.0, keepalive_interval=0.01)
-        _wedge_writes(ms._client)
-        link.start_keepalive()
-        await asyncio.sleep(0.05)  # a ping is stuck mid-frame
-        stopper = asyncio.create_task(link.stop_keepalive())
+        session = _session(dev, 5.0)  # a stuck ping is abandoned only after 5 s
+        await session.connect()
+        await asyncio.sleep(0.01)  # the keep-alive loop is up
+        client = session.ms._client
+        _wedge_writes(client)
+        released = asyncio.Event()
+
+        async def wedged_disconnect():
+            await released.wait()
+
+        client.disconnect = wedged_disconnect  # close() blocks in its bounded disconnect
+        async with session.operation("read", suspend_keepalive=True):
+            pass  # releasing it pings at once
+        await asyncio.sleep(0.05)  # that ping is stuck mid-frame
+        stopper = asyncio.create_task(session.close())
         await asyncio.sleep(0.01)
         assert not stopper.done()
         stopper.cancel()
-        await ms.disconnect()  # ends the stuck write
         with pytest.raises(asyncio.CancelledError):
             await asyncio.wait_for(stopper, 1.0)
+        # the cancelled close() still settled the keep-alive (its stuck write ended with the link)
+        assert asyncio.all_tasks() == {asyncio.current_task()}
 
     _run(main())
 

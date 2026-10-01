@@ -530,11 +530,17 @@ class MS605:
         section; a section whose profile value is None is always skipped).
 
         Two ordering/safety rules mirror what a careful operator would do by
-        hand: sensitivity is written *before* zone thresholds so selecting a
-        preset level (1-3, which reloads that preset's threshold table) can't
-        clobber the cloned per-zone values; and detect_mode == SPACE_LEARNING
-        (4) is refused -- cloning it would *start a calibration* on the target
-        rather than copy a setting (use start_auto_calibration() for that).
+        hand: sensitivity is written *before* zone thresholds, a harmless
+        precaution -- on the 1-2 real devices measured, writing a preset level
+        (tag 61) did not change the tag-51 values and a tag-51 write did not
+        flip tag 61, so the two are independent as observed; and
+        detect_mode == SPACE_LEARNING (4) is refused -- cloning it would
+        *start a calibration* on the target rather than copy a setting (use
+        start_auto_calibration() for that).
+
+        A tag-51 write is acked at once but was not visible on an immediate
+        read-back (visible ~1 s later), so callers that verify by reading back
+        must poll rather than read once.
 
         Every selected section is validated first (ProfileError) so a bad
         section never leaves the target half-written; unselected ones are not
@@ -758,6 +764,7 @@ class MS605:
         *,
         timeout: float = CALIBRATION_TIMEOUT_S,
         keepalive_interval: float = 15.0,
+        on_started: Callable[[], None] | None = None,
     ) -> bool:
         """Write tag52=4 (SPACE_LEARNING) then await the device's tag62 push
         with the result (value 1 == success). Learning can outlive the device's
@@ -773,7 +780,9 @@ class MS605:
         an unanswered keep-alive while the link is still up) and
         MS605TimeoutError if no tag62 push arrives within
         `timeout` seconds. `keepalive_interval` is the seconds between pings and
-        must stay below the device's idle-disconnect threshold."""
+        must stay below the device's idle-disconnect threshold. `on_started`
+        is called once, after the tag52=4 ACK (learning has begun); an
+        exception from it is only logged."""
         loop = asyncio.get_running_loop()
         result_fut: asyncio.Future[tuple[int, ParsedFrame]] = loop.create_future()
         self._push_waiters.setdefault(TAG_SPACE_LEARNING_RESULT, []).append(result_fut)
@@ -822,6 +831,11 @@ class MS605:
                     raise MS605ConnectionError("BLE link lost during auto-calibration")
                 result_fut = loop.create_future()
                 self._push_waiters.setdefault(TAG_SPACE_LEARNING_RESULT, []).append(result_fut)
+            if on_started is not None:
+                try:
+                    on_started()
+                except Exception:  # noqa: BLE001 - a caller's hook must not abort learning
+                    _log.exception("on_started hook failed")
             done, _pending = await asyncio.wait(
                 {result_fut, link_lost},
                 timeout=timeout,

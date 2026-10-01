@@ -200,6 +200,23 @@ def decode_config(response: ParsedFrame) -> MS605Config:
     )
 
 
+# Fallback distances (metres) for the 7 radar zones if the device does not
+# report them; matches the MS605 spec (0.8 m .. 6.0 m).
+FALLBACK_DISTANCES_M: tuple[float, ...] = (0.8, 1.6, 2.4, 3.2, 4.0, 5.0, 6.0)
+
+
+def zone_distances(cfg: MS605Config) -> tuple[float, ...]:
+    """Return exactly 7 zone far-edge distances (metres)."""
+    d = tuple(cfg.zone_distances_m or ())
+    # tag53 carries 8 boundary markers (0.0 .. 6.0); the 7 zones are the
+    # non-zero far edges. Be tolerant of 7- or 8-length encodings.
+    if len(d) >= 8:
+        d = d[1:8]
+    if len(d) != 7:
+        d = FALLBACK_DISTANCES_M
+    return d
+
+
 # ---------------------------------------------------------------------------
 # Config profile -- the *writable* subset of MS605Config, captured so one
 # sensor's settings can be cloned onto others (`ms605 clone`). Pure value type

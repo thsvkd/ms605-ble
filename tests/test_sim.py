@@ -14,7 +14,6 @@ from ms605.errors import FrameError
 from ms605.models import decode_radar_output
 from ms605.protocol import (
     NOTIFY_CHAR_UUID,
-    SENSITIVITY_PRESETS,
     TAG_BATTERY,
     TAG_DEVICE_ID,
     TAG_LIVE_RADAR_OUTPUT,
@@ -134,26 +133,56 @@ def test_read_config_reflects_device_state():
     _run(run())
 
 
-def test_write_then_verify_thresholds_and_preset_reload():
+def test_threshold_write_is_acked_but_read_back_lags_by_apply_delay():
     async def run():
-        dev = _fast()
+        dev = _fast(speed=100)  # apply_delay 1 s -> 10 ms
         ms = await _driver(dev)
-        await ms.set_zone_thresholds(PAIRS)
+        before = dev.thresholds
+        await ms.set_zone_thresholds(PAIRS)  # acked at once
+        cfg = await ms.read_config()  # measured: the immediate read-back still shows the old value
+        assert [(z.trigger, z.maintain) for z in cfg.zone_thresholds] == before
+        await asyncio.sleep(0.05)
         cfg = await ms.read_config()
         assert [(z.trigger, z.maintain) for z in cfg.zone_thresholds] == PAIRS
-        assert cfg.sensitivity == Sensitivity.MEDIUM  # tag51 alone does not flip tag61 by default
-        await ms.set_sensitivity(Sensitivity.HIGH)  # preset level reloads its table
-        trig, maint = SENSITIVITY_PRESETS[Sensitivity.HIGH]
-        assert dev.thresholds == list(zip(trig, maint, strict=True))
         await ms.set_zone_enable([True, False] * 3 + [True])
-        assert dev.tags[TAG_ZONE_ENABLE] == bytes([0b1010101])
+        assert dev.tags[TAG_ZONE_ENABLE] == bytes([0b1010101])  # other tags are visible at once
+
+    _run(run())
+
+
+def test_defaults_are_the_measured_values():
+    dev = SimMS605()
+    assert (dev.connectable_window, dev.idle_timeout, dev.apply_delay) == (120.0, 30.0, 1.0)
+    assert dev.custom_on_threshold_write is False
+
+
+def test_apply_delay_none_makes_threshold_writes_visible_at_once():
+    async def run():
+        dev = _fast(apply_delay=None)
+        ms = await _driver(dev)
+        await ms.set_zone_thresholds(PAIRS)
+        assert dev.thresholds == PAIRS
+
+    _run(run())
+
+
+def test_tag61_and_tag51_are_independent():
+    # measured on real devices: neither write changes the other tag by default
+    async def run():
+        dev = _fast(apply_delay=None)
+        ms = await _driver(dev)
+        await ms.set_zone_thresholds(PAIRS)
+        assert dev.sensitivity == Sensitivity.MEDIUM  # tag51 write does not flip tag61
+        await ms.set_sensitivity(Sensitivity.HIGH)  # a preset level does not reload its table
+        assert dev.thresholds == PAIRS
+        assert dev.sensitivity == Sensitivity.HIGH
 
     _run(run())
 
 
 def test_threshold_write_can_flip_sensitivity_to_custom():
     async def run():
-        dev = _fast(custom_on_threshold_write=True)
+        dev = _fast(custom_on_threshold_write=True, apply_delay=None)
         ms = await _driver(dev)
         await ms.set_zone_thresholds(PAIRS)
         assert dev.sensitivity == Sensitivity.CUSTOM

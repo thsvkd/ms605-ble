@@ -1,10 +1,10 @@
 """ms605.cli._shared -- helpers shared by the MS605 CLIs.
 
-`discover_and_select`/`connect_with_retry`/`LiveLink` implement the
+`discover_and_select`/`connect_with_retry`/`ensure` implement the
 single-device, button-press-aware connect flow used by the interactive app and
-one-shot subcommands (and by tools/debug_zone_write.py) -- not by the
-`ms605 calibrate` batch path, which manages several devices at once with its
-own pooling logic (see run_batch_calibration in cli.py).
+one-shot subcommands (and by tools/debug_zone_write.py) on top of a
+ms605.session.DeviceSession -- not by the `ms605 calibrate` / `clone` batch
+paths, which gather several devices at once through ms605.fleet.Fleet.
 
 The low-level `ainput` primitive lives in ms605.cli._ui (the presentation
 layer) and is re-exported here for the callers that still import it from
@@ -20,11 +20,13 @@ from ms605 import MS605, MS605Error
 from ms605.cli import _ui
 from ms605.cli._ui import ainput
 from ms605.discovery import friendly_ble_error
+from ms605.events import EventBus, LinkState
+from ms605.session import DeviceSession
 
 if TYPE_CHECKING:
     from bleak.backends.device import BLEDevice
 
-__all__ = ["ainput", "LiveLink", "connect_with_retry", "discover_and_select"]
+__all__ = ["ainput", "connect_with_retry", "discover_and_select", "ensure"]
 
 
 async def discover_and_select(
@@ -102,18 +104,19 @@ def _fmt_device_choice(dev: BLEDevice) -> str:
     return f"{dev.name or '(이름없음)':<22} {dev.address}   RSSI {rssi_s}"
 
 
-async def connect_with_retry(device: BLEDevice, scan_secs: float, connect_timeout: float) -> MS605:
-    """Connect, and on failure keep prompting for the button + retrying
-    automatically until the sensor becomes connectable."""
+async def connect_with_retry(device: BLEDevice, scan_secs: float, connect_timeout: float) -> DeviceSession:
+    """Connect a new DeviceSession, and on failure keep prompting for the
+    button + retrying automatically until the sensor becomes connectable. The
+    session keeps the link alive (keep-alive) from the moment it connects."""
+    session = DeviceSession(device, EventBus(), connect_timeout=connect_timeout, scan_secs=scan_secs)
     target = device.address
     first = True
     while True:
-        ms = MS605(device)
         try:
             with _ui.status(f"연결 시도: {device.name or ''} {device.address} ..."):
-                await ms.connect(timeout=connect_timeout)
+                await session.connect(device)
             _ui.success("연결 성공!")
-            return ms
+            return session
         except (MS605Error, Exception) as exc:  # noqa: BLE001 - surface any BLE failure
             _ui.error(friendly_ble_error(exc, target))
             if first:
@@ -134,97 +137,25 @@ async def connect_with_retry(device: BLEDevice, scan_secs: float, connect_timeou
             _ui.muted("   ...재시도 중 (버튼 눌러주세요)")
 
 
-class LiveLink:
-    """Keeps a live MS605 GATT link across the interactive session.
-
-    The MS605 drops a link whose central->device direction goes idle, so
-    without traffic the connection silently dies while we wait for menu input,
-    while the user types values, or while the live monitor only *listens* to
-    tag55 pushes (the device stops streaming once it drops us). Two mechanisms
-    keep it up:
-
-    * `start_keepalive()` runs a background ping loop for the whole session
-      (the app itself pings every ~20 s), so idle waits no longer drop the link
-      -- this is what keeps the live monitor's graph updating.
-    * `ensure()` still re-establishes the link on demand (rescan + button
-      prompt) as a fallback if it did drop, before any device operation.
-
-    The same MS605 object is reused across reconnects, so registered push
-    handlers survive and callers can keep their `link.ms` reference."""
-
-    def __init__(
-        self,
-        ms: MS605,
-        device: BLEDevice,
-        scan_secs: float,
-        connect_timeout: float,
-        *,
-        keepalive_interval: float = 15.0,
-    ) -> None:
-        self.ms = ms
-        self.device = device
-        self.scan_secs = scan_secs
-        self.connect_timeout = connect_timeout
-        self.keepalive_interval = keepalive_interval
-        self._keepalive_task: asyncio.Task | None = None
-
-    def start_keepalive(self) -> None:
-        """Begin the background ping loop (idempotent). Keeps the link alive
-        through every idle wait until stop_keepalive() / disconnect."""
-        if self._keepalive_task is None:
-            self._keepalive_task = asyncio.create_task(self._keepalive_loop())
-
-    async def stop_keepalive(self) -> None:
-        task = self._keepalive_task
-        self._keepalive_task = None
-        if task is not None:
-            task.cancel()
-            # absorbs the task's own CancelledError but not one aimed at the caller
-            await asyncio.gather(task, return_exceptions=True)
-
-    async def _keepalive_loop(self) -> None:
-        # Ping the central->device direction periodically so the MS605 does not
-        # drop the idle link. Pings serialise with real operations via the
-        # driver's send lock; a failed ping just means the link is already gone
-        # (ensure() recovers it on the next operation), so we swallow and retry.
-        while True:
-            await asyncio.sleep(self.keepalive_interval)
-            if not self.ms.is_connected:
-                continue
-            try:
-                await self.ms.ping()
-            except Exception:  # noqa: BLE001 - link dropped; ensure() recovers on next op
-                pass
-
-    async def ensure(self) -> None:
-        """Guarantee a live link before a device operation; reconnect if not."""
-        if self.ms.is_connected:
+async def ensure(session: DeviceSession) -> None:
+    """Guarantee a live link before a device operation: if the session is not
+    connected, keep retrying session.reconnect_once() (which rescans for a fresh
+    handle) every 2 s, prompting for the button, until it succeeds."""
+    if session.state is LinkState.CONNECTED:
+        return
+    _ui.warn("BLE 연결이 끊어져 있습니다 (기기가 유휴 상태로 링크를 종료). 재연결합니다...")
+    first = True
+    while True:
+        try:
+            with _ui.status("재연결 시도 중..."):
+                await session.reconnect_once()
+            _ui.success("재연결 성공!")
             return
-        _ui.warn("BLE 연결이 끊어져 있습니다 (기기가 유휴 상태로 링크를 종료). 재연결합니다...")
-        target = self.device.address
-        first = True
-        while True:
-            # rescan first: CoreBluetooth may advertise a fresh handle after the
-            # button press, and reusing a stale one just fails again.
-            try:
-                with _ui.status("재연결용 재검색 중..."):
-                    found = await MS605.scan(timeout=self.scan_secs)
-            except Exception:  # noqa: BLE001
-                found = []
-            for d in found:
-                if d.address == target:
-                    self.device = d
-                    break
-            try:
-                with _ui.status("재연결 시도 중..."):
-                    await self.ms.reconnect(device=self.device, timeout=self.connect_timeout)
-                _ui.success("재연결 성공!")
-                return
-            except (MS605Error, Exception) as exc:  # noqa: BLE001 - surface any BLE failure
-                _ui.error(friendly_ble_error(exc, target))
-                if first:
-                    _ui.warn("디바이스 버튼을 한 번 눌러 BLE 연결 모드로 전환해주세요.")
-                    _ui.muted("   버튼을 누르면 자동으로 다시 연결합니다. (Ctrl-C 로 중단)")
-                    first = False
-                await asyncio.sleep(2.0)
-                _ui.muted("   ...재시도 중 (버튼 눌러주세요)")
+        except (MS605Error, Exception) as exc:  # noqa: BLE001 - surface any BLE failure
+            _ui.error(friendly_ble_error(exc, session.address))
+            if first:
+                _ui.warn("디바이스 버튼을 한 번 눌러 BLE 연결 모드로 전환해주세요.")
+                _ui.muted("   버튼을 누르면 자동으로 다시 연결합니다. (Ctrl-C 로 중단)")
+                first = False
+            await asyncio.sleep(2.0)
+            _ui.muted("   ...재시도 중 (버튼 눌러주세요)")

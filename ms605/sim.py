@@ -33,28 +33,40 @@ Behaviours
 - faults: drop_link(), inject_status(), corrupt_live(), drop_responses(),
   `response_delay`, corrupt_next_crc().
 
+Measured (M0, real device; docs/GUI_PLAN.md "측정 결과", docs/SPEC.md 8.9)
+--------------------------------------------------------------------------
+- connectable_window=120 s after a button press: a *lower bound* (3 rounds on
+  1-2 devices, never closed before the tool's 120 s cap; first connect 1-2 s
+  after the press). The true upper bound is unknown. The device advertises only
+  inside the window and accepts one central at a time. A connection does not
+  close the window; reconnecting after it expires needs another press.
+- idle_timeout=30 s without central->device traffic (29.6 s, 1 sample). A 25 s
+  keep-alive interval held the link, 30 s dropped it.
+- tag51 and tag61 are independent over BLE (1-2 devices): writing tag51 does
+  not flip tag61 to CUSTOM (`custom_on_threshold_write=False`), and writing a
+  preset level to tag61 does not change the tag51 values.
+- apply_delay=1 s: a tag51 write is acked at once, but an immediate read-back
+  still shows the old value; it was visible 1 s later (upper bound ~1 s, coarse).
+- concurrent links: 2 of 2 available sensors held for 30 s (lower bound only;
+  the sim itself has no connection limit).
+- tag30 device id: 20 bytes, unique and stable on the one device observed
+  (weak evidence; synthetic and shorter here).
+
 Assumptions (simplest plausible behaviour; every MEASURE item is a placeholder
 to be replaced by a real-device measurement, see docs/GUI_PLAN.md M0)
 ---------------------------------------------------------------------------
-- MEASURE connectable_window=30 s after a button press; the device advertises
-  only inside the window and accepts one central at a time. A connection does
-  not close the window; reconnecting after it expires needs another press.
-- MEASURE idle_timeout=30 s without central->device traffic.
 - MEASURE calibration_secs=180 s; on success sensitivity becomes CUSTOM(4)
   and detect mode reverts to its pre-calibration value. If the link drops
   mid-learning, learning resets (docs/GUI_PLAN.md section 1): nothing learned
   is stored and detect mode reverts; no tag62 is ever sent.
   A keep-alive does not disturb learning. Tag52 writes of 1-3 are refused
   (status error) while learning.
-- MEASURE writing tag61=1..3 reloads that preset's tag51 table; writing tag51
-  leaves tag61 alone unless `custom_on_threshold_write=True`.
 - MEASURE status codes: 0 = ok, STATUS_ERROR (1) for any rejected write
   (unknown tag, wrong length, out-of-range enum) or unknown read. A write
   frame gets one tag3 per written attribute; a bare ping gets a single tag3=0;
   reads answer with the tag's value and no tag3.
 - MEASURE a frame with a bad CRC is ignored (no response).
 - MEASURE live_interval=1 s for tag55; live output switches off on disconnect.
-- MEASURE tag30 device id is per-device unique and stable (synthetic here).
 - Notifications use DEFAULT_CHUNK_SIZE (20-byte) chunks, i.e. no negotiated MTU.
 """
 
@@ -245,13 +257,14 @@ class SimMS605:
         address: str | None = None,
         name: str | None = None,
         speed: float = 1.0,
-        connectable_window: float | None = 30.0,
+        connectable_window: float | None = 120.0,
         idle_timeout: float | None = 30.0,
         calibration_secs: float = 180.0,
         live_interval: float = 1.0,
         learned_thresholds: Sequence[tuple[int, int]] = DEFAULT_LEARNED_THRESHOLDS,
         calibration_result: int = 1,
         custom_on_threshold_write: bool = False,
+        apply_delay: float | None = 1.0,
         notify_chunk_size: int = DEFAULT_CHUNK_SIZE,
     ) -> None:
         if speed <= 0:
@@ -267,6 +280,7 @@ class SimMS605:
         self.learned_thresholds = list(learned_thresholds)
         self.calibration_result = calibration_result
         self.custom_on_threshold_write = custom_on_threshold_write
+        self.apply_delay = apply_delay  # device seconds until a tag51 write is readable; None = at once
         self.notify_chunk_size = notify_chunk_size
         self.response_delay = 0.0  # device seconds before each response (fault knob)
         # Per-zone live (current_trigger, current_maintain) energy; tests raise
@@ -556,9 +570,10 @@ class SimMS605:
             intervals = decode_sample_intervals(self.tags[TAG_SAMPLE_INTERVAL])
             intervals[value[0]] = struct.unpack(">H", value[1:])[0]
             value = b"".join(encode_sample_interval(i, s) for i, s in sorted(intervals.items()))
-        self.tags[tag] = value
-        if tag == TAG_SENSITIVITY and value[0] != Sensitivity.CUSTOM:
-            self.tags[TAG_ZONE_THRESHOLDS] = encode_zone_thresholds(_preset_pairs(Sensitivity(value[0])))
+        if tag == TAG_ZONE_THRESHOLDS and self.apply_delay:
+            self._later(self.apply_delay, lambda: self.tags.__setitem__(TAG_ZONE_THRESHOLDS, value))
+        else:
+            self.tags[tag] = value
         if tag == TAG_ZONE_THRESHOLDS and self.custom_on_threshold_write:
             self.tags[TAG_SENSITIVITY] = bytes([Sensitivity.CUSTOM])
         if tag == TAG_LIVE_OUTPUT_ENABLE:

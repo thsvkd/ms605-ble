@@ -10,6 +10,14 @@ Submodules (import directly for lower-level access):
     ms605.errors     -- exception hierarchy
     ms605.discovery  -- advertisement matching, BLE error diagnostics
     ms605.driver     -- the MS605 class itself
+
+Core for apps (docs/CORE_API.md; import directly, not re-exported):
+    ms605.events       -- event dataclasses, state enums, EventBus
+    ms605.session      -- DeviceSession: one sensor's link
+    ms605.calibration  -- CalibrationJob, presence preflight
+    ms605.fleet        -- Fleet: gathering, batch calibration, drafts
+    ms605.registry     -- sites and sensors keyed by device id
+    ms605.storage      -- data directory, snapshots, history
 """
 
 from .driver import MS605
@@ -20,6 +28,8 @@ from .errors import (
     MS605Error,
     MS605TimeoutError,
     ProfileError,
+    SessionBusyError,
+    StorageError,
 )
 from .models import (
     ConfigProfile,
@@ -51,6 +61,8 @@ __all__ = [
     "MS605DeviceError",
     "MS605ConnectionError",
     "ProfileError",
+    "SessionBusyError",
+    "StorageError",
     "ZoneThreshold",
     "SubSensorStatus",
     "PresenceHistoryRecord",

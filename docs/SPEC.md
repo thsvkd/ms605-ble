@@ -261,6 +261,10 @@ Unknown tags must remain accessible through `ParsedFrame.attributes` and
 are not automatically written by that method; threshold changes require a
 separate tag-51 write.
 
+Observed on 1-2 devices (section 8.9): writing a preset level did not change
+the tag-51 values read back, and writing tag 51 did not change tag 61, so the
+two tags behaved independently over BLE.
+
 ### 8.2 Detection mode (tag 52)
 
 | Value | Name | Effect in this implementation |
@@ -348,13 +352,35 @@ sensorIndex:u8 | seconds:u16 BE
 
 All operations in this subsection remain experimental.
 
+### 8.9 Observed device behavior (M0 measurements)
+
+Operator measurements on one or two authorized devices. Under section 1 they
+are **Experimental**: observed, not established across firmware or units, and
+not reproducible from this repository alone. The simulator defaults in
+`ms605/sim.py` follow these numbers.
+
+| Observation | Result | Sample | Confidence |
+| --- | --- | --- | --- |
+| Connectable window after a button press | At least 117 s; never closed before the measuring tool's 120 s cap. First connect 1-2 s after the press. True upper bound unknown | 3 rounds, 1-2 devices | Experimental, lower bound only |
+| Idle link drop with no central->device traffic | Dropped after 29.6 s | 1 sample | Experimental, weak |
+| Keep-alive interval | A 25 s interval held the link; 30 s dropped it. The driver's 15 s default is within the margin | 1-2 devices | Experimental |
+| Tag 51 write vs tag 61 | Writing tag 51 did not set tag 61 to `CUSTOM`; writing a preset level (tag 61 = 2, from `CUSTOM`) did not change the tag-51 values; re-writing tag 61 after a tag-51 write kept the user thresholds | 1-2 devices | Experimental |
+| Read-after-write visibility of tag 51 | The write was acked, but an immediate read-back showed the old value; it was visible 1 s later. Verify-after-write must poll (about 3 s is a reasonable bound) rather than read once | 1-2 devices | Experimental, coarse (about 1 s) |
+| Tag 30 device identifier | 20 bytes, unique and stable | 1 device | Experimental, weak evidence |
+| Concurrent links from one central | 2 of 2 available sensors held for 30 s | 1 run | Experimental, lower bound only |
+
+Not measured: whether keep-alive traffic affects an auto-calibration in
+progress, and the real duration of auto-calibration. The 180 s calibration
+duration and the keep-alive/learning independence in the simulator remain
+assumptions.
+
 ## 9. High-level operation contracts
 
 | Operation | Frame behavior | Important constraint |
 | --- | --- | --- |
 | `read_config()` | Multi-read tags 41/48/49/50/51/52/53/61 | Fails if an expected tag is absent |
 | `set_zone_thresholds()` | Writes one 28-byte tag-51 value | Exactly seven pairs |
-| `apply_profile()` | Writes selected cloneable sections | Sensitivity precedes thresholds; mode 4 is skipped |
+| `apply_profile()` | Writes selected cloneable sections | Sensitivity precedes thresholds (a precaution; tags 61 and 51 were observed independent); mode 4 is skipped |
 | `set_live_output(True)` | Writes the intended tag-55 enable flag through tag 54 | Hardware effect experimental; caller must clean up handlers |
 | `ping()` | Sends a command containing only the tag-1 trailer | Used as a liveness/keep-alive operation |
 | `start_auto_calibration()` | Writes tag 52 value 4, awaits tag-62 push | Default timeout 200 s; default keep-alive 15 s |
@@ -428,6 +454,11 @@ Tests should establish both positive and negative properties:
 - Whether tag 98 is supported consistently.
 - Semantics of tags not listed in the registry.
 - Unattended connection longevity beyond the driver's local keep-alive model.
+- Upper bound of the connectable window after a button press (only a 117 s
+  lower bound was observed), and the true idle-drop and concurrent-link limits
+  (single or small samples; see section 8.9).
+- Whether keep-alive traffic affects auto-calibration, and the real
+  calibration duration.
 
 New claims should narrow this list only after a controlled authorized
 reproduction, an independently written spec change, and a fully synthetic

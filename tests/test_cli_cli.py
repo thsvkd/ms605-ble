@@ -10,13 +10,12 @@ from datetime import datetime, timezone
 import pytest
 
 from ms605 import ConfigProfile
+from ms605.calibration import build_calibration_record
 from ms605.cli.cli import (
-    CALIBRATION_HISTORY_PATH,
     FALLBACK_DISTANCES_M,
-    ManagedDevice,
+    SummaryRow,
     _format_sensor_presence,
     _format_zone_presence,
-    build_calibration_record,
     build_parser,
     format_clone_summary,
     format_config_table,
@@ -26,12 +25,13 @@ from ms605.cli.cli import (
     merge_thresholds,
     render_monitor,
     resolve_sections,
-    save_calibration_record,
     save_profile,
     zone_distances,
 )
-from ms605.models import decode_config, decode_radar_output
+from ms605.models import decode_config, decode_radar_output, decode_supported_tags
 from ms605.protocol import parse_frame
+from ms605.session import DeviceInfo
+from ms605.storage import Storage
 
 # Synthetic response and live-radar payload used to exercise rendering and
 # merge logic without retaining observations from a physical sensor.
@@ -103,12 +103,12 @@ def test_decode_radar_output_negative_threshold_reads_signed():
 
 def test_format_device_header_renders_id_version_battery_light():
     cfg = decode_config(parse_frame(bytes.fromhex(SYNTHETIC_CONFIG_FRAME)))
-    info = {
-        "device_id": bytes.fromhex("00112233445566778899aabbccddeeff000102"),
-        "light": (150).to_bytes(2, "big"),
-        "version": bytes.fromhex("0001010401010303"),
-        "battery": bytes([100]),
-    }
+    info = DeviceInfo(
+        device_id="00112233445566778899aabbccddeeff000102",
+        light_lux=150,
+        version=decode_supported_tags(bytes.fromhex("0001010401010303")),
+        battery_pct=100,
+    )
     header = format_device_header("MS605-test", "AA:BB:CC:DD:EE:FF", cfg, info)
     assert "Meross MS605" in header
     assert "150 lux" in header
@@ -150,20 +150,22 @@ def test_build_calibration_record_captures_committed_thresholds():
     }
 
 
-def test_save_calibration_record_appends_jsonl(tmp_path):
-    path = tmp_path / "nested" / "calibration_history.jsonl"
+def test_append_history_appends_jsonl(tmp_path):
+    storage = Storage(root=tmp_path / "nested")
+    path = storage.history_path
     record1 = {"a": 1}
     record2 = {"b": 2}
-    save_calibration_record(record1, path=path)
-    returned = save_calibration_record(record2, path=path)
+    storage.append_history(record1)
+    returned = storage.append_history(record2)
     assert returned == path
     lines = path.read_text(encoding="utf-8").splitlines()
     assert [json.loads(line) for line in lines] == [record1, record2]
 
 
 def test_calibration_history_path_is_under_repo_cal_results():
-    assert CALIBRATION_HISTORY_PATH.parent.name == "cal_results"
-    assert CALIBRATION_HISTORY_PATH.name == "calibration_history.jsonl"
+    history_path = Storage().history_path
+    assert history_path.parent.name == "cal_results"
+    assert history_path.name == "calibration_history.jsonl"
 
 
 def test_argparse_new_subcommands():
@@ -331,8 +333,8 @@ def test_render_monitor_waiting_state_has_no_zones():
 
 def test_format_clone_summary_counts_successes():
     devices = [
-        ManagedDevice(ms=None, device=None, name="A", address="a", status="clone_ok"),
-        ManagedDevice(ms=None, device=None, name="B", address="b", status="clone_error"),
+        SummaryRow(name="A", address="a", status="clone_ok"),
+        SummaryRow(name="B", address="b", status="clone_error"),
     ]
     summary = format_clone_summary(devices, ["sensitivity"])
     assert "1/2대 적용 성공" in summary

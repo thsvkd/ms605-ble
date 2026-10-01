@@ -17,8 +17,8 @@ At the end it best-effort restores the original values.
 
 This is a one-off diagnostic tool, not part of the production driver/CLI
 surface -- it lives in tools/ alongside the other RE toolkit scripts. The
-apply-lag finding it was written to confirm is already handled in
-ms605.cli.cli's confirm_zone_thresholds() (poll-until-committed), so this
+apply-lag finding it was written to confirm is already handled by
+ms605.fleet's poll_verify() (poll-until-committed), so this
 tool is kept only for future regression diagnosis, not routine use.
 
 Run:
@@ -35,9 +35,10 @@ import sys
 import time
 
 from ms605 import MS605
-from ms605.cli._shared import LiveLink, connect_with_retry, discover_and_select
+from ms605.cli._shared import connect_with_retry, discover_and_select, ensure
 from ms605.models import encode_zone_thresholds
 from ms605.protocol import TAG_SENSITIVITY, TAG_ZONE_THRESHOLDS, parse_frame
+from ms605.session import DeviceSession
 
 _T0 = time.monotonic()
 
@@ -114,17 +115,17 @@ async def poll_readbacks(ms: MS605, delays):
     return out
 
 
-async def experiment_A(link: LiveLink):
-    ms = link.ms
+async def experiment_A(session: DeviceSession):
+    ms = session.ms
     print("\n" + "=" * 72)
     print(" EXP-A: write tag51 ALONE → poll re-reads (delay + event hypotheses)")
     print("=" * 72)
-    await link.ensure()
+    await ensure(session)
     base, _ = await read_thresholds(ms, "baseline")
 
     sentinel = [(201 + i, 101 + i) for i in range(7)]  # distinctive, in-range
     print(f"\n  writing sentinel = {sentinel}")
-    await link.ensure()
+    await ensure(session)
     await ms.set_zone_thresholds(sentinel)
     print("  (ack received above; watching pushes + polling re-reads)\n")
 
@@ -135,15 +136,15 @@ async def experiment_A(link: LiveLink):
     return base, sentinel, reads
 
 
-async def experiment_B(link: LiveLink):
-    ms = link.ms
+async def experiment_B(session: DeviceSession):
+    ms = session.ms
     print("\n" + "=" * 72)
     print(" EXP-B: write tag61=4 (CUSTOM) + tag51 in ONE frame → re-read")
     print("=" * 72)
     sentinel = [(211 + i, 111 + i) for i in range(7)]
     value = encode_zone_thresholds(sentinel)
     print(f"  writing (single frame) tag61=04 + tag51 sentinel = {sentinel}")
-    await link.ensure()
+    await ensure(session)
     # one command frame carrying BOTH attributes (mirrors an app "apply custom")
     await ms._send([(TAG_SENSITIVITY, bytes([4])), (TAG_ZONE_THRESHOLDS, value)])
 
@@ -161,29 +162,26 @@ async def run() -> None:
     print("주의: 실제 센서에 테스트용 임계값을 씁니다. 끝나면 원래 값 복원을 시도합니다.\n")
 
     device = await discover_and_select(6.0)
-    ms = await connect_with_retry(device, 6.0, 12.0)
+    session = await connect_with_retry(device, 6.0, 12.0)
+    ms = session.ms
     install_sniffer(ms)
-    link = LiveLink(ms, device, 6.0, 12.0)
 
     try:
-        base, sent_a, reads_a = await experiment_A(link)
+        base, sent_a, reads_a = await experiment_A(session)
 
         if any(thr == sent_a for _, thr, _ in reads_a):
             print("\nEXP-A가 이미 반영됨 → EXP-B는 생략합니다.")
         else:
-            await experiment_B(link)
+            await experiment_B(session)
 
         print("\n원래 값 복원 시도...")
-        await link.ensure()
+        await ensure(session)
         await ms.set_zone_thresholds(base)
         await asyncio.sleep(1.0)
         await read_thresholds(ms, "after restore")
     finally:
         print("\n연결 종료...")
-        try:
-            await asyncio.wait_for(ms.disconnect(), timeout=5.0)
-        except BaseException:  # noqa: BLE001 - best-effort cleanup
-            pass
+        await session.close()  # bounded, best-effort
 
     print("\n디버그 종료. 위 로그 전체를 복사해서 보내주세요.")
 
