@@ -9,10 +9,10 @@ public wire contract and confidence labels.
 from __future__ import annotations
 
 import struct
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
-from .errors import FrameError
+from .errors import FrameError, ProfileError
 from .protocol import (
     TAG_DETECT_MODE,
     TAG_NAMES,
@@ -173,7 +173,7 @@ class MS605Config:
 
 def decode_config(response: ParsedFrame) -> MS605Config:
     """Decode a multi-read response frame (tags in READ_CONFIG_TAGS) into a
-    MS605Config. Raises FrameError if an expected tag is missing."""
+    MS605Config. Raises FrameError if an expected tag is missing or empty."""
 
     def require(tag: int) -> bytes:
         value = response.get(tag)
@@ -181,15 +181,21 @@ def decode_config(response: ParsedFrame) -> MS605Config:
             raise FrameError(f"config response missing expected tag {tag} ({TAG_NAMES.get(tag, '?')})")
         return value
 
+    def require_byte(tag: int) -> int:
+        value = require(tag)
+        if not value:
+            raise FrameError(f"config response tag {tag} ({TAG_NAMES.get(tag, '?')}) has an empty value")
+        return value[0]
+
     return MS605Config(
-        sub_sensor_enable=require(TAG_SUBSENSOR_ENABLE)[0],
+        sub_sensor_enable=require_byte(TAG_SUBSENSOR_ENABLE),
         segment_map=decode_segment_map(require(TAG_SEGMENT_MAP)),
         presence_absence_times=decode_presence_absence_times(require(TAG_PRESENCE_ABSENCE_TIMES)),
-        zone_enable=require(TAG_ZONE_ENABLE)[0],
+        zone_enable=require_byte(TAG_ZONE_ENABLE),
         zone_thresholds=decode_zone_thresholds(require(TAG_ZONE_THRESHOLDS)),
-        detect_mode=require(TAG_DETECT_MODE)[0],
+        detect_mode=require_byte(TAG_DETECT_MODE),
         zone_distances_m=decode_zone_distances(require(TAG_ZONE_DISTANCES)),
-        sensitivity=require(TAG_SENSITIVITY)[0],
+        sensitivity=require_byte(TAG_SENSITIVITY),
         raw_attributes=response.attributes,
     )
 
@@ -222,6 +228,35 @@ PROFILE_SECTIONS: tuple[tuple[str, str], ...] = (
 )
 PROFILE_SECTION_KEYS: tuple[str, ...] = tuple(k for k, _ in PROFILE_SECTIONS)
 PROFILE_SECTION_LABELS: dict[str, str] = dict(PROFILE_SECTIONS)
+PROFILE_ZONE_COUNT = 7
+
+
+def _is_int(x) -> bool:
+    # bool is an int subclass; True/False are never a valid numeric setting.
+    return isinstance(x, int) and not isinstance(x, bool)
+
+
+def _check_seq(section: str, value, length: int) -> None:
+    # str/bytes are sequences too, but never a valid list of settings.
+    if not isinstance(value, (list, tuple)) or len(value) != length:
+        raise ProfileError(f"profile section {section!r}: expected a list of {length} entries, got {value!r}")
+
+
+def _check_flags(section: str, value, length: int) -> None:
+    _check_seq(section, value, length)
+    if not all(isinstance(x, bool) for x in value):
+        raise ProfileError(f"profile section {section!r}: expected {length} true/false flags, got {value!r}")
+
+
+def _check_u16_pairs(section: str, value, length: int) -> None:
+    _check_seq(section, value, length)
+    for pair in value:
+        if not (
+            isinstance(pair, (list, tuple))
+            and len(pair) == 2
+            and all(_is_int(n) and 0 <= n <= 0xFFFF for n in pair)
+        ):
+            raise ProfileError(f"profile section {section!r}: expected (a, b) integer pairs in 0..65535, got {pair!r}")
 
 
 @dataclass
@@ -266,6 +301,38 @@ class ConfigProfile:
             source_address=source_address,
         )
 
+    def validate(self, sections: Iterable[str] | None = None) -> None:
+        """Check every populated section's type, length and range up front, so
+        a bad profile is rejected before any device write. `sections` limits
+        the check to those keys (the ones about to be written; default: all).
+        Raises ProfileError on the first problem; values are never coerced
+        (e.g. "2" is rejected). MS605.apply_profile() calls this before its
+        first write."""
+        keys = set(PROFILE_SECTION_KEYS if sections is None else sections)
+        for key, lo, hi in (("sensitivity", 1, 4), ("detect_mode", 1, 4)):
+            value = getattr(self, key) if key in keys else None
+            if value is not None and not (_is_int(value) and lo <= value <= hi):
+                raise ProfileError(f"profile section {key!r}: expected an integer in {lo}..{hi}, got {value!r}")
+        if "zone_enable" in keys and self.zone_enable is not None:
+            _check_flags("zone_enable", self.zone_enable, PROFILE_ZONE_COUNT)
+        if "zone_thresholds" in keys and self.zone_thresholds is not None:
+            _check_u16_pairs("zone_thresholds", self.zone_thresholds, PROFILE_ZONE_COUNT)
+        if "subsensor_zones" in keys and self.subsensor_zones is not None:
+            _check_seq("subsensor_zones", self.subsensor_zones, PROFILE_SUB_SENSOR_COUNT)
+            for zones in self.subsensor_zones:
+                if not (
+                    isinstance(zones, (list, tuple))
+                    and all(_is_int(z) and 0 <= z < PROFILE_ZONE_COUNT for z in zones)
+                ):
+                    raise ProfileError(
+                        f"profile section 'subsensor_zones': expected zone indices in 0..{PROFILE_ZONE_COUNT - 1}, "
+                        f"got {zones!r}"
+                    )
+        if "subsensor_timing" in keys and self.subsensor_timing is not None:
+            _check_u16_pairs("subsensor_timing", self.subsensor_timing, PROFILE_SUB_SENSOR_COUNT)
+        if "subsensor_enable" in keys and self.subsensor_enable is not None:
+            _check_flags("subsensor_enable", self.subsensor_enable, PROFILE_SUB_SENSOR_COUNT)
+
     def sections_present(self) -> tuple[str, ...]:
         """Section keys that actually carry a value (are cloneable), in registry order."""
         return tuple(k for k in PROFILE_SECTION_KEYS if getattr(self, k) is not None)
@@ -273,7 +340,15 @@ class ConfigProfile:
     def diff_sections(self, other: ConfigProfile, sections: Sequence[str]) -> list[str]:
         """Of `sections`, the keys whose value differs from `other`'s -- used to
         confirm an apply actually landed (re-read config vs. intended profile)."""
-        return [k for k in sections if getattr(self, k) != getattr(other, k)]
+
+        def value(profile: ConfigProfile, key: str):
+            v = getattr(profile, key)
+            if key == "subsensor_zones" and v is not None:
+                # tag48 is one bitmask per sub-sensor: order and repeats are not stored
+                return [sorted(set(zones)) for zones in v]
+            return v
+
+        return [k for k in sections if value(self, k) != value(other, k)]
 
     def to_dict(self) -> dict:
         """JSON-serialisable envelope: metadata + only the populated sections
@@ -301,30 +376,32 @@ class ConfigProfile:
         if not isinstance(data, dict) or data.get("format") != PROFILE_FORMAT_ID:
             raise FrameError(f"not an ms605 config profile (expected format={PROFILE_FORMAT_ID!r})")
         sections = data.get("sections") or {}
+        if not isinstance(sections, dict):
+            raise FrameError("profile 'sections' must be an object")
         unknown = set(sections) - set(PROFILE_SECTION_KEYS)
         if unknown:
             raise FrameError(f"unknown profile section(s): {sorted(unknown)}")
 
-        def _pairs(raw) -> list[tuple[int, int]]:
-            return [(int(a), int(b)) for a, b in raw]
-
-        return cls(
+        # Values are taken as-is (no int()/bool() coercion) so validate() sees
+        # exactly what the file said; only the pair sections are re-typed as
+        # tuples afterwards, to match from_config() and round-trip equality.
+        profile = cls(
             sensitivity=sections.get("sensitivity"),
             detect_mode=sections.get("detect_mode"),
-            zone_enable=[bool(x) for x in sections["zone_enable"]] if "zone_enable" in sections else None,
-            zone_thresholds=_pairs(sections["zone_thresholds"]) if "zone_thresholds" in sections else None,
-            subsensor_zones=(
-                [[int(z) for z in lst] for lst in sections["subsensor_zones"]]
-                if "subsensor_zones" in sections
-                else None
-            ),
-            subsensor_timing=_pairs(sections["subsensor_timing"]) if "subsensor_timing" in sections else None,
-            subsensor_enable=(
-                [bool(x) for x in sections["subsensor_enable"]] if "subsensor_enable" in sections else None
-            ),
+            zone_enable=sections.get("zone_enable"),
+            zone_thresholds=sections.get("zone_thresholds"),
+            subsensor_zones=sections.get("subsensor_zones"),
+            subsensor_timing=sections.get("subsensor_timing"),
+            subsensor_enable=sections.get("subsensor_enable"),
             source_name=data.get("source_name"),
             source_address=data.get("source_address"),
         )
+        profile.validate()
+        for key in ("zone_thresholds", "subsensor_timing"):
+            pairs = getattr(profile, key)
+            if pairs is not None:
+                setattr(profile, key, [(a, b) for a, b in pairs])
+        return profile
 
 
 # ---------------------------------------------------------------------------

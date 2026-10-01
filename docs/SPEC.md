@@ -136,10 +136,12 @@ CRC16-CCITT-FALSE("123456789") = 0x29B1
 ```
 
 Structural parser errors raise `FrameError`. A CRC mismatch is preserved as
-`ParsedFrame.crc_ok == False` so diagnostic callers can inspect the frame. The
-current live driver does **not** reject a structurally valid response solely
-because `crc_ok` is false; callers that require integrity enforcement must
-check the field. Tightening that behavior is an open hardening item.
+`ParsedFrame.crc_ok == False` so offline diagnostic callers can inspect the
+frame. The live driver drops every received frame whose `crc_ok` is false
+before routing it: it logs a warning with the `msgId`, size and CRC values
+only (the raw bytes go to debug level, since frames can carry IDs and
+timestamps). A request whose response is dropped this way times out with
+`MS605TimeoutError`.
 
 ## 5. BLE chunking and notification reassembly
 
@@ -155,11 +157,16 @@ Notification reassembly follows this algorithm:
 1. append each notification chunk to a byte buffer;
 2. discard bytes before the next `55 AA` head, preserving a possible trailing
    `55` partial magic byte;
-3. wait until at least five bytes reveal `bodyLength`;
+3. wait until at least five bytes reveal `bodyLength`; if it exceeds
+   `MAX_FRAME_BODY_LEN` (4096, a cap rather than a measured limit), log a
+   warning, drop one byte and resynchronize from step 2;
 4. wait for `5 + bodyLength + 4` total bytes;
-5. emit the complete candidate and continue, allowing multiple frames per
+5. if the last two of those bytes are not the `AA 55` tail, drop one byte and
+   resynchronize from step 2, so a corrupt frame cannot swallow the frame
+   after it;
+6. emit the complete candidate and continue, allowing multiple frames per
    feed;
-6. pass each candidate to the structural/CRC parser.
+7. pass each candidate to the structural/CRC parser.
 
 Declared length, not notification timing, is the application-frame boundary.
 
@@ -182,6 +189,16 @@ The driver assigns a nonzero `msgId`, registers a pending future, writes all
 chunks, and waits for a response with the same ID. Tag 3 is interpreted as a
 status byte: zero is success and nonzero is an operation error. Exact nonzero
 error-code meanings are unknown.
+
+How the device reports status for a multi-attribute write (one tag 3 per
+written attribute, or a single tag 3 for the whole frame) and whether
+attributes are applied individually are unverified, pending the M0
+real-device measurements (see the `MEASURE` notes in `ms605/sim.py`, which
+assumes one tag 3 per attribute). As a defensive policy the driver fails the
+whole call with `MS605DeviceError` if any tag 3 in the response is nonzero,
+carrying the first nonzero code (`ParsedFrame.first_error_status()`). After
+such a failure, callers must not assume which attributes, if any, were
+applied; re-read the device to find out.
 
 ### 6.3 Pushes
 
@@ -351,11 +368,16 @@ while keep-alives are in flight.
 
 - Invalid magic, impossible declared length, truncated TLV headers/values, and
   invalid builder ranges raise `FrameError`.
-- CRC mismatch is reported by the parser but is not currently rejected by the
-  live response path; security-sensitive callers must inspect `crc_ok`.
+- CRC mismatch is reported by the parser; the live driver drops such frames
+  (section 4.4), so a bad-CRC response surfaces as `MS605TimeoutError`.
 - BLE failures are wrapped in the package exception hierarchy where practical.
-- Auto-calibration treats keep-alive failure as connection loss and cancels
-  pending waiters during cleanup.
+- Auto-calibration treats keep-alive failure as connection loss, except a
+  keep-alive answered with a nonzero status or left unanswered while the link
+  is still up, which is only logged.
+- When the link goes away (`disconnect()`, `reconnect()`, a peer/idle drop or
+  a stalled write), every in-flight request and push waiter fails with
+  `MS605ConnectionError`, not `CancelledError`. A request still waiting to be
+  written then is never written to a later link.
 - Configuration cloning excludes tag 53 and refuses to apply detection mode 4
   because it starts an action instead of copying a passive value.
 - The parser does not make unknown tags fatal.

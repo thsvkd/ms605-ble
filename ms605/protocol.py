@@ -75,12 +75,15 @@ offline; only ms605.driver touches a real radio.
 
 from __future__ import annotations
 
+import logging
 import struct
 from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from enum import IntEnum
 
 from .errors import FrameError
+
+_log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # GATT / advertisement constants
@@ -339,6 +342,17 @@ class ParsedFrame:
         value = self.get(TAG_STATUS)
         return value[0] if value else None
 
+    def statuses(self) -> list[int]:
+        """Every tag-3 status byte in frame order (empty values skipped, as in
+        status()). Multi-write responses may repeat tag 3 once per sub-write."""
+        return [v[0] for v in self.get_all(TAG_STATUS) if v]
+
+    def first_error_status(self) -> int | None:
+        """The first non-zero tag-3 status, or None if every status is 0 (or
+        the frame has none) -- unlike status(), a failure on a later repeated
+        tag 3 is not masked by an earlier success."""
+        return next((s for s in self.statuses() if s != 0), None)
+
 
 def parse_frame(packet: bytes) -> ParsedFrame:
     """Inverse of :func:`build_command` and :func:`build_frame_raw`.
@@ -435,13 +449,21 @@ def chunk_frame(frame: bytes, chunk_size: int = DEFAULT_CHUNK_SIZE) -> list[byte
     return [frame[i : i + chunk_size] for i in range(0, len(frame), chunk_size)]
 
 
+# Largest declared bodyLength the reassembler will wait for. docs/SPEC.md gives
+# no frame-size bound and history pagination is unknown, so this is a generous
+# 4 KiB of body rather than the ~1 KiB every known response fits in; a header
+# declaring more is treated as garbage instead of stalling the buffer.
+MAX_FRAME_BODY_LEN = 4096
+
+
 class FrameReassembler:
     """Stateful reassembly of MS605 TLV frames out of a stream of raw BLE
     notification chunks.
 
     Pure/no I/O -- exercised directly by tests without a Bluetooth stack.
     Resynchronizes on the next 55AA magic if unexpected bytes precede a
-    frame, rather than raising.
+    frame, or if a candidate has an oversize declared length or no AA55
+    tail, rather than raising.
     """
 
     def __init__(self) -> None:
@@ -466,9 +488,21 @@ class FrameReassembler:
             if len(self._buffer) < 5:
                 break  # need more bytes to read the length header
             declared_length = struct.unpack(">H", bytes(self._buffer[3:5]))[0]
+            if declared_length > MAX_FRAME_BODY_LEN:
+                # bogus header -- or a real frame larger than the cap (history
+                # size is unmeasured), so say so rather than vanish silently
+                _log.warning(
+                    "dropping a frame candidate declaring a %d-byte body (> MAX_FRAME_BODY_LEN=%d)",
+                    declared_length, MAX_FRAME_BODY_LEN,
+                )
+                del self._buffer[:1]  # resync past this magic
+                continue
             total_len = 5 + declared_length + 4  # head+subdev+len(5) + body + crc(2) + tail(2)
             if len(self._buffer) < total_len:
                 break  # wait for more chunks
+            if self._buffer[total_len - 2 : total_len] != MAGIC_TAIL:
+                del self._buffer[:1]  # corrupt frame: don't swallow what follows it
+                continue
             frame = bytes(self._buffer[:total_len])
             del self._buffer[:total_len]
             frames.append(frame)

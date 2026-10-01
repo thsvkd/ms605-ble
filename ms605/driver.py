@@ -17,7 +17,10 @@ tracked in docs/SPEC.md.
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import logging
 import struct
+import time
 from collections.abc import Callable, Iterator, Sequence
 from datetime import datetime, timezone
 
@@ -97,6 +100,17 @@ from .protocol import (
     parse_frame,
 )
 
+_log = logging.getLogger(__name__)
+
+
+def _settle(fut: asyncio.Future) -> None:
+    """Cancel an unfinished future, or mark a finished one's exception as
+    retrieved (so asyncio never warns about it)."""
+    if not fut.done():
+        fut.cancel()
+    elif not fut.cancelled():
+        fut.exception()
+
 
 class MS605:
     """Async control driver for the Meross MS605 presence sensor's BLE
@@ -108,6 +122,7 @@ class MS605:
         *,
         chunk_size: int = DEFAULT_CHUNK_SIZE,
         inter_chunk_delay: float = INTER_CHUNK_DELAY_S,
+        client_factory: Callable[..., BleakClient] | None = None,
     ) -> None:
         if BleakClient is None:
             raise MS605Error(
@@ -119,24 +134,48 @@ class MS605:
         self._address_or_device = address_or_device
         self._chunk_size = chunk_size
         self._inter_chunk_delay = inter_chunk_delay
+        # Seam for ms605.sim (and tests): builds the client instead of BleakClient.
+        self._client_factory = client_factory or BleakClient
         self._client: BleakClient | None = None
         self._msg_ids: Iterator[int] = msg_id_sequence()
         self._reassembler = FrameReassembler()
-        self._pending: dict[int, asyncio.Future[ParsedFrame]] = {}
-        self._push_waiters: dict[int, list[asyncio.Future[ParsedFrame]]] = {}
+        # Waiters resolve with (receive seq, frame): see _dispatch().
+        self._pending: dict[int, asyncio.Future[tuple[int, ParsedFrame]]] = {}
+        self._push_waiters: dict[int, list[asyncio.Future[tuple[int, ParsedFrame]]]] = {}
+        # Count of frames dispatched so far: orders frames by arrival even when
+        # several are dispatched before an awaiting task gets to run.
+        self._rx_seq = 0
         self._push_handlers: list[Callable[[ParsedFrame], None]] = []
+        # Called (no arguments) when the link drops on its own -- peer/idle
+        # disconnect or a stalled write that abandons it, not
+        # disconnect()/reconnect(). Pending requests have already been failed
+        # with MS605ConnectionError by then.
+        self.on_disconnect: Callable[[], None] | None = None
         # Serialises the chunked writes of concurrent _send() calls so a
         # background keep-alive ping can never interleave its chunks with an
         # operation's frame on the wire (both directions share one GATT
         # characteristic). Only the write is guarded; response waits are not.
         self._send_lock = asyncio.Lock()
+        # The frame write in progress (under _send_lock), so _detach() can end
+        # it: once the link is gone a half-written frame no longer matters.
+        self._write_task: asyncio.Future[None] | None = None
+        # Bumped by every _detach(): a request whose link went away while it
+        # waited for _send_lock must never be written to the next link.
+        self._link_gen = 0
 
     # -- discovery -----------------------------------------------------
+
+    # Last advertised (RSSI, time.monotonic()) per address, recorded by
+    # scan(): bleak's BLEDevice does not carry one (it lives in the
+    # advertisement data). Readings older than _SCAN_RSSI_MAX_AGE_S are ignored.
+    _scan_rssi: dict[str, tuple[int, float]] = {}
+    _SCAN_RSSI_MAX_AGE_S = 60.0
 
     @classmethod
     async def scan(cls, timeout: float = 5.0) -> list[BLEDevice]:
         """Scan for `timeout` seconds and return MS605 devices found, matched
-        by service UUID, manufacturer-data signature, or name prefix."""
+        by service UUID, manufacturer-data signature, or name prefix. Each
+        match's RSSI is available afterwards via last_rssi()."""
         if BleakScanner is None:
             raise MS605Error(f"bleak is not installed/importable ({_BLEAK_IMPORT_ERROR})")
         try:
@@ -148,27 +187,87 @@ class MS605:
         for device, adv in discovered.values():
             if is_ms605_advertisement(device.name, adv.service_uuids, adv.manufacturer_data):
                 matches.append(device)
+                cls._scan_rssi[device.address] = (adv.rssi, time.monotonic())
         return matches
+
+    @classmethod
+    def last_rssi(cls, device: str | BLEDevice) -> int | None:
+        """RSSI (dBm) of `device` (handle or address) from the most recent
+        scan() that saw it, or None if no scan has within the last
+        _SCAN_RSSI_MAX_AGE_S seconds."""
+        entry = cls._scan_rssi.get(getattr(device, "address", device))
+        if entry is None or time.monotonic() - entry[1] > cls._SCAN_RSSI_MAX_AGE_S:
+            return None
+        return entry[0]
 
     # -- connection lifecycle -------------------------------------------
 
     async def connect(self, timeout: float = 10.0) -> None:
+        if self.is_connected:
+            raise MS605Error("already connected; call disconnect() or reconnect() first")
+        stale = self._detach("link replaced by connect()")
+        if stale is not None:  # dead link whose disconnect callback never came
+            with contextlib.suppress(Exception):
+                await stale.disconnect()
         try:
-            client = BleakClient(self._address_or_device, timeout=timeout)
-            await client.connect()
-            await client.start_notify(NOTIFY_CHAR_UUID, self._on_notify)
-        except Exception as exc:  # pragma: no cover - requires real adapter
+            client = self._client_factory(
+                self._address_or_device, timeout=timeout, disconnected_callback=self._on_disconnected
+            )
+            try:
+                await client.connect()
+                await client.start_notify(NOTIFY_CHAR_UUID, self._on_notify)
+            except BaseException:
+                # The MS605 accepts one central at a time: a half-open link
+                # left behind here would refuse every retry.
+                with contextlib.suppress(Exception):
+                    await client.disconnect()
+                raise
+        except Exception as exc:
             raise MS605ConnectionError(
                 friendly_ble_error(exc, address=str(self._address_or_device))
             ) from exc
         self._client = client
 
     async def disconnect(self) -> None:
-        if self._client is not None:
+        client = self._detach("disconnected")
+        if client is not None:
             try:
-                await self._client.disconnect()
-            finally:
-                self._client = None
+                await client.disconnect()
+            except Exception as exc:
+                raise MS605ConnectionError(friendly_ble_error(exc)) from exc
+
+    def _detach(self, reason: str) -> BleakClient | None:
+        """Forget the current client and fail every in-flight request/push
+        waiter with MS605ConnectionError(reason) -- they can never complete on
+        this link. Returns the client for the caller to disconnect."""
+        client, self._client = self._client, None
+        self._link_gen += 1
+        self._reassembler = FrameReassembler()
+        write, self._write_task = self._write_task, None
+        if write is not None:
+            write.cancel()
+        waiters = list(self._pending.values())
+        for futs in self._push_waiters.values():
+            waiters.extend(futs)
+        self._pending.clear()
+        self._push_waiters.clear()
+        for fut in waiters:
+            if not fut.done():
+                fut.set_exception(MS605ConnectionError(reason))
+        return client
+
+    def _on_disconnected(self, client: object) -> None:
+        if client is not self._client:
+            return  # a link we already let go of (disconnect/reconnect)
+        self._detach("BLE link lost")
+        self._notify_link_lost()
+
+    def _notify_link_lost(self) -> None:
+        if self.on_disconnect is not None:
+            try:
+                self.on_disconnect()
+            except Exception:  # noqa: BLE001 - never break the backend's callback
+                _log.exception("on_disconnect hook failed")
 
     @property
     def is_connected(self) -> bool:
@@ -191,26 +290,15 @@ class MS605:
     ) -> None:
         """Re-establish the GATT link after an idle/peer disconnect.
 
-        Registered push handlers survive; any in-flight request/push waiters are
-        cancelled (they can never complete on the dead link) and the reassembly
-        buffer is reset so the new session starts clean. Pass `device` to retarget
-        a freshly-rescanned handle (CoreBluetooth may hand out a new one)."""
-        if self._client is not None:
-            try:
-                await self._client.disconnect()
-            except Exception:  # noqa: BLE001 - stale link, nothing to salvage
-                pass
-            self._client = None
-        self._reassembler = FrameReassembler()
-        for fut in list(self._pending.values()):
-            if not fut.done():
-                fut.cancel()
-        self._pending.clear()
-        for waiters in self._push_waiters.values():
-            for fut in waiters:
-                if not fut.done():
-                    fut.cancel()
-        self._push_waiters.clear()
+        Registered push handlers survive; any in-flight request/push waiters
+        fail with MS605ConnectionError (they can never complete on the dead
+        link) and the reassembly buffer is reset so the new session starts
+        clean. Pass `device` to retarget a freshly-rescanned handle
+        (CoreBluetooth may hand out a new one)."""
+        client = self._detach("link reset by reconnect()")
+        if client is not None:
+            with contextlib.suppress(Exception):  # stale link, nothing to salvage
+                await client.disconnect()
         if device is not None:
             self._address_or_device = device
         await self.connect(timeout=timeout)
@@ -230,23 +318,37 @@ class MS605:
                 parsed = parse_frame(raw)
             except Exception:  # noqa: BLE001 - drop malformed noise, never crash the callback
                 continue
+            if not parsed.crc_ok:  # SPEC §4.4: corrupted in transit, never trust its contents
+                # frames carry ids/timestamps: keep the raw bytes out of shareable logs
+                _log.warning(
+                    "dropping frame with bad CRC (msgId=%d, %d bytes, crc 0x%04X != 0x%04X)",
+                    parsed.msg_id, len(raw), parsed.actual_crc, parsed.expected_crc,
+                )
+                _log.debug("bad-CRC frame: %s", raw.hex())
+                continue
             self._dispatch(parsed)
 
     def _dispatch(self, parsed: ParsedFrame) -> None:
+        self._rx_seq += 1
+        received = (self._rx_seq, parsed)
         if parsed.is_push:
             for tag, _ in parsed.attributes:
                 waiters = self._push_waiters.pop(tag, None)
                 if waiters:
                     for fut in waiters:
                         if not fut.done():
-                            fut.set_result(parsed)
-            for handler in self._push_handlers:
-                handler(parsed)
+                            fut.set_result(received)
+            # iterate a copy: a handler may remove itself mid-dispatch
+            for handler in list(self._push_handlers):
+                try:
+                    handler(parsed)
+                except Exception:  # noqa: BLE001 - one bad handler must not starve the rest
+                    _log.exception("push handler %r failed", handler)
             return
 
         fut = self._pending.pop(parsed.msg_id, None)
         if fut is not None and not fut.done():
-            fut.set_result(parsed)
+            fut.set_result(received)
 
     def add_push_handler(self, handler: Callable[[ParsedFrame], None]) -> None:
         """Register a callback invoked for every unsolicited push frame
@@ -265,12 +367,61 @@ class MS605:
     # -- low-level send ---------------------------------------------------
 
     async def _write_chunks(self, frame: bytes) -> None:
-        if self._client is None:
-            raise MS605Error("not connected; call connect() first")
-        for chunk in chunk_frame(frame, self._chunk_size):
-            await self._client.write_gatt_char(WRITE_CHAR_UUID, chunk, response=False)
-            if self._inter_chunk_delay:
-                await asyncio.sleep(self._inter_chunk_delay)
+        client = self._client
+        if client is None:
+            raise MS605ConnectionError("not connected; call connect() first")
+        try:
+            for chunk in chunk_frame(frame, self._chunk_size):
+                await client.write_gatt_char(WRITE_CHAR_UUID, chunk, response=False)
+                if self._inter_chunk_delay:
+                    await asyncio.sleep(self._inter_chunk_delay)
+        except Exception as exc:
+            raise MS605ConnectionError(f"BLE write failed: {friendly_ble_error(exc)}") from exc
+
+    async def _write_frame(self, frame: bytes, timeout: float, link_gen: int) -> None:
+        """Write one frame's chunks under the send lock, atomically with
+        respect to cancellation: a frame cut short would leave a partial frame
+        in the device's reassembly buffer, so once started it is finished
+        before a cancel is honoured -- unless the link is dropped meanwhile
+        (the partial frame then no longer matters: MS605ConnectionError), or
+        the write is still stuck after `timeout` seconds, which abandons the
+        link (MS605TimeoutError). A pending cancel wins over either error.
+        `link_gen` is the link the request was made on: if that link was reset
+        while waiting for the lock, nothing is written (MS605ConnectionError) --
+        its caller has already been told it failed."""
+        async with self._send_lock:
+            if self._link_gen != link_gen:
+                raise MS605ConnectionError("BLE link reset before the request was sent")
+            write = asyncio.ensure_future(self._write_chunks(frame))
+            write.add_done_callback(_settle)
+            self._write_task = write
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + timeout
+            cancelled = False
+            try:
+                while not write.done() and loop.time() < deadline:
+                    try:
+                        await asyncio.wait({write}, timeout=deadline - loop.time())
+                    except asyncio.CancelledError:
+                        cancelled = True
+                stalled = not write.done()
+                if stalled:
+                    client = self._detach("BLE write stalled; link abandoned")  # also cancels `write`
+                    if client is not None:
+                        # its own disconnect callback will see a link we already let go of
+                        self._notify_link_lost()
+                        with contextlib.suppress(Exception):
+                            await asyncio.wait_for(client.disconnect(), timeout=5.0)
+            finally:
+                if self._write_task is write:
+                    self._write_task = None
+            if cancelled:
+                raise asyncio.CancelledError
+            if stalled:
+                raise MS605TimeoutError(f"BLE write did not complete within {timeout}s; link abandoned")
+            if write.cancelled():
+                raise MS605ConnectionError("BLE link closed during a write")
+            write.result()  # re-raises a write failure
 
     async def _send(
         self,
@@ -279,51 +430,75 @@ class MS605:
         timeout: float = WRITE_TIMEOUT_S,
         expect_response: bool = True,
     ) -> ParsedFrame | None:
+        received = await self._request(attrs, timeout=timeout, expect_response=expect_response)
+        return None if received is None else received[1]
+
+    async def _request(
+        self,
+        attrs: Sequence[Attr],
+        *,
+        timeout: float = WRITE_TIMEOUT_S,
+        expect_response: bool = True,
+    ) -> tuple[int, ParsedFrame] | None:
+        """_send(), but the response comes with its receive seq (see _dispatch())."""
         msg_id = next(self._msg_ids)
         frame = build_command(attrs, msg_id)
+        link_gen = self._link_gen
         loop = asyncio.get_running_loop()
-        fut: asyncio.Future[ParsedFrame] | None = None
+        deadline = loop.time() + timeout  # one budget for the write and the response wait
+        fut: asyncio.Future[tuple[int, ParsedFrame]] | None = None
         if expect_response:
             fut = loop.create_future()
             self._pending[msg_id] = fut
 
-        # guard only the write: two frames must not interleave chunks on the
-        # wire, but their response waits (demuxed by msg_id) can overlap freely.
-        async with self._send_lock:
-            await self._write_chunks(frame)
-
-        if fut is None:
-            return None
         try:
-            response = await asyncio.wait_for(fut, timeout=timeout)
-        except asyncio.TimeoutError as exc:
-            self._pending.pop(msg_id, None)
-            raise MS605TimeoutError(f"no response to msgId={msg_id} within {timeout}s") from exc
+            # guard only the write: two frames must not interleave chunks on the
+            # wire, but their response waits (demuxed by msg_id) can overlap freely.
+            await self._write_frame(frame, timeout, link_gen)
+            if fut is None:
+                return None
+            # the frame is fully written: even if waiting for the send lock used
+            # up the budget, give the response a short grace period to arrive
+            floor = min(1.0, timeout / 4)
+            try:
+                seq, response = await asyncio.wait_for(fut, timeout=max(floor, deadline - loop.time()))
+            except asyncio.TimeoutError as exc:
+                raise MS605TimeoutError(f"no response to msgId={msg_id} within {timeout}s") from exc
+        finally:
+            if fut is not None:
+                if self._pending.get(msg_id) is fut:
+                    del self._pending[msg_id]
+                _settle(fut)
 
-        status = response.status()
-        if status is not None and status != 0:
+        # defensive: any nonzero tag 3 fails the call (multi-write status layout unverified)
+        status = response.first_error_status()
+        if status is not None:
             raise MS605DeviceError(status, msg_id)
-        return response
+        return seq, response
 
     async def _read_via_push_or_response(self, tag: int, *, timeout: float) -> bytes:
         """Read `tag`, accepting either a value in the acknowledged response
-        or a later unsolicited push carrying the same tag."""
+        or a later unsolicited push carrying the same tag. `timeout` bounds
+        the whole exchange, not each half."""
         loop = asyncio.get_running_loop()
-        fut: asyncio.Future[ParsedFrame] = loop.create_future()
+        deadline = loop.time() + timeout
+        fut: asyncio.Future[tuple[int, ParsedFrame]] = loop.create_future()
         self._push_waiters.setdefault(tag, []).append(fut)
         try:
             response = await self.read_raw([tag], timeout=timeout)
             value = response.get(tag)
             if value is not None:
                 return value
-            push = await asyncio.wait_for(fut, timeout=timeout)
+            try:
+                _seq, push = await asyncio.wait_for(fut, timeout=max(0.0, deadline - loop.time()))
+            except asyncio.TimeoutError as exc:
+                raise MS605TimeoutError(f"tag {tag} push not received within {timeout}s") from exc
             return push.get(tag) or b""
         finally:
             waiters = self._push_waiters.get(tag)
             if waiters and fut in waiters:
                 waiters.remove(fut)
-            if not fut.done():
-                fut.cancel()
+            _settle(fut)
 
     # -- high-level operations ---------------------------------------------
 
@@ -361,11 +536,16 @@ class MS605:
         (4) is refused -- cloning it would *start a calibration* on the target
         rather than copy a setting (use start_auto_calibration() for that).
 
+        Every selected section is validated first (ProfileError) so a bad
+        section never leaves the target half-written; unselected ones are not
+        checked.
+
         Returns the section keys actually written, in registry order."""
         wanted = set(PROFILE_SECTION_KEYS) if sections is None else set(sections)
         unknown = wanted - set(PROFILE_SECTION_KEYS)
         if unknown:
             raise ValueError(f"unknown profile section(s): {sorted(unknown)}")
+        profile.validate(wanted)
 
         applied: list[str] = []
         if "sensitivity" in wanted and profile.sensitivity is not None:
@@ -587,12 +767,15 @@ class MS605:
         and races link loss against the result, so it returns promptly on
         success and fails fast on a lost link.
 
-        Raises MS605ConnectionError if the link dies mid-learning (a keep-alive
-        write fails) and MS605TimeoutError if no tag62 push arrives within
+        Raises MS605ConnectionError if the link dies mid-learning (the link
+        drops or a keep-alive write fails; a keep-alive answered with a
+        non-zero status still proves the link is up and is only logged, as is
+        an unanswered keep-alive while the link is still up) and
+        MS605TimeoutError if no tag62 push arrives within
         `timeout` seconds. `keepalive_interval` is the seconds between pings and
         must stay below the device's idle-disconnect threshold."""
         loop = asyncio.get_running_loop()
-        result_fut: asyncio.Future[ParsedFrame] = loop.create_future()
+        result_fut: asyncio.Future[tuple[int, ParsedFrame]] = loop.create_future()
         self._push_waiters.setdefault(TAG_SPACE_LEARNING_RESULT, []).append(result_fut)
         link_lost: asyncio.Future[None] = loop.create_future()
 
@@ -600,7 +783,16 @@ class MS605:
             try:
                 while True:
                     await asyncio.sleep(keepalive_interval)
-                    await self.ping()
+                    try:
+                        await self.ping()
+                    except MS605DeviceError as exc:  # device answered: link is alive
+                        _log.warning("keep-alive during auto-calibration got %s", exc)
+                    except MS605TimeoutError as exc:
+                        # a lost or bad-CRC ACK; real link loss is reported as
+                        # MS605ConnectionError (or leaves the link marked down)
+                        if not self.is_connected:
+                            raise
+                        _log.warning("keep-alive during auto-calibration not answered (link still up): %s", exc)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001 - any failure => link is gone
@@ -614,14 +806,29 @@ class MS605:
 
         ka_task = asyncio.create_task(_keepalive())
         try:
-            await self._send([(TAG_DETECT_MODE, bytes([DetectMode.SPACE_LEARNING]))])
+            ack = await self._request([(TAG_DETECT_MODE, bytes([DetectMode.SPACE_LEARNING]))])
+            assert ack is not None  # expect_response defaults True
+            if (
+                result_fut.done()
+                and not result_fut.cancelled()
+                and result_fut.exception() is None
+                and result_fut.result()[0] < ack[0]
+            ):
+                # a tag62 received before our start's ACK belongs to an earlier,
+                # aborted run -- keep waiting for this run's result. One received
+                # after the ACK (even in the same notification) is this run's.
+                _log.warning("ignoring a stale tag 62 result that preceded the calibration start")
+                if not self.is_connected:  # detach already failed the old waiter; nothing would fail a new one
+                    raise MS605ConnectionError("BLE link lost during auto-calibration")
+                result_fut = loop.create_future()
+                self._push_waiters.setdefault(TAG_SPACE_LEARNING_RESULT, []).append(result_fut)
             done, _pending = await asyncio.wait(
                 {result_fut, link_lost},
                 timeout=timeout,
                 return_when=asyncio.FIRST_COMPLETED,
             )
             if result_fut in done:
-                push = result_fut.result()
+                _seq, push = result_fut.result()
             elif link_lost in done:
                 link_lost.result()  # re-raises the MS605ConnectionError
                 raise AssertionError("unreachable")  # pragma: no cover
@@ -631,13 +838,12 @@ class MS605:
                 )
         finally:
             ka_task.cancel()
-            try:
-                await ka_task
-            except asyncio.CancelledError:
-                pass
+            # absorbs ka_task's own CancelledError but not one aimed at this task
+            await asyncio.gather(ka_task, return_exceptions=True)
             waiters = self._push_waiters.get(TAG_SPACE_LEARNING_RESULT)
             if waiters and result_fut in waiters:
                 waiters.remove(result_fut)
+            _settle(result_fut)
             # retrieve any link_lost exception we didn't consume so asyncio
             # doesn't warn about a never-retrieved future exception.
             if not link_lost.done():

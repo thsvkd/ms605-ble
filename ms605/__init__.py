@@ -19,6 +19,7 @@ from .errors import (
     MS605DeviceError,
     MS605Error,
     MS605TimeoutError,
+    ProfileError,
 )
 from .models import (
     ConfigProfile,
@@ -49,6 +50,7 @@ __all__ = [
     "MS605TimeoutError",
     "MS605DeviceError",
     "MS605ConnectionError",
+    "ProfileError",
     "ZoneThreshold",
     "SubSensorStatus",
     "PresenceHistoryRecord",

@@ -104,6 +104,13 @@ ignored `private-profiles/` directory or outside the checkout; arbitrary
 `--save` paths are **not** ignored automatically. Contributors remain
 responsible for reviewing every staged file.
 
+`ms605 calibrate` and the interactive auto-calibration append each committed
+result to `cal_results/calibration_history.jsonl`. In a source checkout that is
+the repository root (ignored by Git); for an installed package it is the
+per-user data directory (for example `~/Library/Application Support/ms605` on
+macOS or `~/.local/share/ms605` on Linux). Set `MS605_DATA_DIR` to put the
+`cal_results/` folder somewhere else.
+
 ## Repository layout
 
 | Path | Responsibility |

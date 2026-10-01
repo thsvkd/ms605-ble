@@ -17,7 +17,8 @@ Flows
 2. Auto-calibration : after connecting, wait for an explicit Enter (space should
    already be cleared) before triggering space-learning; show the live radar
    activity in real time; on success, print + save the committed thresholds to
-   cal_results/calibration_history.jsonl (under the repo root).
+   cal_results/calibration_history.jsonl (under the user data dir; see
+   resolve_data_dir).
 3. Detailed adjustment : view and set the per-distance **Presence Trigger** and
    **Presence Maintain** thresholds (the two adjustment modes).
 4. Live monitor : continuously show PIR / per-zone radar / host-computed
@@ -64,10 +65,11 @@ import os
 import sys
 import time
 from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from platformdirs import user_data_dir
 from rich import box
 from rich.console import Group
 from rich.panel import Panel
@@ -81,6 +83,7 @@ from ms605 import (
     FrameError,
     MS605Config,
     MS605ConnectionError,
+    MS605DeviceError,
     MS605Error,
     MS605TimeoutError,
     ParsedFrame,
@@ -119,11 +122,26 @@ THRESHOLD_MIN, THRESHOLD_MAX = 0, 500  # raw radar-energy range (app axis)
 
 # Every successful auto-calibration appends one JSON line here with the
 # thresholds the device actually committed (see build_calibration_record /
-# save_calibration_record below). Anchored to the repo root (not the CWD or
-# $HOME) so results always land next to the checkout regardless of where
-# `ms605` is invoked from.
+# save_calibration_record below). The location is resolved once at import by
+# resolve_data_dir(): the user data dir when installed, so results survive
+# upgrades and never land inside site-packages.
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-CALIBRATION_HISTORY_PATH = _REPO_ROOT / "cal_results" / "calibration_history.jsonl"
+
+
+def resolve_data_dir() -> Path:
+    """Where `ms605` keeps its results (the history file lives in `cal_results/`
+    below it). Priority: $MS605_DATA_DIR; the repo root when running from a
+    source checkout (so `cal_results/` stays next to it); else the per-user
+    data dir (e.g. ~/Library/Application Support/ms605 on macOS)."""
+    override = os.environ.get("MS605_DATA_DIR")
+    if override:
+        return Path(override).expanduser()
+    if (_REPO_ROOT / "pyproject.toml").is_file():
+        return _REPO_ROOT
+    return Path(user_data_dir("ms605", appauthor=False))
+
+
+CALIBRATION_HISTORY_PATH = resolve_data_dir() / "cal_results" / "calibration_history.jsonl"
 
 
 # ---------------------------------------------------------------------------
@@ -288,8 +306,11 @@ def build_calibration_record(
     }
 
 
-def save_calibration_record(record: dict, *, path: Path = CALIBRATION_HISTORY_PATH) -> Path:
-    """Append `record` as one JSON line to `path` (creating parent dirs as needed)."""
+def save_calibration_record(record: dict, *, path: Path | None = None) -> Path:
+    """Append `record` as one JSON line to `path` (default: CALIBRATION_HISTORY_PATH,
+    creating parent dirs as needed)."""
+    if path is None:
+        path = CALIBRATION_HISTORY_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(record, ensure_ascii=False) + "\n")
@@ -325,10 +346,8 @@ async def _await_calibration_trigger(link: LiveLink) -> None:
         await ainput("공간을 비운 뒤 준비되면 Enter를 눌러 보정을 즉시 트리거하세요: ")
     finally:
         ka.cancel()
-        try:
-            await ka
-        except asyncio.CancelledError:
-            pass
+        # absorbs ka's own CancelledError but not one aimed at this task
+        await asyncio.gather(ka, return_exceptions=True)
 
     await link.ensure()  # re-establish if the wait above still lost the link
     print("🚀 보정 명령을 전송합니다.\n")
@@ -354,7 +373,10 @@ async def flow_auto_calibration(link: LiveLink) -> None:
         pir = frame.get(TAG_PIR_STATE)
         result = frame.get(TAG_SPACE_LEARNING_RESULT)
         if live is not None:
-            snap = decode_radar_output(live)
+            try:
+                snap = decode_radar_output(live)
+            except FrameError:  # a truncated tag55: skip it rather than log a traceback mid-output
+                return
             zones = " ".join(_format_radar_zone(z) for z in snap.zones)
             print(f"  [{ts}] {zones}")
             presence_now = snap.sub_sensor_presence[0] if snap.sub_sensor_presence else None
@@ -369,8 +391,6 @@ async def flow_auto_calibration(link: LiveLink) -> None:
             ok = bool(result) and result[0] == 1
             print(f"  [{ts}] ★ 보정 결과 수신: {'성공' if ok else '실패'}")
             done.set()
-
-    ms.add_push_handler(on_push)
 
     # NOTE: unlike the manual-adjust screen, the app does NOT toggle tag54
     # Disable live-output after Auto-Adjust so the device stops streaming.
@@ -390,6 +410,7 @@ async def flow_auto_calibration(link: LiveLink) -> None:
     print("🔄 자동 보정 시작... (앱과 동일하게 ~15s마다 keep-alive 로 링크를 유지합니다)\n")
     success = False
     lost_link = False
+    ms.add_push_handler(on_push)
     try:
         success = await ms.start_auto_calibration(timeout=200.0)
     except MS605TimeoutError:
@@ -404,8 +425,13 @@ async def flow_auto_calibration(link: LiveLink) -> None:
     except MS605Error as exc:
         print(f"\n오류: {exc}")
     finally:
+        # the same MS605 outlives this flow (menu / live monitor): a handler
+        # left behind would keep printing and stack up on every re-run.
+        ms.remove_push_handler(on_push)
         done.set()
         hb.cancel()
+        # absorbs hb's own CancelledError but not one aimed at this task
+        await asyncio.gather(hb, return_exceptions=True)
 
     print("\n" + "-" * 60)
     if success:
@@ -477,6 +503,58 @@ class ManagedDevice:
     address: str
     status: str = "connected"
     detail: str = ""
+    keepalive: asyncio.Task | None = field(default=None, repr=False, compare=False)
+
+
+def _start_keepalive(md: ManagedDevice, interval: float, log: Callable[[str], None]) -> None:
+    """Ping `md` every `interval` seconds from the moment it connects until
+    _stop_keepalives() -- the MS605 drops a link whose central->device side goes
+    idle, and the operator may take minutes to connect the rest of the batch or
+    to confirm. A failed ping marks the sensor lost (the fire phase skips
+    it); no unattended reconnect is possible. A ping answered with an error
+    status still proves the link is up, so it is only logged, as is a ping left
+    unanswered while the link is still up (a lost or bad-CRC ACK). Idempotent
+    per device."""
+    if md.keepalive is not None:
+        return
+
+    async def loop() -> None:
+        while True:
+            await asyncio.sleep(interval)
+            try:
+                await md.ms.ping()
+            except MS605DeviceError as exc:  # the device answered: the link is alive
+                log(f"\n[{time.strftime('%H:%M:%S')}] ⚠️  {md.name} {md.address} "
+                    f"keep-alive 응답 오류 (연결 유지): {exc}")
+            except Exception as exc:  # noqa: BLE001 - link's gone; cannot recover it here
+                if isinstance(exc, MS605TimeoutError) and md.ms.is_connected:
+                    # real link loss arrives as MS605ConnectionError: keep pinging
+                    log(f"\n[{time.strftime('%H:%M:%S')}] ⚠️  {md.name} {md.address} "
+                        f"keep-alive 응답 없음 (연결 유지, 재시도): {exc}")
+                    continue
+                md.status = "lost"
+                md.detail = str(exc)
+                log(f"\n[{time.strftime('%H:%M:%S')}] ⚠️  {md.name} {md.address} "
+                    f"연결 끊김 (발사 전 대기 중): {exc}")
+                return
+
+    md.keepalive = asyncio.create_task(loop())
+
+
+def _cancel_keepalives(devices: Sequence[ManagedDevice]) -> list[asyncio.Task]:
+    """Request cancellation of every device's keep-alive and return the tasks
+    (still to be awaited)."""
+    tasks = [md.keepalive for md in devices if md.keepalive is not None]
+    for md in devices:
+        md.keepalive = None
+    for task in tasks:
+        task.cancel()
+    return tasks
+
+
+async def _stop_keepalives(devices: Sequence[ManagedDevice]) -> None:
+    """Cancel and await every device's keep-alive (no-op for those without one)."""
+    await asyncio.gather(*_cancel_keepalives(devices), return_exceptions=True)
 
 
 def resolve_target_datetime(at: str, now: datetime) -> datetime:
@@ -529,6 +607,7 @@ async def _batch_gather_menu(
     select_prompt: str = _GATHER_SELECT_PROMPT,
     exclude: frozenset[str] = frozenset(),
     pool_out: list[ManagedDevice] | None = None,
+    keepalive_interval: float = 15.0,
 ) -> list[ManagedDevice]:
     """Default gather: scan once, show a checkbox of found devices, let the
     operator tick several (Space toggles, Enter confirms), then connect each.
@@ -538,7 +617,10 @@ async def _batch_gather_menu(
     for target selection). `exclude` drops advertised devices by address (e.g.
     the clone source). `pool_out`, if given, is the list connected devices are
     appended to as they connect -- so a caller's `finally` can still release a
-    partially-built pool if the gather is interrupted mid-connect."""
+    partially-built pool if the gather is interrupted mid-connect. Each device
+    is pinged every `keepalive_interval` s from the moment it connects (so early
+    ones don't idle-drop while later ones connect); the caller stops those with
+    _stop_keepalives() -- _batch_release does."""
     while True:
         with _ui.status(f"MS605 검색 중... (스캔 {scan_secs:.0f}s)"):
             try:
@@ -569,7 +651,9 @@ async def _batch_gather_menu(
             ms = MS605(dev)
             try:
                 await ms.connect(timeout=connect_timeout)
-                pool.append(ManagedDevice(ms=ms, device=dev, name=name, address=dev.address))
+                md = ManagedDevice(ms=ms, device=dev, name=name, address=dev.address)
+                pool.append(md)
+                _start_keepalive(md, keepalive_interval, log)
                 log(f"[{time.strftime('%H:%M:%S')}] ✅ 연결됨 (누적 {len(pool)}대): {name} {dev.address}")
             except Exception as exc:  # noqa: BLE001 - one failure shouldn't abort the batch
                 log(f"[{time.strftime('%H:%M:%S')}]    ✗ {name} {dev.address} 연결 실패: "
@@ -585,6 +669,7 @@ async def _batch_gather_collect(
     log: Callable[[str], None],
     *,
     pool_out: list[ManagedDevice] | None = None,
+    keepalive_interval: float = 15.0,
 ) -> list[ManagedDevice]:
     """`--collect` gather: keep scanning and connect every sensor the instant it
     advertises (press each sensor's button in turn); Enter finishes. This is the
@@ -592,7 +677,10 @@ async def _batch_gather_collect(
     connectable window because it grabs each sensor immediately.
 
     `pool_out`, if given, mirrors each connected device as it connects so an
-    interrupted collection can still be released by the caller's `finally`."""
+    interrupted collection can still be released by the caller's `finally`.
+    Connected sensors are pinged every `keepalive_interval` s while the rest are
+    collected (see _batch_gather_menu); an interrupted collection cancels the
+    scanner and any in-flight connect attempts before returning."""
     pool: dict[str, ManagedDevice] = {}
     attempting: set[str] = set()
     pending: set[asyncio.Task] = set()
@@ -609,6 +697,7 @@ async def _batch_gather_collect(
             pool[addr] = md
             if pool_out is not None:
                 pool_out.append(md)
+            _start_keepalive(md, keepalive_interval, log)
             log(f"[{time.strftime('%H:%M:%S')}] ✅ 연결됨 (누적 {len(pool)}대): {name} {addr}")
         except Exception as exc:  # noqa: BLE001 - surface any BLE failure, keep scanning
             log(f"[{time.strftime('%H:%M:%S')}]    ✗ {name} {addr} 연결 실패 "
@@ -633,24 +722,30 @@ async def _batch_gather_collect(
             await asyncio.sleep(1.0)
 
     scan_task = asyncio.create_task(scanner())
-    log("\n" + "=" * 60)
-    log(" 수집 단계 -- 각 센서 버튼을 순서대로 눌러 연결하세요 (--collect)")
-    log("=" * 60)
-    log("주의: BLE는 한 번에 하나만 연결됩니다. 각 센서에서 Meross 앱이 연결 중이면")
-    log("      먼저 종료/백그라운드 처리하세요.")
-    log("버튼을 누른 센서가 스캔에 잡히는 대로 자동으로 연결합니다.")
-    log("모든 센서를 연결했으면 Enter 를 눌러 다음 단계로 진행하세요.\n")
-    await ainput("연결 완료 후 Enter 입력: ")
-
-    stop.set()
-    scan_task.cancel()
     try:
-        await scan_task
-    except (asyncio.CancelledError, Exception):  # noqa: BLE001
-        pass
-    if pending:
-        log(f"   (진행 중인 연결 시도 {len(pending)}건 마무리 대기...)")
-        await asyncio.gather(*pending, return_exceptions=True)
+        log("\n" + "=" * 60)
+        log(" 수집 단계 -- 각 센서 버튼을 순서대로 눌러 연결하세요 (--collect)")
+        log("=" * 60)
+        log("주의: BLE는 한 번에 하나만 연결됩니다. 각 센서에서 Meross 앱이 연결 중이면")
+        log("      먼저 종료/백그라운드 처리하세요.")
+        log("버튼을 누른 센서가 스캔에 잡히는 대로 자동으로 연결합니다.")
+        log("모든 센서를 연결했으면 Enter 를 눌러 다음 단계로 진행하세요.\n")
+        await ainput("연결 완료 후 Enter 입력: ")
+
+        stop.set()
+        scan_task.cancel()
+        await asyncio.gather(scan_task, return_exceptions=True)
+        if pending:
+            log(f"   (진행 중인 연결 시도 {len(pending)}건 마무리 대기...)")
+            await asyncio.gather(*pending, return_exceptions=True)
+    finally:
+        # interrupted (Ctrl-C / cancel): nothing may keep scanning or connecting
+        # once we return, or a late link would outlive the caller's release.
+        stop.set()
+        leftovers = [scan_task, *pending]
+        for task in leftovers:
+            task.cancel()
+        await asyncio.gather(*leftovers, return_exceptions=True)
     return list(pool.values())
 
 
@@ -661,6 +756,7 @@ async def _batch_gather_address(
     log: Callable[[str], None],
     *,
     pool_out: list[ManagedDevice] | None = None,
+    keepalive_interval: float = 15.0,
 ) -> list[ManagedDevice]:
     """`--address` gather: wait for one specific device to advertise, then
     connect just it (a batch of one). Rescans until it appears or the operator
@@ -693,6 +789,7 @@ async def _batch_gather_address(
             md = ManagedDevice(ms=ms, device=match, name=name, address=match.address)
             if pool_out is not None:
                 pool_out.append(md)
+            _start_keepalive(md, keepalive_interval, log)
             return [md]
         except Exception as exc:  # noqa: BLE001
             log(f"   ✗ 연결 실패: {friendly_ble_error(exc, match.address)} — 버튼 누르고 재시도.")
@@ -705,31 +802,14 @@ async def _batch_await_fire_trigger(
     """Immediate-mode gate: wait for the operator's Enter while keeping every
     link alive with periodic pings (leaving the space can take a while, and the
     MS605 drops idle links). A sensor whose ping fails is marked lost and will
-    be skipped by the fire phase."""
-    stop = asyncio.Event()
-
-    async def keepalive(md: ManagedDevice) -> None:
-        while not stop.is_set():
-            try:
-                await asyncio.wait_for(stop.wait(), timeout=interval)
-                return  # stop was set -> operator pressed Enter
-            except asyncio.TimeoutError:
-                pass
-            try:
-                await md.ms.ping()
-            except Exception as exc:  # noqa: BLE001 - link's gone; cannot recover it here
-                md.status = "lost"
-                md.detail = str(exc)
-                log(f"\n[{time.strftime('%H:%M:%S')}] ⚠️  {md.name} {md.address} "
-                    f"연결 끊김 (발사 대기 중): {exc}")
-                return
-
-    tasks = [asyncio.create_task(keepalive(md)) for md in devices]
+    be skipped by the fire phase. The gather's keep-alives (if any) keep running
+    through here, so there is no unpinged gap; they stop once Enter is pressed."""
+    for md in devices:
+        _start_keepalive(md, interval, log)
     try:
         await ainput("공간을 비운 뒤 준비되면 Enter를 눌러 전체 센서 일괄 보정을 시작하세요: ")
     finally:
-        stop.set()
-        await asyncio.gather(*tasks, return_exceptions=True)
+        await _stop_keepalives(devices)
 
 
 async def _batch_hold(
@@ -742,20 +822,6 @@ async def _batch_hold(
     log(f" 대기 단계 -- {target.strftime('%Y-%m-%d %H:%M')} 까지 {len(devices)}대 연결 유지")
     log("=" * 60)
 
-    async def hold_one(md: ManagedDevice) -> None:
-        while datetime.now() < target:
-            await asyncio.sleep(min(interval, max(0.0, (target - datetime.now()).total_seconds())))
-            if datetime.now() >= target:
-                return
-            try:
-                await md.ms.ping()
-            except Exception as exc:  # noqa: BLE001 - link is gone, cannot recover unattended
-                md.status = "lost"
-                md.detail = str(exc)
-                log(f"\n[{time.strftime('%H:%M:%S')}] ⚠️  {md.name} {md.address} "
-                    f"연결 끊김 (대기 중, 버튼 재입력 불가): {exc}")
-                return
-
     async def heartbeat() -> None:
         beat = max(interval, 60.0)
         while datetime.now() < target:
@@ -767,18 +833,16 @@ async def _batch_hold(
             log(f"  ... [{time.strftime('%H:%M:%S')}] 대기 중: {alive}/{len(devices)}대 "
                 f"연결 유지, 발사까지 {_fmt_hms(left)}")
 
+    for md in devices:
+        _start_keepalive(md, interval, log)
     hb = asyncio.create_task(heartbeat())
     try:
-        await asyncio.gather(*(hold_one(md) for md in devices))
+        while (left := (target - datetime.now()).total_seconds()) > 0:
+            await asyncio.sleep(min(interval, left))
     finally:
         hb.cancel()
-        try:
-            await hb
-        except (asyncio.CancelledError, Exception):  # noqa: BLE001
-            pass
-    left = (target - datetime.now()).total_seconds()
-    if left > 0:
-        await asyncio.sleep(left)
+        await asyncio.gather(hb, return_exceptions=True)
+        await _stop_keepalives(devices)
 
 
 async def _batch_save_result(md: ManagedDevice, log: Callable[[str], None]) -> None:
@@ -811,6 +875,8 @@ async def _batch_fire(
         return
 
     async def fire_one(md: ManagedDevice) -> None:
+        # Isolated per sensor: whatever goes wrong here is this sensor's result,
+        # never a reason to abort (and then release) the others mid-calibration.
         log(f"\n[{time.strftime('%H:%M:%S')}] 🔄 {md.name} {md.address} 자동 보정 시작...")
         try:
             ok = await md.ms.start_auto_calibration(timeout=calibration_timeout)
@@ -831,14 +897,26 @@ async def _batch_fire(
             md.status = "calibration_error"
             md.detail = str(exc)
             log(f"[{time.strftime('%H:%M:%S')}] ❌ {md.name} {md.address} 보정 오류: {exc}")
+        except Exception as exc:  # noqa: BLE001 - unexpected failure of one sensor, keep the batch going
+            md.status = "calibration_error"
+            md.detail = f"{type(exc).__name__}: {exc}"
+            log(f"[{time.strftime('%H:%M:%S')}] ❌ {md.name} {md.address} 보정 오류 (예상 밖): {md.detail}")
 
-    await asyncio.gather(*(fire_one(md) for md in live))
+    tasks = [asyncio.create_task(fire_one(md)) for md in live]
+    try:
+        await asyncio.gather(*tasks, return_exceptions=True)
+    finally:
+        # on cancel, settle every task before the caller releases the links
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 async def _batch_release(devices: list[ManagedDevice], log: Callable[[str], None]) -> None:
     """Always disconnect everything, bounded so a wedged peer can't hang us."""
     if not devices:
         return
+    keepalives = _cancel_keepalives(devices)
     log("\n" + "=" * 60)
     log(" 연결 해제")
     log("=" * 60)
@@ -850,6 +928,8 @@ async def _batch_release(devices: list[ManagedDevice], log: Callable[[str], None
             pass
 
     await asyncio.gather(*(release_one(md) for md in devices))
+    # awaited only now: a ping stuck mid-write ends when its link is dropped above
+    await asyncio.gather(*keepalives, return_exceptions=True)
 
 
 async def run_batch_calibration(
@@ -899,12 +979,17 @@ async def run_batch_calibration(
         try:
             if prefer_address:
                 await _batch_gather_address(
-                    scan_secs, connect_timeout, prefer_address, log, pool_out=devices
+                    scan_secs, connect_timeout, prefer_address, log,
+                    pool_out=devices, keepalive_interval=keepalive_interval,
                 )
             elif collect:
-                await _batch_gather_collect(scan_secs, connect_timeout, log, pool_out=devices)
+                await _batch_gather_collect(
+                    scan_secs, connect_timeout, log, pool_out=devices, keepalive_interval=keepalive_interval
+                )
             else:
-                await _batch_gather_menu(scan_secs, connect_timeout, log, pool_out=devices)
+                await _batch_gather_menu(
+                    scan_secs, connect_timeout, log, pool_out=devices, keepalive_interval=keepalive_interval
+                )
 
             if not devices:
                 log("\n연결된 센서가 없어 종료합니다.")
@@ -922,8 +1007,8 @@ async def run_batch_calibration(
             await _batch_fire(devices, calibration_timeout, log)
         finally:
             await _batch_release(devices, log)
-
-        log(format_batch_summary(devices))
+            if devices:  # whatever ended the run, the operator still sees every sensor's outcome
+                log(format_batch_summary(devices))
         return 0 if devices and all(md.status == "calibrated_ok" for md in devices) else 1
     finally:
         if fh is not None:
@@ -1081,20 +1166,24 @@ async def _clone_apply_all(
     log: Callable[[str], None],
 ) -> None:
     """Apply the profile's `sections` to each target in turn, recording per-
-    device status/detail (verified by a read-back) for the final summary."""
+    device status/detail (verified by a read-back) for the final summary. One
+    target failing -- however unexpectedly -- never stops the rest. Each
+    target's keep-alive runs until its own turn, so targets queued behind
+    others stay connected."""
     for md in devices:
+        await _stop_keepalives([md])  # this target's apply writes keep its link busy from here on
         log(f"\n[{time.strftime('%H:%M:%S')}] 🔧 {md.name} {md.address} 설정 적용 중...")
         try:
             applied = await md.ms.apply_profile(profile, sections)
-        except MS605Error as exc:
+        except Exception as exc:  # noqa: BLE001 - this target's result; keep going with the others
             md.status = "clone_error"
-            md.detail = str(exc)
-            log(f"[{time.strftime('%H:%M:%S')}] ❌ {md.name} {md.address} 적용 오류: {exc}")
+            md.detail = str(exc) if isinstance(exc, MS605Error) else f"{type(exc).__name__}: {exc}"
+            log(f"[{time.strftime('%H:%M:%S')}] ❌ {md.name} {md.address} 적용 오류: {md.detail}")
             continue
         skipped = [k for k in sections if k not in applied]
         try:
             _actual, mismatched = await confirm_profile_applied(md.ms, profile, applied)
-        except MS605Error as exc:
+        except Exception as exc:  # noqa: BLE001 - written already; only the read-back failed
             md.status = "clone_unverified"
             md.detail = f"반영 확인 실패: {exc}"
             log(f"[{time.strftime('%H:%M:%S')}] ⚠️  {md.name} {md.address} 적용됨(반영 확인 실패): {exc}")
@@ -1138,6 +1227,7 @@ async def run_clone(
     skip: str | None = None,
     no_apply: bool = False,
     assume_yes: bool = False,
+    keepalive_interval: float = 15.0,
 ) -> int:
     """`clone` subcommand entry: capture one sensor's writable settings (or load
     them from a JSON profile), let the operator pick which sections to copy, and
@@ -1210,6 +1300,15 @@ async def run_clone(
         return 1
     _ui.info("적용할 항목: " + ", ".join(PROFILE_SECTION_LABELS[k] for k in sections))
 
+    # Validate the chosen sections once, before any target is connected or
+    # written -- apply_profile would reject them on every target anyway, after
+    # the operator already picked and connected them all.
+    try:
+        profile.validate(sections)
+    except MS605Error as exc:
+        _ui.error(f"프로파일이 올바르지 않아 적용할 수 없습니다: {exc}")
+        return 2
+
     # -- 4. gather targets (excluding the source), apply, always release --
     exclude = frozenset({exclude_addr}) if exclude_addr else frozenset()
     devices: list[ManagedDevice] = []
@@ -1221,6 +1320,7 @@ async def run_clone(
             select_prompt="설정을 복제할 대상 센서를 선택하세요",
             exclude=exclude,
             pool_out=devices,
+            keepalive_interval=keepalive_interval,
         )
         if not devices:
             _ui.warn("대상 센서가 없어 종료합니다.")
@@ -1446,7 +1546,10 @@ async def _flow_live_monitor_plain(link: LiveLink) -> None:
         live = frame.get(TAG_LIVE_RADAR_OUTPUT)
         pir = frame.get(TAG_PIR_STATE)
         if live is not None:
-            snap = decode_radar_output(live)
+            try:
+                snap = decode_radar_output(live)
+            except FrameError:  # a truncated tag55: skip it rather than log a traceback mid-output
+                return
             zones = " ".join(_format_radar_zone(z) for z in snap.zones)
             print(f"  [{ts}] {zones}")
             print(f"           {_format_sensor_presence(snap)}  |  구역별재실(0/1)={_format_zone_presence(snap)}")
@@ -1498,7 +1601,10 @@ async def flow_live_monitor(link: LiveLink) -> None:
             pir = frame.get(TAG_PIR_STATE)
             state["ts"] = time.strftime("%H:%M:%S")
             if live_v is not None:
-                state["snap"] = decode_radar_output(live_v)
+                try:
+                    state["snap"] = decode_radar_output(live_v)
+                except FrameError:  # a truncated tag55: keep the last good frame on screen
+                    return
             elif pir is not None:
                 state["pir"] = bool(pir) and pir[0] == 1
             else:
@@ -1662,24 +1768,29 @@ async def main_menu(link: LiveLink) -> None:
         choice = await _ui.select("작업을 선택하세요", _MENU_ACTIONS)
         if choice in ("q", None):
             return
-        # the link may have gone idle-dead while the menu waited for input;
-        # reconnect before any device operation.
-        await link.ensure()
-        if choice == "1":
-            await flow_auto_calibration(link)
-        elif choice == "2":
-            await flow_detailed_adjustment(link)
-        elif choice == "3":
-            cfg = await link.ms.read_config()
-            _ui.panel(format_config_table(cfg), title="현재 설정")
-        elif choice == "4":
-            await flow_live_monitor(link)
-        elif choice == "5":
-            await flow_zone_enable(link)
-        elif choice == "6":
-            await flow_subsensor_zones(link)
-        elif choice == "7":
-            await flow_subsensor_timing(link)
+        try:
+            # the link may have gone idle-dead while the menu waited for input;
+            # reconnect before any device operation.
+            await link.ensure()
+            if choice == "1":
+                await flow_auto_calibration(link)
+            elif choice == "2":
+                await flow_detailed_adjustment(link)
+            elif choice == "3":
+                cfg = await link.ms.read_config()
+                _ui.panel(format_config_table(cfg), title="현재 설정")
+            elif choice == "4":
+                await flow_live_monitor(link)
+            elif choice == "5":
+                await flow_zone_enable(link)
+            elif choice == "6":
+                await flow_subsensor_zones(link)
+            elif choice == "7":
+                await flow_subsensor_timing(link)
+        except MS605Error as exc:
+            # one failed action (timeout, dropped link, ...) must not end the session
+            _ui.error(f"작업 실패: {exc}")
+            _ui.muted("메뉴로 돌아갑니다. (연결이 끊겼다면 다음 작업 전에 자동으로 재연결합니다)")
 
 
 # ===========================================================================
@@ -1898,7 +2009,8 @@ def build_parser() -> argparse.ArgumentParser:
             "기다립니다(각 최대 ~3분). --collect 는 스캔 메뉴 대신 버튼을 누르는 대로 센서를 "
             "자동 수집·연결하고, --schedule HH:MM 은 지정 시각까지 링크를 keep-alive로 유지하다 "
             "무인으로 발사합니다. 실시간 레이더 스트림은 표시하지 않고(상태/결과만), 성공한 "
-            "센서는 반영된 임계값을 cal_results/calibration_history.jsonl 에 저장합니다."
+            "센서는 반영된 임계값을 cal_results/calibration_history.jsonl 에 저장합니다 "
+            "(소스 checkout은 저장소 루트, 설치본은 사용자 데이터 디렉터리, MS605_DATA_DIR 로 변경 가능)."
         ),
     )
     p_calibrate.add_argument(

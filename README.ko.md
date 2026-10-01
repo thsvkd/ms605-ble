@@ -100,6 +100,11 @@ asyncio.run(main())
 `private-profiles/` 또는 checkout 밖에 저장하세요. 임의의 `--save` 경로는 자동으로
 무시되지 않습니다. 스테이징된 모든 파일을 검토할 책임은 기여자에게 있습니다.
 
+`ms605 calibrate`와 대화형 자동 보정은 확정된 결과를 `cal_results/calibration_history.jsonl`에
+추가합니다. 소스 checkout에서는 저장소 루트(Git이 무시)에, 설치된 패키지에서는 사용자 데이터
+디렉터리(macOS `~/Library/Application Support/ms605`, Linux `~/.local/share/ms605` 등)에
+저장됩니다. `MS605_DATA_DIR`로 `cal_results/` 폴더 위치를 바꿀 수 있습니다.
+
 ## 저장소 구조
 
 | 경로 | 책임 |

@@ -13,6 +13,12 @@ class FrameError(MS605Error, ValueError):
     reported via `ParsedFrame.crc_ok`, not by raising this."""
 
 
+class ProfileError(MS605Error, ValueError):
+    """A ConfigProfile holds a malformed or out-of-range section (wrong type,
+    wrong length, value outside its byte/u16 range). Raised by
+    `ConfigProfile.validate()` before anything is written to a device."""
+
+
 class MS605TimeoutError(MS605Error, TimeoutError):
     """A command got no response, or a push event didn't arrive in time."""
 

@@ -96,6 +96,8 @@ async def discover_and_select(
 def _fmt_device_choice(dev: BLEDevice) -> str:
     """One-line label for a scanned device in a selection menu."""
     rssi = getattr(dev, "rssi", None)
+    if not isinstance(rssi, int):  # bleak's BLEDevice has no rssi; scan() records it
+        rssi = MS605.last_rssi(dev)
     rssi_s = f"{rssi} dBm" if isinstance(rssi, int) else "?"
     return f"{dev.name or '(이름없음)':<22} {dev.address}   RSSI {rssi_s}"
 
@@ -177,10 +179,8 @@ class LiveLink:
         self._keepalive_task = None
         if task is not None:
             task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
+            # absorbs the task's own CancelledError but not one aimed at the caller
+            await asyncio.gather(task, return_exceptions=True)
 
     async def _keepalive_loop(self) -> None:
         # Ping the central->device direction periodically so the MS605 does not
