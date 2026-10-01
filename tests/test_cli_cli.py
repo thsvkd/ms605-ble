@@ -3,6 +3,7 @@ rendering helpers and argparse wiring. No BLE hardware needed."""
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from datetime import datetime, timezone
 
@@ -297,6 +298,27 @@ def test_render_monitor_builds_a_frame_from_synthetic_payload():
     # Both synthetic presence-trigger and presence-maintain meters are shown.
     assert "재실 트리거" in text
     assert "재실 유지" in text
+
+
+def test_render_monitor_value_colours():
+    # Maintain is red only when strictly over (0/0 is not); trigger text follows
+    # the device flag even where it disagrees with cur > thr.
+    from ms605.cli import _ui
+
+    snap = decode_radar_output(bytes.fromhex(SYNTHETIC_LIVE_RADAR))
+    z0, z1 = snap.zones[:2]
+    snap = dataclasses.replace(snap, zones=(
+        dataclasses.replace(z0, current_trigger=100, trigger_threshold=55, trigger_active=False,
+                            current_maintain=0, maintain_threshold=0),
+        dataclasses.replace(z1, current_trigger=7, trigger_threshold=-33, trigger_active=True,
+                            current_maintain=41, maintain_threshold=40),
+    ))
+    panel = render_monitor({"snap": snap, "pir": None, "ts": "12:00:00"}, FALLBACK_DISTANCES_M)
+    styles = {seg.text.strip(): str(seg.style) for seg in _ui.console.render(panel)}
+    assert styles["100/55"] == "grey70"
+    assert styles["0/0"] == "grey70"
+    assert styles["7/-33"] == "bold red"
+    assert styles["41/40"] == "bold red"
 
 
 def test_render_monitor_waiting_state_has_no_zones():

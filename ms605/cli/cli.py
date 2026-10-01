@@ -1368,15 +1368,19 @@ _MONITOR_BAR_WIDTH = 16
 _MONITOR_TICK = 5  # threshold pinned at this fixed column (~1/3 in) for every bar
 
 
+def _monitor_value(cur: int, thr: int, hot: bool) -> Text:
+    return Text(f"{cur:>3}/{thr:<3}", style="bold red" if hot else "grey70")
+
+
 def render_monitor(state: dict, dists: Sequence[float]) -> Panel:
     """Build one frame of the live monitor: a header (timestamp / PIR /
     per-sub-sensor presence) above a per-zone table that shows *both* meters the
     device reports for each zone -- Presence Trigger (재실 트리거) and Presence
     Maintain (재실 유지) -- as current-vs-threshold bars. The threshold is pinned
-    at a fixed column so it never drifts; the fill grows relative to that
-    threshold and reddens once it crosses (the trigger meter uses the device's
-    own trigger-active flag). Pure -- `state` is {'snap', 'pir', 'ts'}, updated
-    by the push handler."""
+    at a fixed column so it never drifts; the fill crosses it, in red, exactly
+    when current > threshold. The trigger cur/thr text is red on the device's
+    own trigger-active flag, which can disagree with that comparison. Pure --
+    `state` is {'snap', 'pir', 'ts'}, updated by the push handler."""
     snap = state.get("snap")
     pir = state.get("pir")
     ts = state.get("ts", "--:--:--")
@@ -1409,28 +1413,20 @@ def render_monitor(state: dict, dists: Sequence[float]) -> Panel:
                 off = Text("off", style="grey30")
                 table.add_row(label, off, "", off, "")
                 continue
-            trig_bar = _ui.meter(
-                z.current_trigger, z.trigger_threshold,
-                width=_MONITOR_BAR_WIDTH, tick_at=_MONITOR_TICK, active=z.trigger_active,
+            table.add_row(
+                label,
+                _ui.meter(z.current_trigger, z.trigger_threshold, width=_MONITOR_BAR_WIDTH, tick_at=_MONITOR_TICK),
+                _monitor_value(z.current_trigger, z.trigger_threshold, z.trigger_active),
+                _ui.meter(z.current_maintain, z.maintain_threshold, width=_MONITOR_BAR_WIDTH, tick_at=_MONITOR_TICK),
+                _monitor_value(
+                    z.current_maintain, z.maintain_threshold, z.current_maintain > z.maintain_threshold
+                ),
             )
-            maint_bar = _ui.meter(
-                z.current_maintain, z.maintain_threshold,
-                width=_MONITOR_BAR_WIDTH, tick_at=_MONITOR_TICK,
-                active=z.current_maintain >= z.maintain_threshold,
-            )
-            trig_val = Text(
-                f"{z.current_trigger:>3}/{z.trigger_threshold:<3}",
-                style="bold red" if z.trigger_active else "grey70",
-            )
-            maint_val = Text(
-                f"{z.current_maintain:>3}/{z.maintain_threshold:<3}",
-                style="bold red" if z.current_maintain >= z.maintain_threshold else "grey70",
-            )
-            table.add_row(label, trig_bar, trig_val, maint_bar, maint_val)
         body = table
 
     footer = Text(
-        "┃=임계값(고정)   █=현재값(임계값 초과 시 빨강)   ·   Enter를 눌러 종료",
+        "┃=임계값(고정)   █=현재값(┃를 넘으면 빨강)   ·   Enter를 눌러 종료\n"
+        "트리거 cur/thr 빨강=기기 trigger-active 플래그",
         style="grey46",
     )
     return Panel(Group(head, Text(), body, footer),

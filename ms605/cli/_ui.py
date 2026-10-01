@@ -21,6 +21,7 @@ Two invariants keep this safe to sprinkle everywhere:
 from __future__ import annotations
 
 import asyncio
+import math
 import sys
 import threading
 from collections.abc import Sequence
@@ -315,24 +316,32 @@ def zone_threshold_table(
 
 
 # --- live monitor (real-time bar meters) ----------------------------------
-def meter(value: int, threshold: int, *, width: int = 24, tick_at: int = 8, active: bool = False) -> Text:
+def meter(value: int, threshold: int, *, width: int = 24, tick_at: int = 8) -> Text:
     """A horizontal bar with the threshold pinned at a *fixed* column
     (`tick_at`) -- the same column for every zone, so a constant threshold
-    never drifts frame-to-frame. The fill grows in proportion to
-    value/threshold: value == threshold fills exactly up to the tick, and the
-    bar clamps to full at (width/tick_at)x the threshold. Fill turns red while
-    the device flags the zone trigger-active. This is a threshold-relative view
-    -- "is the bar past the tick?" answers "is it over threshold?" at a glance."""
-    tick = max(1, min(width - 1, tick_at))
-    if threshold > 0:
-        filled = round(tick * value / threshold)
+    never drifts frame-to-frame. The fill is drawn from the signed offset
+    value - threshold around that tick, so negative/zero calibration
+    thresholds render the same way as positive ones:
+
+      value <  threshold -> fill stops short of the tick (>= 1 empty cell)
+      value == threshold -> fill reaches the tick exactly
+      value >  threshold -> fill crosses the tick (>= 1 cell past it), in red
+
+    "Is the bar past the tick?" therefore answers "is value > threshold?".
+    One cell is max(|threshold| / tick_at, 1) units, so for a positive
+    threshold value 0 is an empty bar, as before."""
+    if not 1 <= tick_at <= width - 2:
+        raise ValueError(f"tick_at must be in [1, {width - 2}] for width={width}, got {tick_at}")
+    step = max(abs(threshold) / tick_at, 1)
+    offset = value - threshold
+    if offset > 0:
+        filled = tick_at + 1 + min(width - tick_at - 1, math.ceil(offset / step))
     else:
-        filled = width if value > 0 else 0
-    filled = max(0, min(width, filled))
-    fill_style = "bar.active" if active else "bar.fill"
+        filled = max(0, tick_at - math.ceil(-offset / step))
+    fill_style = "bar.active" if offset > 0 else "bar.fill"
     bar = Text()
     for i in range(width):
-        if i == tick:
+        if i == tick_at:
             bar.append("┃", style="bar.tick")
         elif i < filled:
             bar.append("█", style=fill_style)

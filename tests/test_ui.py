@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
+
 from ms605.cli import _ui
 
 
@@ -98,20 +100,66 @@ def test_meter_tick_is_at_a_fixed_column_regardless_of_threshold():
         assert len(bar.plain) == 20
 
 
-def test_meter_fill_is_relative_to_threshold():
-    # value == threshold fills exactly up to the tick
-    bar = _ui.meter(25, 25, width=20, tick_at=6)
-    assert bar.plain.count("█") == 6  # cells 0..5, tick at 6
-    # value == 2x threshold fills to 2x the tick column
-    bar2 = _ui.meter(50, 25, width=20, tick_at=6)
-    assert bar2.plain[6] == "┃"
-    assert bar2.plain.count("█") == 11  # 0..5 and 7..11 (cell 6 is the tick)
+def _over(bar, tick):
+    """Cells filled past the tick (the over-threshold part)."""
+    return bar.plain[tick + 1:].count("█")
+
+
+def _under(bar, tick):
+    """Cells filled before the tick."""
+    return bar.plain[:tick].count("█")
+
+
+def _is_red(bar):
+    return any(span.style == "bar.active" for span in bar.spans)
+
+
+@pytest.mark.parametrize("thr", [60, 1, 0, -33])
+def test_meter_crosses_tick_iff_over_threshold(thr):
+    # Holds for positive, zero and negative (calibration) thresholds alike.
+    at = _ui.meter(thr, thr, width=16, tick_at=5)
+    assert (_under(at, 5), _over(at, 5)) == (5, 0)  # fills exactly to the tick
+    above = _ui.meter(thr + 1, thr, width=16, tick_at=5)
+    assert _under(above, 5) == 5 and _over(above, 5) >= 1
+    below = _ui.meter(thr - 1, thr, width=16, tick_at=5)
+    assert _under(below, 5) < 5 and _over(below, 5) == 0
+
+
+def test_meter_distinguishes_near_threshold_values():
+    # Regression: 55/59/60/70/77 vs 60 used to all render identically.
+    bars = [_ui.meter(v, 60, width=16, tick_at=5).plain for v in (55, 59, 60, 70, 77)]
+    assert bars[0][:5] != bars[2][:5] and bars[1][:5] != bars[2][:5]  # under: short of tick
+    assert _over(_ui.meter(70, 60, width=16, tick_at=5), 5) >= 1
+    assert _over(_ui.meter(77, 60, width=16, tick_at=5), 5) > _over(_ui.meter(61, 60, width=16, tick_at=5), 5)
+
+
+def test_meter_negative_threshold_shows_value_above_it():
+    # Regression: meter(-10, -33) and meter(0, -33) used to draw an empty bar.
+    for v in (-10, 0):
+        bar = _ui.meter(v, -33, width=16, tick_at=5)
+        assert _under(bar, 5) == 5 and _over(bar, 5) >= 1
+        assert _is_red(bar)
+
+
+def test_meter_zero_threshold_does_not_saturate_small_values():
+    bar = _ui.meter(5, 0, width=16, tick_at=5)
+    assert 1 <= _over(bar, 5) < 10
+
+
+def test_meter_fill_colour_follows_value_vs_threshold():
+    assert _is_red(_ui.meter(61, 60, width=16, tick_at=5))
+    assert not _is_red(_ui.meter(60, 60, width=16, tick_at=5))
+    assert not _is_red(_ui.meter(0, 0, width=16, tick_at=5))
 
 
 def test_meter_clamps_out_of_range_values():
-    bar = _ui.meter(999, 10, width=16, tick_at=5)
-    assert len(bar.plain) == 16  # no overflow past width
+    hi = _ui.meter(999, 10, width=16, tick_at=5)
+    assert hi.plain == "█████┃██████████"
+    lo = _ui.meter(-999, 10, width=16, tick_at=5)
+    assert lo.plain == "─────┃──────────"
 
 
-def test_meter_zero_threshold_is_safe():
-    assert len(_ui.meter(5, 0, width=10, tick_at=3).plain) == 10
+@pytest.mark.parametrize("width,tick_at", [(1, 0), (10, 0), (10, 9), (10, 10)])
+def test_meter_rejects_tick_outside_bar(width, tick_at):
+    with pytest.raises(ValueError):
+        _ui.meter(1, 1, width=width, tick_at=tick_at)
