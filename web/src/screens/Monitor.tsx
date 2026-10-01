@@ -2,7 +2,8 @@ import { Bluetooth } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useSearch } from 'wouter'
 import { buttonClass } from '../components/Button'
-import { SensorLiveCard } from '../components/SensorLiveCard'
+import { MonitorSummary, MonitorTable } from '../components/MonitorTable'
+import { LegendTextRow, PresenceLegend } from '../components/PresenceSignals'
 import { SensorPicker } from '../components/SensorPicker'
 import styles from '../components/live.module.css'
 import { useLiveWatch } from '../hooks/useLiveWatch'
@@ -91,18 +92,22 @@ export function MonitorScreen() {
           <div className={styles.top}>
             <SensorPicker sensors={sessions} selected={selected ?? []} onChange={choose} />
           </div>
-          <p className={styles.legend}>
-            <span>{t.monitor.legend}</span>
-            <span>{t.monitor.legendTrigger}</span>
-          </p>
           {shown.length === 0 ? (
             <p className={styles.emptyNote}>{t.monitor.noneSelected}</p>
           ) : (
-            <div className={styles.cards}>
-              {shown.map((id) => (
-                <SensorLiveCard key={id} deviceId={id} />
-              ))}
-            </div>
+            <>
+              <MonitorSummary ids={shown} />
+              <PresenceLegend
+                extra={
+                  <>
+                    <LegendTextRow term={t.monitor.legendTagsKey}>{t.monitor.legendTags}</LegendTextRow>
+                    <LegendTextRow term={t.monitor.legendMeterKey}>{t.monitor.legend}</LegendTextRow>
+                    <LegendTextRow term={t.monitor.legendTriggerKey}>{t.monitor.legendTrigger}</LegendTextRow>
+                  </>
+                }
+              />
+              <MonitorTable ids={shown} />
+            </>
           )}
         </>
       )}

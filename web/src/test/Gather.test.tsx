@@ -58,10 +58,9 @@ describe('GatherScreen', () => {
     expect(within(list).getByText('등록됨')).toBeInTheDocument()
     expect(within(list).getByText(bleName(2))).toBeInTheDocument()
     expect(within(list).getByText('새 센서')).toBeInTheDocument()
-    // the newest unnamed sensor's form is open, prefilled, and did not grab focus
-    const alias = within(list).getByLabelText('이름')
-    expect(alias).toHaveValue('센서 2')
-    expect(alias).not.toHaveFocus()
+    // every item starts folded: no form until the operator asks for one
+    expect(within(list).queryByRole('form')).not.toBeInTheDocument()
+    expect(within(list).getByRole('button', { name: '이름 붙이기' })).toBeInTheDocument()
   })
 
   it('saving a new sensor into a new site calls createSite then createSensor', async () => {
@@ -72,6 +71,7 @@ describe('GatherScreen', () => {
       'POST /api/sensors': { status: 201, body: sensor(3, { registry: registry(SITE_A, '센서 1'), live: live(3) }) },
     })
     render(<GatherScreen />)
+    await user.click(screen.getByRole('button', { name: '이름 붙이기' }))
     const form = screen.getByRole('form', { name: /이름 붙이기/ })
     expect(within(form).getByLabelText('이름')).toHaveValue('센서 1')
     await user.type(within(form).getByLabelText('새 사이트 이름'), 'Lab A')
@@ -99,6 +99,7 @@ describe('GatherScreen', () => {
       'POST /api/sensors': { status: 409, body: { error: { code: 'already_exists', message: 'exists' } } },
     })
     render(<GatherScreen />)
+    await user.click(screen.getByRole('button', { name: '이름 붙이기' }))
     const form = screen.getByRole('form', { name: /이름 붙이기/ })
     expect(within(form).getByLabelText('사이트')).toHaveValue('lab-a') // the only site is the default
     await user.click(within(form).getByRole('button', { name: '저장' }))
@@ -112,6 +113,7 @@ describe('GatherScreen', () => {
     resetStore(storeState({ sites: [SITE_A], gather: { gathering: true, connecting: [] }, sensors: [sensor(4, { live: live(4) })] }))
     const calls = mockApi({})
     render(<GatherScreen />)
+    await user.click(screen.getByRole('button', { name: '이름 붙이기' }))
     await user.clear(screen.getByLabelText('이름'))
     await user.click(screen.getByRole('button', { name: '저장' }))
     expect(screen.getByLabelText('이름')).toHaveAccessibleDescription('입력해 주세요')
@@ -125,29 +127,16 @@ describe('GatherScreen', () => {
       })
     const item = (n: number) => screen.getByText(bleName(n)).closest('li') as HTMLElement
 
-    it('only sensors after the first snapshot are highlighted; the newest unnamed one opens', () => {
+    it('only sensors after the first snapshot are highlighted; every item stays folded', () => {
       resetStore(storeState({ sites: [SITE_A], gather: { gathering: true, connecting: [] }, sensors: [sensor(2, { live: live(2) })] }))
       render(<GatherScreen />)
       expect(item(2).className).not.toMatch(/fresh/)
-      expect(within(item(2)).getByRole('form')).toBeInTheDocument()
+      expect(within(item(2)).queryByRole('form')).not.toBeInTheDocument()
 
       arrive(3, 11)
       expect(item(3).className).toMatch(/fresh/)
-      expect(within(item(3)).getByRole('form')).toBeInTheDocument()
-      expect(within(item(2)).queryByRole('form')).not.toBeInTheDocument() // pristine form folds away
-      expect(within(item(3)).getByLabelText('이름')).not.toHaveFocus()
-    })
-
-    it('nothing moves while a form holds unsaved input', async () => {
-      const user = userEvent.setup()
-      resetStore(storeState({ sites: [SITE_A], gather: { gathering: true, connecting: [] }, sensors: [sensor(2, { live: live(2) })] }))
-      render(<GatherScreen />)
-      await user.type(within(item(2)).getByLabelText('위치'), '창가')
-      await user.tab()
-      await user.tab() // focus leaves the form fields; the input is still unsaved
-      arrive(3, 11)
-      expect(within(item(2)).getByRole('form')).toBeInTheDocument()
       expect(within(item(3)).queryByRole('form')).not.toBeInTheDocument()
+      expect(within(item(2)).queryByRole('form')).not.toBeInTheDocument()
     })
   })
 })

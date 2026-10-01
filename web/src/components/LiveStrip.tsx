@@ -1,13 +1,17 @@
 import { Activity, ArrowRight } from 'lucide-react'
 import { Link } from 'wouter'
 import { useLiveWatch } from '../hooks/useLiveWatch'
+import { presenceOf } from '../presence'
 import { useStore } from '../store/store'
 import { t } from '../strings'
-import { PresenceChips } from './PresenceChips'
+import { PresenceLegend, PresencePanel } from './PresenceSignals'
 import { ZoneList } from './ZoneMeterRow'
 import styles from './live.module.css'
 
-/** Sensor detail: the trigger bars of one sensor, watched only while this page is open. */
+/**
+ * Sensor detail: the device's 재실 call, the raw PIR / RF signals and the trigger bars of one sensor, as the
+ * dashboard and monitor draw them (14.8.5.1). Watched only while this page is open and visible.
+ */
 export function LiveStrip({ deviceId }: { deviceId: string }) {
   useLiveWatch([deviceId])
   const frame = useStore((s) => s.live[deviceId])
@@ -27,8 +31,9 @@ export function LiveStrip({ deviceId }: { deviceId: string }) {
       {frame ? (
         <>
           {!connected && <p className={styles.note}>{t.live.stale}</p>}
-          <PresenceChips frame={frame} />
-          <ZoneList zones={frame.zones} compact />
+          <PresencePanel presence={presenceOf(frame)} />
+          <ZoneList zones={frame.zones} />
+          <PresenceLegend />
         </>
       ) : (
         <p className={styles.note}>{connected ? t.live.waiting : t.live.stale}</p>

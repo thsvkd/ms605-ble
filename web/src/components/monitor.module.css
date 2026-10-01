@@ -1,0 +1,392 @@
+/* Live monitor table (docs/GUI_API.md 14.8.5.1): one sensor per row, Z0..Z6 per column. The name and signal
+   columns are sticky and read as one block; the zones scroll sideways inside a focusable region (arrow keys
+   scroll it). */
+
+/* -- summary bar ------------------------------------------------------------------------------- */
+.summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 14px 4px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: var(--font-sm);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.stat b {
+  font-size: 20px;
+  font-weight: 800;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+.stat[data-tone='present'] {
+  color: var(--progress);
+  background: var(--progress-bg);
+  border-color: color-mix(in srgb, var(--progress) 35%, transparent);
+}
+
+.stat[data-tone='present'] b {
+  color: var(--progress);
+}
+
+.stat[data-tone='hit'] {
+  color: var(--danger);
+  background: var(--danger-bg);
+  border-color: color-mix(in srgb, var(--danger) 30%, transparent);
+}
+
+.stat[data-tone='hit'] b {
+  color: var(--danger);
+}
+
+.stat[data-tone='unknown'],
+.stat[data-tone='offline'] {
+  border-style: dashed;
+  background: transparent;
+}
+
+.stat[data-tone='offline'] {
+  color: var(--warn);
+}
+
+/* -- scroll region + table ---------------------------------------------------------------------- */
+.scroll {
+  --name-w: 168px;
+  --sig-w: 148px;
+  --zone-w: 124px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.scroll:focus-visible {
+  outline-offset: -2px; /* inside: the region bleeds to the screen edge on a phone */
+}
+
+.table {
+  width: 100%;
+  min-width: calc(var(--name-w) + var(--sig-w) + 7 * var(--zone-w));
+  border-collapse: separate;
+  border-spacing: 0;
+  table-layout: fixed;
+}
+
+.table th,
+.table td {
+  padding: 0;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.table thead th {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+  font-size: 13px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.headSub {
+  display: block;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+/* the two sticky heads read as one: no rule between them, one rule after */
+.corner,
+.cornerSignals {
+  position: sticky;
+  z-index: 2;
+}
+
+.corner {
+  left: 0;
+  width: var(--name-w);
+}
+
+.cornerSignals {
+  left: var(--name-w);
+  width: var(--sig-w);
+  border-right: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 11px !important;
+  font-weight: 700 !important;
+}
+
+.zoneHead {
+  width: var(--zone-w);
+}
+
+/* -- rows ----------------------------------------------------------------------------------------- */
+.row + .row > * {
+  border-top: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+}
+
+.name,
+.signals {
+  position: sticky;
+  z-index: 1;
+  background: var(--surface);
+  vertical-align: top !important;
+}
+
+.name {
+  left: 0;
+  width: var(--name-w);
+  padding: 10px 6px 10px 12px !important;
+  font-weight: 400;
+}
+
+.name > * {
+  display: block;
+}
+
+/* the device's 재실 call, as a blue rail on the name cell */
+.row[data-present='true'] .name {
+  box-shadow: inset 3px 0 0 var(--progress);
+}
+
+/* dim the contents, never a sticky cell itself: a see-through sticky cell would show the zones under it */
+.row[data-stale='true'] > td:not(.signals),
+.row[data-stale='true'] .signalLine {
+  opacity: 0.55;
+}
+
+.nameLink {
+  overflow: hidden;
+  font-weight: 700;
+  text-decoration: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nameLink:hover {
+  text-decoration: underline;
+}
+
+.sub {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.warn {
+  color: var(--warn);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.hint {
+  display: block;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+.calibrating {
+  display: flex !important;
+  align-items: flex-start;
+  gap: 4px;
+  margin-top: 2px;
+  color: var(--progress);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.calibrating svg {
+  flex: none;
+  margin-top: 3px;
+}
+
+/* PIR / RF on the first line (raw signals), the device's 재실 call and S1..S3 on the next */
+.signals {
+  left: var(--name-w);
+  width: var(--sig-w);
+  padding: 10px 10px 10px 6px !important;
+  border-right: 1px solid var(--border);
+}
+
+.signalLine {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.signalLine + .signalLine {
+  margin-top: 4px;
+}
+
+/* -- zone cells ------------------------------------------------------------------------------------- */
+.cell {
+  padding: 7px 9px !important;
+  border-left: 1px solid color-mix(in srgb, var(--border) 45%, transparent);
+  transition: background-color 160ms var(--ease);
+}
+
+.cell[data-over='trigger'] {
+  background: color-mix(in srgb, var(--danger-bg) 80%, transparent);
+}
+
+.cell[data-over='maintain'] {
+  background: color-mix(in srgb, var(--danger-bg) 38%, transparent);
+}
+
+.cell[data-off],
+.cell[data-empty] {
+  text-align: center !important;
+}
+
+.cell[data-off] {
+  background: repeating-linear-gradient(
+    -45deg,
+    transparent 0 6px,
+    color-mix(in srgb, var(--border) 35%, transparent) 6px 7px
+  );
+}
+
+.muted {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+/* this row's own zone distance, shown only when the watched sensors' distances differ */
+.cellDistance {
+  display: block;
+  margin-bottom: 2px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-muted);
+  text-align: left;
+}
+
+/* -- mini meter: tag · 16-cell track · cur/thr -------------------------------------------------------- */
+.mini {
+  display: grid;
+  grid-template-columns: 9px minmax(40px, 1fr) auto;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.mini + .mini {
+  margin-top: 4px;
+}
+
+.tag {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.track {
+  display: grid;
+  grid-template-columns: repeat(16, 1fr);
+  gap: 1px;
+  height: 6px;
+  margin: 2px 0;
+}
+
+.track i {
+  position: relative;
+  border-radius: 1px;
+  background: color-mix(in srgb, var(--border) 80%, transparent);
+}
+
+.track i[data-cell='fill'] {
+  background: var(--ok);
+}
+
+.mini[data-over='true'] .track i[data-cell='fill'] {
+  background: var(--danger);
+}
+
+/* the threshold: never moves, stands 2 px proud of the track */
+.track i[data-cell='tick'] {
+  background: transparent;
+}
+
+.track i[data-cell='tick']::after {
+  content: '';
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  left: 50%;
+  width: 2px;
+  transform: translateX(-50%);
+  border-radius: 1px;
+  background: var(--text);
+}
+
+.value {
+  min-width: 6.5ch;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+  color: var(--text-muted);
+}
+
+.value small {
+  font-size: 10px;
+  opacity: 0.7;
+}
+
+.value[data-hot='true'] {
+  color: var(--danger);
+  font-weight: 700;
+}
+
+@media (hover: hover) {
+  /* the sticky .signals cell keeps its opaque surface, or the zones would show through it while scrolled */
+  .row:hover > td:not([data-over], [data-off], .signals) {
+    background-color: color-mix(in srgb, var(--surface-2) 55%, transparent);
+  }
+}
+
+@media (max-width: 639px) {
+  .scroll {
+    --name-w: 92px;
+    --sig-w: 108px;
+    --zone-w: 116px;
+    /* bleed to the screen edges so the zones get the full width */
+    margin-inline: calc(-1 * var(--space-4));
+    border-radius: 0;
+    border-inline: 0;
+  }
+
+  /* PIR and RF still share one line: the raw pair above, the device's call below */
+  .signals {
+    padding-inline: 4px 6px !important;
+  }
+
+  .name {
+    padding-inline: 10px 4px !important;
+  }
+}

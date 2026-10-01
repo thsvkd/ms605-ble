@@ -81,7 +81,7 @@
   height: 8px;
 }
 
-/* -- zone rows ---------------------------------------------------------------------------- */
+/* -- zone rows (sensor detail strip): label · trigger bar · value on one line ---------------- */
 .zones {
   display: grid;
   margin: 0;
@@ -89,26 +89,20 @@
   list-style: none;
 }
 
-.zoneHead {
-  display: none;
-}
-
 .zone {
   display: grid;
+  grid-template-columns: 6.5em minmax(0, 1fr);
+  align-items: center;
   gap: 2px var(--space-3);
-  padding: var(--space-2) 0;
-  border-top: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
-}
-
-.zone:first-child {
-  border-top: 0;
+  padding: 4px 0;
 }
 
 .zoneLabel {
   font-size: var(--font-sm);
-  font-weight: 700;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+  color: var(--text-muted);
 }
 
 .zoneOff {
@@ -117,164 +111,10 @@
   font-size: var(--font-sm);
 }
 
-.zoneOffRow .zoneLabel {
-  color: var(--text-muted);
-  font-weight: 600;
-}
-
-/* compact (sensor detail strip): label · trigger bar · value on one line */
-.zonesCompact .zone {
-  grid-template-columns: 6.5em minmax(0, 1fr);
-  align-items: center;
-  padding: 4px 0;
-  border-top: 0;
-}
-
-.zonesCompact .zoneLabel {
-  font-weight: 600;
-  color: var(--text-muted);
-}
-
-/* wide cards: zone · trigger · maintain on one line, with a column head instead of per-bar labels */
-@container livecard (min-width: 480px) {
-  .zones:not(.zonesCompact) .zoneHead {
-    display: grid;
-    grid-template-columns: 6.5em minmax(0, 1fr) minmax(0, 1fr);
-    gap: var(--space-4);
-    padding-bottom: var(--space-1);
-    font-size: 12px;
-    font-weight: 700;
-    color: var(--text-muted);
-  }
-
-  .zones:not(.zonesCompact) .zone {
-    grid-template-columns: 6.5em minmax(0, 1fr) minmax(0, 1fr);
-    align-items: center;
-    gap: var(--space-4);
-  }
-
-  .zones:not(.zonesCompact) .meter {
-    grid-template-columns: minmax(0, 1fr) 7ch;
-  }
-
-  .zones:not(.zonesCompact) .meterLabel {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip: rect(0 0 0 0);
-    white-space: nowrap;
-  }
-
-  .zones:not(.zonesCompact) .zoneOffRow .zoneOff {
-    grid-column: 2 / -1;
-  }
-}
-
-/* -- presence chips -------------------------------------------------------------------------- */
-.chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 2px 10px 2px 8px;
-  border-radius: 999px;
-  font-size: 13px;
-  font-weight: 700;
-  white-space: nowrap;
-  color: var(--off);
-  background: var(--off-bg);
-}
-
-.chip[data-kind='danger'] {
-  color: var(--danger);
-  background: var(--danger-bg);
-}
-
-.chip[data-kind='ok'] {
-  color: var(--ok);
-  background: var(--ok-bg);
-}
-
-/* -- card ---------------------------------------------------------------------------------- */
-.card {
-  container: livecard / inline-size;
-  display: grid;
-  gap: var(--space-3);
-  align-content: start;
-  padding: var(--space-4);
-  border-radius: var(--radius);
-  border: 1px solid var(--border);
-  background: var(--surface);
-  box-shadow: var(--shadow);
-  min-width: 0;
-  transition: opacity 200ms var(--ease);
-}
-
-.card[data-stale='true'] {
-  opacity: 0.6;
-}
-
-.cardHead {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.cardTitle {
-  font-size: var(--font);
-  font-weight: 700;
-  min-width: 0;
-}
-
-.titleLink {
-  text-decoration: none;
-}
-
-.titleLink:hover {
-  text-decoration: underline;
-}
-
-.cardSub {
-  color: var(--text-muted);
-  font-size: var(--font-sm);
-  font-weight: 500;
-}
-
-.cardHead > :last-child {
-  margin-left: auto;
-}
-
+/* -- notes ------------------------------------------------------------------------------- */
 .note {
   font-size: var(--font-sm);
   color: var(--text-muted);
-}
-
-.hint {
-  font-size: var(--font-sm);
-  font-weight: 600;
-  color: var(--warn);
-}
-
-.calibrating {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-sm);
-  background: var(--progress-bg);
-  color: var(--progress);
-  font-size: var(--font-sm);
-  font-weight: 600;
 }
 
 /* -- monitor screen ---------------------------------------------------------------------------- */
@@ -360,22 +200,6 @@
   gap: var(--space-2);
 }
 
-.legend {
-  display: grid;
-  gap: 2px;
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-sm);
-  background: var(--surface-2);
-  font-size: 13px;
-  color: var(--text-muted);
-}
-
-
-.cards {
-  display: grid;
-  gap: var(--space-3);
-}
-
 .emptyState {
   display: grid;
   justify-items: center;
@@ -401,7 +225,6 @@
 
 /* -- sensor detail strip ------------------------------------------------------------------------ */
 .strip {
-  container: livecard / inline-size;
   display: grid;
   gap: var(--space-3);
   padding: var(--space-4);
@@ -442,11 +265,6 @@
 }
 
 @media (min-width: 1024px) {
-  .cards {
-    grid-template-columns: repeat(auto-fill, minmax(520px, 1fr));
-    align-items: start;
-  }
-
   .top {
     display: flex;
     flex-wrap: wrap;

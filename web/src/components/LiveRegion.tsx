@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { kindText } from '../apply'
 import { batchTotals } from '../calibration'
+import { presenceFlips } from '../presence'
 import { selectApplyTally, sensorName, type Store, useStore } from '../store/store'
 import { t } from '../strings'
 
@@ -45,6 +46,9 @@ export function announcements(prev: Store, next: Store): string[] {
   // a fresh snapshot (first load, reconnect) is not news
   if (prev.conn !== 'open') return []
   const out = [...batchAnnouncements(prev, next), ...applyAnnouncements(prev, next)]
+  // a watched sensor's 재실 call flipping (14.8.5.1): once per flip, never per frame
+  for (const f of presenceFlips(prev.live, next.live))
+    out.push(t.presence.announce(sensorName(next.sensors[f.id], f.id), f.present))
   if (prev.sensors === next.sensors && prev.gather === next.gather) return out
   for (const [id, s] of Object.entries(next.sensors)) {
     const before = prev.sensors[id]

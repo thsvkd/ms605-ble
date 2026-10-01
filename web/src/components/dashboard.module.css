@@ -325,3 +325,10 @@ a.card:active {
     border-left: 1px dashed var(--border);
   }
 }
+
+/* -- live presence on a connected card (14.8.5.1): PresencePanel under a hairline ------------------ */
+.presence {
+  margin-top: 6px;
+  padding-top: var(--space-3);
+  border-top: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+}

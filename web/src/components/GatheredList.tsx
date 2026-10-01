@@ -1,22 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { SensorView } from '../api/types'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { selectGathered, useStore } from '../store/store'
 import { t } from '../strings'
 import { GatheredItem } from './GatheredItem'
 import styles from './gather.module.css'
 
-function newestUnnamed(list: SensorView[]): string | null {
-  return list.find((s) => s.registry === null)?.device_id ?? null
-}
-
-function formBusy(dirty: Set<string>): boolean {
-  if (dirty.size > 0) return true
-  return document.activeElement?.closest('[data-name-form]') != null
-}
-
 /**
- * Sensors with a session, newest first. When a new sensor arrives, only the newest unnamed one is
- * opened — and nothing moves while some form has focus or unsaved input (9.4). Never steals focus.
+ * Sensors with a session, newest first. Every item starts folded, arrivals included: the operator
+ * opens the one to name, so nothing moves under a hand that is pressing sensor buttons.
  */
 export function GatheredList() {
   const sensors = useStore((s) => s.sensors)
@@ -25,29 +15,8 @@ export function GatheredList() {
   // The baseline is what the first snapshot held: those are not "arrivals" and are not highlighted.
   const initialIds = useRef<Set<string> | null>(null)
   if (initialIds.current === null && synced) initialIds.current = new Set(list.map((s) => s.device_id))
-  const seen = useRef<Set<string> | null>(null)
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set())
   const [focusId, setFocusId] = useState<string | null>(null)
-  const dirty = useRef(new Set<string>())
-
-  useEffect(() => {
-    if (initialIds.current === null) return
-    if (seen.current === null) {
-      // first synced render: open the newest unnamed sensor, if any
-      seen.current = new Set(initialIds.current)
-      const id = newestUnnamed(list)
-      if (id) setExpanded(new Set([id]))
-      return
-    }
-    const known = seen.current
-    const arrivals = list.filter((s) => !known.has(s.device_id))
-    if (arrivals.length === 0) return
-    for (const s of arrivals) known.add(s.device_id)
-    const target = newestUnnamed(arrivals)
-    if (target === null || formBusy(dirty.current)) return
-    setExpanded(new Set([target]))
-    setFocusId(null)
-  }, [list])
 
   const onExpand = useCallback((id: string, focus: boolean) => {
     setExpanded((cur) => new Set(cur).add(id))
@@ -59,10 +28,6 @@ export function GatheredList() {
       next.delete(id)
       return next
     })
-  }, [])
-  const onDirtyChange = useCallback((id: string, isDirty: boolean) => {
-    if (isDirty) dirty.current.add(id)
-    else dirty.current.delete(id)
   }, [])
 
   if (list.length === 0) return null
@@ -81,7 +46,6 @@ export function GatheredList() {
             focusName={focusId === s.device_id}
             onExpand={onExpand}
             onCollapse={onCollapse}
-            onDirtyChange={onDirtyChange}
           />
         ))}
       </ul>

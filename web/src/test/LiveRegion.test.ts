@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { announcements } from '../components/LiveRegion'
 import { resetStore, type Store, useStore } from '../store/store'
-import { batchView, calibSensors, job, storeState, succeededJob } from './fixtures'
+import { batchView, calibSensors, deviceId, job, liveData, storeState, succeededJob } from './fixtures'
 
 function states(before: Parameters<typeof batchView>[0] | null, after: Parameters<typeof batchView>[0]) {
   resetStore(storeState({ sensors: calibSensors(), batch: before ? batchView(before) : null }))
@@ -28,5 +28,18 @@ describe('announcements: batch (14.8.10)', () => {
   it('stays quiet on a snapshot', () => {
     const [prev, next] = states(null, { jobs: [succeededJob(1), succeededJob(2), succeededJob(3)] })
     expect(announcements({ ...prev, conn: 'reconnecting' }, next)).toEqual([])
+  })
+})
+
+describe('announcements: presence (14.8.5.1)', () => {
+  it('says once when a watched sensor\'s 재실 call flips, not on every frame', () => {
+    resetStore(storeState({ sensors: calibSensors() }))
+    useStore.setState({ live: { [deviceId(1)]: liveData(1, { sub_sensor_presence: [false, false, false] }) } })
+    const prev = useStore.getState()
+    useStore.setState({ live: { [deviceId(1)]: liveData(1, { at: 2 }) } })
+    const next = useStore.getState()
+    expect(announcements(prev, next)).toEqual(['센서 1 재실'])
+    useStore.setState({ live: { [deviceId(1)]: liveData(1, { at: 3 }) } })
+    expect(announcements(next, useStore.getState())).toEqual([])
   })
 })

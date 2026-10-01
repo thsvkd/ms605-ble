@@ -20,7 +20,6 @@ interface Props {
   expanded: boolean
   onExpand: (id: string, focus: boolean) => void
   onCollapse: (id: string) => void
-  onDirtyChange: (id: string, dirty: boolean) => void
   focusName: boolean
 }
 
@@ -39,7 +38,7 @@ function useFresh(gatheredAt: number | undefined, arrived: boolean): boolean {
 }
 
 export const GatheredItem = memo(function GatheredItem(props: Props) {
-  const { deviceId, arrived, expanded, onExpand, onCollapse, onDirtyChange, focusName } = props
+  const { deviceId, arrived, expanded, onExpand, onCollapse, focusName } = props
   const sensor = useStore((s) => s.sensors[deviceId])
   const gathering = useStore((s) => s.gather.gathering)
   const now = useNow()
@@ -54,7 +53,6 @@ export const GatheredItem = memo(function GatheredItem(props: Props) {
 
   const done = (result?: NameResult) => {
     onCollapse(deviceId)
-    onDirtyChange(deviceId, false)
     if (result === 'saved') setMessage(t.form.saved)
     else if (result === 'taken') setMessage(t.form.takenElsewhere)
   }
@@ -107,7 +105,6 @@ export const GatheredItem = memo(function GatheredItem(props: Props) {
             bleName={bleName}
             autoFocus={focusName}
             onDone={done}
-            onDirtyChange={(d) => onDirtyChange(deviceId, d)}
           />
         </>
       ) : (

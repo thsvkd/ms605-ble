@@ -1,0 +1,214 @@
+/* PIR / RF / 재실 (docs/GUI_API.md 14.8.5.1). Raw signals that fire are red, the device's 재실 call is blue,
+   an unknown value is a dashed "?". Every state also has an icon and words (text or accessible name). */
+
+/* -- signal chip ------------------------------------------------------------------------------ */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 9px 1px 7px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.4;
+  white-space: nowrap;
+  color: var(--off);
+  background: var(--off-bg);
+  transition:
+    background-color 160ms var(--ease),
+    color 160ms var(--ease);
+}
+
+.chip svg {
+  flex: none;
+}
+
+.chip[data-short='true'] {
+  gap: 3px;
+  padding: 0 6px 0 5px;
+  font-size: 11px;
+}
+
+.chip[data-tone='hit'] {
+  color: var(--danger);
+  background: var(--danger-bg);
+  border-color: color-mix(in srgb, var(--danger) 30%, transparent);
+}
+
+.chip[data-tone='present'] {
+  color: var(--progress);
+  background: var(--progress-bg);
+  border-color: color-mix(in srgb, var(--progress) 35%, transparent);
+}
+
+.chip[data-tone='unknown'] {
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px dashed color-mix(in srgb, var(--text-muted) 70%, transparent);
+}
+
+/* -- S1..S3 ------------------------------------------------------------------------------------- */
+.subs {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.sub {
+  display: inline-grid;
+  place-items: center;
+  min-width: 21px;
+  height: 16px;
+  padding: 0 2px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--text-muted);
+}
+
+.sub[data-on='true'] {
+  color: var(--on-primary);
+  background: var(--progress);
+  border-color: var(--progress);
+}
+
+.sub[data-on='unknown'] {
+  border-style: dashed;
+  opacity: 0.6;
+}
+
+/* -- 재실 verdict (dashboard card): the card's final answer --------------------------------- */
+.verdict {
+  display: grid;
+  gap: 3px;
+  align-content: center;
+  min-width: 112px;
+  padding: 8px 12px 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text-muted);
+  background: var(--surface-2);
+  transition:
+    background-color 200ms var(--ease),
+    border-color 200ms var(--ease),
+    color 200ms var(--ease);
+}
+
+.verdict[data-tone='present'] {
+  color: var(--on-primary);
+  background: var(--progress);
+  border-color: var(--progress);
+  box-shadow: 0 2px 10px color-mix(in srgb, var(--progress) 30%, transparent);
+}
+
+.verdict[data-tone='unknown'] {
+  background: transparent;
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--text-muted) 70%, transparent);
+}
+
+.verdictMain {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.verdictWord {
+  font-size: 22px;
+  font-weight: 800;
+  line-height: 1.1;
+  letter-spacing: -0.01em;
+}
+
+.verdict[data-tone='off'] .verdictWord {
+  color: var(--text);
+}
+
+.verdictFoot {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.verdictNote {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  opacity: 0.85;
+  white-space: nowrap;
+}
+
+/* the S boxes sit on the blue plate when 재실: invert them so they still read */
+.verdict[data-tone='present'] .sub {
+  color: var(--on-primary);
+  border-color: color-mix(in srgb, var(--on-primary) 45%, transparent);
+}
+
+.verdict[data-tone='present'] .sub[data-on='true'] {
+  color: var(--progress);
+  background: var(--on-primary);
+  border-color: var(--on-primary);
+}
+
+/* -- panel: the 재실 verdict, then the raw signals (dashboard card, sensor detail) ------------------ */
+.panel {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: var(--space-2) var(--space-3);
+}
+
+.raw {
+  display: flex;
+  flex: 1 1 120px;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.rawLabel {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--text-muted);
+}
+
+/* -- legend ------------------------------------------------------------------------------------ */
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px var(--space-4);
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+.legend > div {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.legend dt,
+.legend dd {
+  margin: 0;
+}
+
+.legendKey {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text);
+  white-space: nowrap;
+}

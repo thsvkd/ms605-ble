@@ -42,6 +42,7 @@ describe('NameSensorForm saving', () => {
       'POST /api/sensors': [FAIL, { status: 201, body: sensor(3, { registry: registry(SITE_A, '센서 1') }) }],
     })
     render(<GatherScreen />)
+    await user.click(screen.getByRole('button', { name: '이름 붙이기' })) // items start folded
     const form = screen.getByRole('form', { name: /이름 붙이기/ })
     await user.type(within(form).getByLabelText('새 사이트 이름'), 'Lab A')
     await user.click(within(form).getByRole('button', { name: '저장' }))
@@ -59,6 +60,7 @@ describe('NameSensorForm saving', () => {
     )
     const calls = mockApi({ 'POST /api/sensors': { status: 201, body: sensor(3) } })
     render(<GatherScreen />)
+    await user.click(screen.getByRole('button', { name: '이름 붙이기' })) // items start folded
     const form = screen.getByRole('form', { name: /이름 붙이기/ })
     await user.selectOptions(within(form).getByLabelText('사이트'), '__new__')
     await user.type(within(form).getByLabelText('새 사이트 이름'), '  lab b ')
@@ -66,25 +68,6 @@ describe('NameSensorForm saving', () => {
     expect(await screen.findByText(t.form.saved)).toBeInTheDocument()
     expect(requests(calls)).toEqual(['POST /api/sensors'])
     expect(calls[0]?.body).toMatchObject({ site_id: 'lab-b' })
-  })
-
-  it('a form that goes away with unsaved input (named on another screen) stops blocking new arrivals', async () => {
-    const user = userEvent.setup()
-    resetStore(storeState({ sites: [SITE_A], gather: { gathering: true, connecting: [] }, sensors: [sensor(2, { live: live(2) })] }))
-    render(<GatherScreen />)
-    const item = (n: number) => screen.getByText(bleName(n)).closest('li') as HTMLElement
-    await user.type(within(item(2)).getByLabelText('위치'), '창가') // unsaved input
-    ;(document.activeElement as HTMLElement | null)?.blur()
-    act(() => {
-      const data = sensor(2, { registry: registry(SITE_A, '문 옆'), live: live(2) })
-      useStore.getState().applyMessage({ type: 'sensor', seq: 11, ts: NOW_S, data })
-    })
-    expect(screen.queryByRole('form')).not.toBeInTheDocument() // now a registered item
-    act(() => {
-      const data = sensor(3, { live: live(3, { gathered_at: NOW_S + 3 }) })
-      useStore.getState().applyMessage({ type: 'sensor', seq: 12, ts: NOW_S, data })
-    })
-    expect(within(item(3)).getByRole('form')).toBeInTheDocument()
   })
 })
 

@@ -4,12 +4,14 @@ import { Link } from 'wouter'
 import { buttonClass } from '../components/Button'
 import { EmptyState } from '../components/EmptyState'
 import { PendingSection } from '../components/PendingSection'
+import { PresenceLegend } from '../components/PresenceSignals'
 import { PrimaryAction } from '../components/PrimaryAction'
 import { ReleaseAllButton } from '../components/ReleaseAllButton'
 import { SiteSection } from '../components/SiteSection'
 import { SummaryBar } from '../components/SummaryBar'
 import { UnregisteredSection } from '../components/UnregisteredSection'
 import styles from '../components/dashboard.module.css'
+import { useLiveWatch } from '../hooks/useLiveWatch'
 import { DESKTOP, useMediaQuery } from '../hooks/useMediaQuery'
 import { selectBySite, useStore } from '../store/store'
 import { t } from '../strings'
@@ -22,6 +24,13 @@ export function DashboardScreen() {
   const desktop = useMediaQuery(DESKTOP)
   const empty = Object.keys(sensors).length === 0
   const sessions = Object.values(sensors).some((s) => s.live !== null)
+  // Live presence on the cards: registered, connected sensors only (useLiveWatch adds "while the tab is
+  // visible"). A sensor that disconnects leaves the list and is unwatched alone; the others keep theirs.
+  const connected = useMemo(
+    () => groups.flatMap((g) => g.sensors.filter((x) => x.live?.link === 'connected').map((x) => x.device_id)),
+    [groups],
+  )
+  useLiveWatch(connected)
 
   return (
     <div className={styles.screen}>
@@ -44,6 +53,7 @@ export function DashboardScreen() {
             </div>
           </div>
           <UnregisteredSection />
+          {connected.length > 0 && <PresenceLegend />}
           {groups.map((g) => (
             <SiteSection key={g.site.site_id} group={g} />
           ))}

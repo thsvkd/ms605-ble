@@ -16,7 +16,6 @@ interface Props {
   /** Only when the user explicitly asked to name it (no surprise phone keyboard otherwise). */
   autoFocus?: boolean
   onDone: (result?: NameResult) => void
-  onDirtyChange?: (dirty: boolean) => void
 }
 
 /** Site default: the last used one if it still exists, else the only site, else "새 사이트…" (9.4). */
@@ -28,7 +27,7 @@ export function initialSite(state: Pick<Store, 'sites'>): SiteChoice {
   return { kind: 'new', name: '' }
 }
 
-export function NameSensorForm({ deviceId, bleName, autoFocus, onDone, onDirtyChange }: Props) {
+export function NameSensorForm({ deviceId, bleName, autoFocus, onDone }: Props) {
   const uid = useId()
   const sensors = useStore((s) => s.sensors)
   const [site, setSite] = useState<SiteChoice>(() => initialSite(useStore.getState()))
@@ -41,14 +40,6 @@ export function NameSensorForm({ deviceId, bleName, autoFocus, onDone, onDirtyCh
   const [siteError, setSiteError] = useState<string | null>(null)
   const [formError, setFormError] = useState<string | null>(null)
   const aliasRef = useRef<HTMLInputElement>(null)
-
-  const dirty =
-    aliasEdit !== null || location !== '' || (site.kind === 'new' && site.name !== '') || formError !== null
-  useEffect(() => onDirtyChange?.(dirty), [dirty, onDirtyChange])
-  // unmounted without 나중에/저장 (named on another screen, released, navigated away): not dirty any more
-  const onDirtyRef = useRef(onDirtyChange)
-  onDirtyRef.current = onDirtyChange
-  useEffect(() => () => onDirtyRef.current?.(false), [])
 
   useEffect(() => {
     if (autoFocus) aliasRef.current?.focus()
@@ -86,7 +77,6 @@ export function NameSensorForm({ deviceId, bleName, autoFocus, onDone, onDirtyCh
   return (
     <form
       className={styles.nameForm}
-      data-name-form
       aria-label={bleName ? `${t.form.nameAction}: ${bleName}` : t.form.nameAction}
       onSubmit={(e) => {
         e.preventDefault()
