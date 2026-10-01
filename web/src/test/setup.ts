@@ -1,6 +1,7 @@
 import '@testing-library/jest-dom/vitest'
 import { cleanup } from '@testing-library/react'
 import { afterEach, beforeEach, vi } from 'vitest'
+import { resetDrafts } from '../store/drafts'
 import { resetStore } from '../store/store'
 
 // jsdom lacks matchMedia; phones are the default layout under test.
@@ -31,6 +32,7 @@ if (!HTMLDialogElement.prototype.showModal) {
 
 beforeEach(() => {
   resetStore()
+  resetDrafts()
   localStorage.clear()
 })
 

@@ -8,14 +8,22 @@ import { Button } from '../Button'
 import { StatusBadge } from '../StatusBadge'
 import styles from './calibrate.module.css'
 
-/** Connected and not held by another operation ("identify" is a momentary read the core waits out, G22). */
-export function selectable(s: SensorView): boolean {
-  return s.live?.link === 'connected' && (s.live.busy === null || s.live.busy === 'identify')
+const NONE: ReadonlySet<string> = new Set()
+
+/** Connected, not held by another operation ("identify" is a momentary read the core waits out, G22),
+ *  and not in a running apply job (G27). */
+export function selectable(s: SensorView, applyLocked: ReadonlySet<string> = NONE): boolean {
+  return (
+    s.live?.link === 'connected' &&
+    (s.live.busy === null || s.live.busy === 'identify') &&
+    !applyLocked.has(s.device_id)
+  )
 }
 
-function reason(s: SensorView): string | null {
+function reason(s: SensorView, applyLocked: ReadonlySet<string>): string | null {
   if (s.live?.link !== 'connected') return t.calib.notConnected
   if (s.live.busy && s.live.busy !== 'identify') return t.busy.label(busyText(s.live.busy))
+  if (applyLocked.has(s.device_id)) return t.apply.locked
   return null
 }
 
@@ -23,21 +31,24 @@ interface Props {
   sessions: SensorView[]
   checked: ReadonlySet<string>
   gathering: boolean
+  /** Sensors of the running apply job (G27). */
+  applyLocked?: ReadonlySet<string>
   onToggle: (id: string) => void
   onSelectAll: () => void
   onNext: () => void
 }
 
-export function SelectStep({ sessions, checked, gathering, onToggle, onSelectAll, onNext }: Props) {
+export function SelectStep({ sessions, checked, gathering, applyLocked = NONE, onToggle, onSelectAll, onNext }: Props) {
   const now = useNow()
-  const count = sessions.filter((s) => selectable(s) && checked.has(s.device_id)).length
+  const ok = (s: SensorView) => selectable(s, applyLocked)
+  const count = sessions.filter((s) => ok(s) && checked.has(s.device_id)).length
   return (
     <div className={styles.layout}>
       <div className={styles.aside}>
         <div className={styles.panel}>
           <h2 className={styles.headline}>{t.calib.selectTitle}</h2>
           <p className={styles.muted}>{t.calib.selectHint}</p>
-          <Button onClick={onSelectAll} disabled={!sessions.some(selectable)}>
+          <Button onClick={onSelectAll} disabled={!sessions.some(ok)}>
             {t.calib.selectAll}
           </Button>
         </div>
@@ -55,15 +66,15 @@ export function SelectStep({ sessions, checked, gathering, onToggle, onSelectAll
         ) : (
           <ul className={styles.rows}>
             {sessions.map((s) => {
-              const ok = selectable(s)
-              const why = reason(s)
+              const can = ok(s)
+              const why = reason(s, applyLocked)
               return (
                 <li key={s.device_id} className={styles.row}>
-                  <label className={styles.check} data-disabled={!ok}>
+                  <label className={styles.check} data-disabled={!can}>
                     <input
                       type="checkbox"
-                      checked={ok && checked.has(s.device_id)}
-                      disabled={!ok}
+                      checked={can && checked.has(s.device_id)}
+                      disabled={!can}
                       onChange={() => onToggle(s.device_id)}
                     />
                     <span className={styles.rowName}>{sensorName(s, s.device_id)}</span>

@@ -2,12 +2,14 @@ import { describe, expect, it } from 'vitest'
 import type { BatchView, CalibrationJobView, PresenceView } from '../api/types'
 import {
   batchHeadline,
+  CANCEL_CONFIRM_WITHIN_S,
   compareCell,
   formatCountdown,
   formatElapsed,
   type JobContext,
   jobProgress,
   jobStatus,
+  needsCancelConfirm,
   presenceStatus,
   resolveAt,
   selectBatchTally,
@@ -222,5 +224,17 @@ describe('batchHeadline (14.8.9 batch table)', () => {
       b({ jobs: [job(1, { state: 'failed' }), job(2, { state: 'timeout' }), succeededJob(3)] }),
     )
     expect(tally).toEqual({ ended: 3, total: 3, succeeded: 1, failed: 2 })
+  })
+})
+
+describe('needsCancelConfirm (G38)', () => {
+  it('running always, waiting only under 5 s (or unknown), never when ended', () => {
+    expect(CANCEL_CONFIRM_WITHIN_S).toBe(5)
+    expect(needsCancelConfirm(batchView({ state: 'running' }), null)).toBe(true)
+    expect(needsCancelConfirm(batchView({ state: 'waiting' }), 4.9)).toBe(true)
+    expect(needsCancelConfirm(batchView({ state: 'waiting' }), 5)).toBe(false)
+    expect(needsCancelConfirm(batchView({ state: 'waiting' }), null)).toBe(true)
+    expect(needsCancelConfirm(batchView({ state: 'done' }), 1)).toBe(false)
+    expect(needsCancelConfirm(batchView({ state: 'cancelled' }), null)).toBe(false)
   })
 })

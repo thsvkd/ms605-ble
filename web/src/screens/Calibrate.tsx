@@ -7,7 +7,7 @@ import { PreflightStep } from '../components/calibrate/PreflightStep'
 import { SelectStep, selectable } from '../components/calibrate/SelectStep'
 import { defaultChoice, type StartChoice } from '../components/calibrate/StartOptions'
 import { type CalibStep, StepIndicator } from '../components/calibrate/StepIndicator'
-import { selectBatchActive, selectSessions, useStore } from '../store/store'
+import { selectApplyMembers, selectBatchActive, selectSessions, useStore } from '../store/store'
 import { t } from '../strings'
 import { idsParam } from './Monitor'
 
@@ -40,6 +40,8 @@ export function CalibrateScreen() {
   const gathering = useStore((s) => s.gather.gathering)
   const search = useSearch()
   const sessions = useMemo(() => selectSessions({ sensors, sites }), [sensors, sites])
+  const apply = useStore((s) => s.apply)
+  const applyLocked = useMemo(() => selectApplyMembers({ apply }), [apply])
 
   const [dismissed, setDismissed] = useState(readDismissed)
   const [checked, setChecked] = useState<ReadonlySet<string>>(() => new Set(idsParam(search) ?? []))
@@ -60,7 +62,7 @@ export function CalibrateScreen() {
 
   const next = () => {
     // the selection order follows the list order, which the batch keeps (device_ids, 14.4)
-    setCheckIds(sessions.filter((s) => selectable(s) && checked.has(s.device_id)).map((s) => s.device_id))
+    setCheckIds(sessions.filter((s) => selectable(s, applyLocked) && checked.has(s.device_id)).map((s) => s.device_id))
   }
 
   const startOver = () => {
@@ -100,7 +102,10 @@ export function CalibrateScreen() {
           checked={checked}
           gathering={gathering}
           onToggle={toggle}
-          onSelectAll={() => setChecked(new Set(sessions.filter(selectable).map((s) => s.device_id)))}
+          applyLocked={applyLocked}
+          onSelectAll={() =>
+            setChecked(new Set(sessions.filter((s) => selectable(s, applyLocked)).map((s) => s.device_id)))
+          }
           onNext={next}
         />
       )}

@@ -1,4 +1,5 @@
 import type {
+  ApplyJobView,
   BatchView,
   GatherStatus,
   LiveData,
@@ -36,6 +37,8 @@ export interface AppState {
   /** The server's current or last batch (G16). */
   batch: BatchView | null
   countdown: CountdownAnchor | null
+  /** The server's running or last apply job (G25). */
+  apply: ApplyJobView | null
   /** device_id -> latest live frame; only for watched sensors. */
   live: Record<string, LiveData>
   /** How many mounted views watch each sensor (client-side refcount; never from the server). */
@@ -66,6 +69,7 @@ export const initialState: AppState = {
   notices: [],
   batch: null,
   countdown: null,
+  apply: null,
   live: {},
   watch: {},
 }
@@ -98,6 +102,7 @@ function apply(state: AppState, msg: IncomingMessage, now: number): AppState {
         pending: d.pending,
         batch,
         countdown: anchorFor(batch, known.ts, now),
+        apply: d.apply ?? null,
         live: {},
       }
     }
@@ -126,6 +131,8 @@ function apply(state: AppState, msg: IncomingMessage, now: number): AppState {
       const jobs = batch.jobs.map((j) => (j.device_id === job.device_id ? job : j))
       return { ...state, batch: { ...batch, jobs } }
     }
+    case 'apply':
+      return { ...state, apply: known.data }
     case 'live': {
       const id = known.data.device_id
       if ((state.watch[id] ?? 0) <= 0) return state

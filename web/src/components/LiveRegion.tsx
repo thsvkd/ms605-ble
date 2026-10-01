@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
+import { kindText } from '../apply'
 import { batchTotals } from '../calibration'
-import { sensorName, type Store, useStore } from '../store/store'
+import { selectApplyTally, sensorName, type Store, useStore } from '../store/store'
 import { t } from '../strings'
 
 /** Batch news (14.8.10): the round starts running, the batch ends, a sensor drops mid-calibration. */
@@ -24,11 +25,26 @@ function batchAnnouncements(prev: Store, next: Store): string[] {
   return out
 }
 
+/** Apply news (15.9.12): a job starts, a job ends (verified and failed counts). */
+function applyAnnouncements(prev: Store, next: Store): string[] {
+  const a = prev.apply
+  const b = next.apply
+  if (!b || a === b) return []
+  const same = a?.apply_id === b.apply_id
+  const kind = kindText(b.kind)
+  if (!same && b.state === 'running') return [t.announce.applyStarted(kind)]
+  if (b.state === 'done' && !(same && a?.state === 'done')) {
+    const n = selectApplyTally(b)
+    return [t.announce.applyDone(kind, n.verified, n.failed)]
+  }
+  return []
+}
+
 /** What changed between two store states that a screen-reader user should hear (9.7). */
 export function announcements(prev: Store, next: Store): string[] {
   // a fresh snapshot (first load, reconnect) is not news
   if (prev.conn !== 'open') return []
-  const out = batchAnnouncements(prev, next)
+  const out = [...batchAnnouncements(prev, next), ...applyAnnouncements(prev, next)]
   if (prev.sensors === next.sensors && prev.gather === next.gather) return out
   for (const [id, s] of Object.entries(next.sensors)) {
     const before = prev.sensors[id]

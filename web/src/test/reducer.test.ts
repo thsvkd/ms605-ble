@@ -2,8 +2,11 @@ import { describe, expect, it } from 'vitest'
 import type { ServerMessage } from '../api/types'
 import { addWatch, type AppState, initialState, NOTICE_LIMIT, reduce, removeWatch } from '../store/reducer'
 import {
+  APPLY_ID,
+  applyJob,
   BATCH_ID,
   batchView,
+  jobRunning,
   deviceId,
   job,
   live,
@@ -205,5 +208,24 @@ describe('reduce: M3 batch, countdown and live (14.8.2)', () => {
     s = removeWatch(s, [id])
     expect(id in s.watch).toBe(false)
     expect(s.live[id]).toBeUndefined()
+  })
+})
+
+describe('reduce: apply (M4, 15.9.4)', () => {
+  it('a snapshot sets the job, an apply message replaces it, lastSeq rises', () => {
+    const running = jobRunning()
+    const s0 = reduce(initialState, snapshotMsg({ seq: 10, apply: running })).state
+    expect(s0.apply).toEqual(running)
+    const done = applyJob()
+    const { state: s1, resync } = reduce(s0, msg({ type: 'apply', seq: 11, data: done }))
+    expect(resync).toBe(false)
+    expect(s1.apply).toEqual(done)
+    expect(s1.apply?.apply_id).toBe(APPLY_ID)
+    expect(s1.lastSeq).toBe(11)
+  })
+
+  it('a snapshot without a job clears an old one', () => {
+    const s0 = { ...initialState, apply: applyJob() }
+    expect(reduce(s0, snapshotMsg({ seq: 3 })).state.apply).toBeNull()
   })
 })

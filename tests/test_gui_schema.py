@@ -1,7 +1,7 @@
 """ms605 gui wire schema: web/openapi.json is not stale, ServerMessage is a
-`type`-discriminated union of the 11 messages (`live` and `countdown` with
+`type`-discriminated union of the 12 messages (`live` and `countdown` with
 `seq: null`), ClientMessage of the 2 client messages, and every response
-model's fields are all required on the wire (docs/GUI_API.md 5, 14.4)."""
+model's fields are all required on the wire (docs/GUI_API.md 5, 14.4, 15.4)."""
 
 from __future__ import annotations
 
@@ -32,6 +32,7 @@ MESSAGE_TYPES = {
     "calibration_job": "CalibrationJobMessage",
     "live": "LiveMessage",
     "countdown": "CountdownMessage",
+    "apply": "ApplyMessage",
 }
 CLIENT_TYPES = {"live_subscribe": "LiveSubscribeMessage", "live_unsubscribe": "LiveUnsubscribeMessage"}
 
@@ -45,7 +46,7 @@ def test_server_message_is_discriminated_by_type():
     schema = openapi_document()["components"]["schemas"]["ServerMessage"]
     assert schema["discriminator"]["propertyName"] == "type"
     assert schema["discriminator"]["mapping"] == {k: f"#/components/schemas/{v}" for k, v in MESSAGE_TYPES.items()}
-    assert len(schema["oneOf"]) == 11
+    assert len(schema["oneOf"]) == 12
     message = ServerMessage.model_validate(
         {"type": "gather", "seq": 3, "ts": 1.5, "data": {"gathering": True, "connecting": []}}
     )
@@ -86,3 +87,9 @@ def test_client_message_is_discriminated_by_type():
     assert schema["discriminator"]["mapping"] == {k: f"#/components/schemas/{v}" for k, v in CLIENT_TYPES.items()}
     message = ClientMessage.model_validate_json('{"type": "live_unsubscribe", "data": {"device_ids": ["0a"]}}')
     assert isinstance(message.root, LiveUnsubscribeMessage) and message.root.data.device_ids == ["0a"]
+
+
+def test_m4_fields_are_on_the_sensor_and_the_snapshot():
+    components = openapi_document()["components"]["schemas"]
+    assert "config_rev" in components["SensorView"]["required"]
+    assert "apply" in components["StateSnapshot"]["required"]

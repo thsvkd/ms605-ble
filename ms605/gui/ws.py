@@ -34,9 +34,11 @@ from ms605.events import (
 )
 from ms605.fleet import Fleet
 
+from .apply import ApplyService
 from .batch import BatchService
 from .live import LiveFeed
 from .schemas import (
+    ApplyMessage,
     BatchMessage,
     CalibrationJobMessage,
     CalibrationSummary,
@@ -91,9 +93,10 @@ HANDLED_EVENTS: frozenset[type[Event]] = frozenset(
         CalibrationProgress,
         CalibrationResult,
         BatchChanged,
+        ApplyResult,
     }
 )
-IGNORED_EVENTS: frozenset[type[Event]] = frozenset({ApplyResult})  # M4
+IGNORED_EVENTS: frozenset[type[Event]] = frozenset()
 
 
 class Client:
@@ -181,6 +184,7 @@ class Hub:
         self._dirty_sensors: set[str] = set()
         self._dirty_jobs: set[str] = set()
         self._dirty_sites = self._dirty_pending = self._dirty_gather = self._dirty_batch = False
+        self._dirty_apply = False
         self._scheduled = False
         self._loop: asyncio.AbstractEventLoop | None = None
         self._unsubscribe: Callable[[], None] | None = None
@@ -191,6 +195,7 @@ class Hub:
         self._history_by_address: dict[str, tuple[int, dict]] = {}
         self.live = LiveFeed(fleet, self)
         self.batches = BatchService(fleet, self, speed=speed)
+        self.applies = ApplyService(fleet, self)
 
     # -- lifecycle -------------------------------------------------------------
 
@@ -242,6 +247,10 @@ class Hub:
             _log.debug("%s", ev)
         elif isinstance(ev, (BatchChanged, CalibrationStateChanged, CalibrationProgress, CalibrationResult)):
             self.batches.on_event(ev)
+            if isinstance(ev, CalibrationResult):
+                self.applies.on_event(ev)
+        elif isinstance(ev, ApplyResult):
+            self.applies.on_event(ev)
         else:
             return  # IGNORED_EVENTS
         self._schedule()
@@ -281,6 +290,10 @@ class Hub:
         self._dirty_batch = True
         self._schedule()
 
+    def mark_apply(self) -> None:
+        self._dirty_apply = True
+        self._schedule()
+
     def mark_job(self, device_id: str) -> None:
         self._dirty_jobs.add(device_id)
 
@@ -293,7 +306,7 @@ class Hub:
 
     def flush(self) -> None:
         """Publish everything marked, in the order sites, pending, sensors (by id), batch or
-        calibration jobs (by id), gather, notices."""
+        calibration jobs (by id), apply, gather, notices."""
         self._scheduled = False
         if self._dirty_sites:
             self._dirty_sites = False
@@ -317,6 +330,11 @@ class Hub:
         elif self.batches.current is not None:
             for device_id in jobs:
                 self._publish(CalibrationJobMessage, self.batches.job_view(device_id))
+        if self._dirty_apply:
+            self._dirty_apply = False
+            apply = self.applies.view()
+            if apply is not None:
+                self._publish(ApplyMessage, apply)
         if self._dirty_gather:
             self._dirty_gather = False
             self._publish(GatherMessage, self.gather_status())
@@ -417,6 +435,7 @@ class Hub:
             sensors=sensors,
             pending=self.pending(),
             batch=self.batches.view(),
+            apply=self.applies.view(),
         )
 
     def sensor_view(self, device_id: str) -> SensorView | None:
@@ -457,6 +476,7 @@ class Hub:
             live=live,
             last_calibration=self._last_calibration(device_id, addresses),
             last_snapshot=self._last_snapshot(device_id),
+            config_rev=self.applies.rev(device_id),
         )
 
     def _index_history(self) -> None:

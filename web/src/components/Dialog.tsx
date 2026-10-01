@@ -6,10 +6,12 @@ interface Props {
   title: string
   onClose: () => void
   children: ReactNode
+  /** Extra class on the <dialog> (e.g. a wider sheet). */
+  className?: string
 }
 
 /** Native <dialog> (focus trap, Esc) shown as a bottom sheet on phones. */
-export function Dialog({ open, title, onClose, children }: Props) {
+export function Dialog({ open, title, onClose, children, className }: Props) {
   const ref = useRef<HTMLDialogElement>(null)
   const titleId = useId()
 
@@ -23,7 +25,7 @@ export function Dialog({ open, title, onClose, children }: Props) {
   return (
     <dialog
       ref={ref}
-      className={styles.dialog}
+      className={className ? `${styles.dialog} ${className}` : styles.dialog}
       aria-labelledby={titleId}
       onClose={onClose}
       onCancel={(e) => {

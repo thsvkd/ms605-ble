@@ -90,6 +90,26 @@ GUI M3(`docs/GUI_API.md` 14장)가 코어에 요구하는 변경은 아래 세 �
 | `models.py` | `zone_distances(cfg)`의 본문은 그대로 두고, 인자 타입만 `HasZoneDistances`로 넓힌다: `class HasZoneDistances(Protocol)`에 읽기 전용 속성 `zone_distances_m: Sequence[float] \| None` 하나. `MS605Config`와 `DeviceInfo`가 둘 다 맞는다(`None`이면 `FALLBACK_DISTANCES_M`) | `models`는 `session`을 import할 수 없다(2장 의존 방향). 본문이 이미 `cfg.zone_distances_m or ()`만 읽으므로 동작은 같다 |
 | `calibration.py` | `IDENTIFY_WAIT_S = 2.0`, `CalibrationJob(..., identify_wait: float = IDENTIFY_WAIT_S)`. `run()`이 `"identify"` 잠금만은 이 시간까지 기다린다(5.2절 첫 행) | M1의 열린 문제: 재수집 직후 세션이 잠깐 `"identify"`를 잡고 있는데, 그 사이 발사된 배치가 곧바로 `FAILED("busy: identify")`가 됐다 |
 
+### 2.3 M4에서 더한 것
+
+GUI M4(`docs/GUI_API.md` 15장)가 코어에 요구하는 변경은 **DND(tag32)를 초안 섹션으로 다루는 것** 하나뿐이다. 스냅샷 목록
+(`Storage.list_snapshots`), 보정 이력(`Storage.read_history`), 기기 이력(`MS605.read_presence_history`/`read_light_history`),
+시간 동기화(`MS605.set_time`)는 이미 있는 표면을 `operation()` 안에서 그대로 쓴다(CLI의 `read-history`·`sync-time`과 같다).
+
+DND를 `ConfigProfile`에 넣지 않는 이유: `read_config()`는 tag 하나라도 빠지면 실패한다(SPEC 9장). DND는 "hardware coverage
+limited"(SPEC 7장)이므로 tag32를 그 다중 읽기에 넣으면 tag32에 답하지 않는 펌웨어에서 모든 설정 읽기가 깨진다. 클론 파일 형식(11.4절)과
+CLI `--only/--skip` 섹션 목록도 바뀌지 않는다. 그래서 DND는 초안에 그 섹션이 있을 때만 따로 읽고 쓴다.
+
+| 파일 | 변경 | 이유 |
+|------|------|------|
+| `fleet.py` | 상수 `DND_SECTION = "dnd"`. `SensorChanges`의 마지막 필드 `dnd: bool \| None = None`. `validate()`: `dnd`가 `None`도 `bool`도 아니면 `ProfileError`. `resolve()`는 바꾸지 않는다(`ConfigProfile`에 DND가 없다). `from_profile(profile, sections, *, dnd: bool \| None = None)`: 알려진 섹션 이름은 `PROFILE_SECTION_KEYS + (DND_SECTION,)`이고, `sections`에 `"dnd"`가 있으면 `changes.dnd = dnd`(이때 `dnd is None`이면 `ProfileError("dnd: value unknown")`). `Draft.changes_for()`는 `fields(SensorChanges)`를 돌므로 그대로 `dnd`를 덮어쓴다 | DND도 초안 → 스냅샷 → 쓰기 → 폴링 검증 → 되돌리기를 같은 함수로 탄다 |
+| `fleet.py` `apply_changes()` (6.4절 표) | `changes.dnd is not None`일 때만: 1단계에서 `read_config()` 직후 같은 잠금 안에서 `dnd_before = await ms.read_dnd()`(실패하면 FAILED, 쓴 것 없음). 2단계 `sections = target.sections_present() + ("dnd",)`. 3단계 `storage.save_snapshot(..., dnd=dnd_before)`. 4단계 `applied = await ms.apply_profile(target, <dnd를 뺀 sections>)` 뒤 `await ms.set_dnd(changes.dnd)`하고 `applied`의 끝에 `"dnd"`를 더한다(실패하면 지금 4단계와 같다. 재조회 `mismatched`에 DND 비교도 넣는다). 5단계 `poll_verify(ms, target, <dnd를 뺀 applied>, dnd=changes.dnd)` | DND는 tag61·51과 다른 프레임이다. 프로파일 섹션 뒤에 쓰므로 DND 쓰기 실패가 앞선 섹션을 막지 않는다. `changes.dnd`가 `None`이면 지금과 I/O가 한 바이트도 다르지 않다 |
+| `fleet.py` `poll_verify()` | 키워드 인자 `dnd: bool \| None = None`. 있으면 매 회 `read_config()` 뒤 `read_dnd()`도 읽고 다르면 `"dnd"`를 `mismatched` 끝에 넣는다. 반환 프로파일은 그대로 | 반영 지연이 측정된 것은 tag51뿐이지만, 같은 폴링으로 검증하면 규칙이 하나다 |
+| `fleet.py` `Fleet.rollback()` | `SensorChanges.from_profile(snap.profile, snap.sections, dnd=snap.dnd)` | DND가 든 스냅샷도 되돌린다 |
+| `storage.py` | `Snapshot`의 마지막 필드 `dnd: bool \| None = None`. `save_snapshot(device_id, profile, sections, reason, *, dnd: bool \| None = None)`: `dnd`가 있으면 JSON에 `"dnd": true/false` 키를 더한다(`version`은 1 그대로. 키를 더하기만 한다). `load_snapshot()`: 키가 있으면 `bool`이어야 하고, `sections`에 `"dnd"`가 있는데 키가 없으면 `StorageError`(되돌릴 값이 없다) | 스냅샷이 "쓰기 전 전체 설정"(11.2절)이려면 DND의 이전 값도 담아야 한다 |
+
+M4 테스트는 14장 표의 "(M4, 2.3절)" 행이다.
+
 ## 3. `events.py`
 
 ### 3.1 상태 enum
@@ -955,6 +975,7 @@ M2 서버는 이 표면을 감싸기만 한다.
 | `tests/test_registry.py` | 사이트·센서 CRUD와 오류, 변경마다 저장, `import_sensor_info`의 주석·빈 줄·따옴표·MAC 주소·잘못된 줄(줄 번호, 전부 아니면 전무)·다시 가져오기, 호스트별 주소 캐시 |
 | `tests/test_storage.py` | `MS605_DATA_DIR` 우선순위, 원자적 쓰기(실패 시 기존 파일 유지, 임시 파일 정리), 깨진 JSON → `StorageError`, 이력 깨진 줄 건너뛰기와 예전 줄 주소 매칭, 스냅샷 이름 순서와 왕복 |
 | `tests/test_core_e2e.py` | 시뮬레이터로 수집 → 보정 → 클론 종단(M1 완료 기준) |
+| `tests/test_fleet.py`, `tests/test_storage.py` (M4, 2.3절) | `SensorChanges(dnd=1).validate()` → `ProfileError`(bool만). `apply_changes(SensorChanges(dnd=True))` → 시뮬레이터 `tags[TAG_DND] == b"\x01"`, 결과 OK, `applied == ("dnd",)`, 스냅샷 JSON에 `"dnd": false`와 `sections == ["dnd"]`. 임계값 + DND 함께 → `applied`의 끝이 `"dnd"`. `rollback()` → `tags[TAG_DND] == b"\x00"`. `changes.dnd is None`이면 `frames_in`에 tag32 읽기·쓰기가 없음(I/O 불변). DND만 바꾸는 초안에 `inject_status(5)` → FAILED, `snapshot`이 있고 `tags[TAG_DND]`는 그대로(`inject_status`는 다음 쓰기 프레임 하나에만 걸리므로, 이 경우 그 프레임이 tag32다). `from_profile(p, ["dnd"])`(값 없음) → `ProfileError`. 저장소: `dnd` 키 없는 예전 스냅샷 → `Snapshot.dnd is None`, `sections`에 `"dnd"`가 있는데 키가 없음 → `StorageError`, `"dnd": 1` → `StorageError` |
 | 기존 `tests/test_cli_*.py` | CLI 출력이 그대로인지. 내부 함수를 몽키패치하던 테스트는 코어 경계에 맞게 고친다 |
 
 코어에 출력이 없는지는 정적 검사로 확인한다: 코어 모듈 소스에 `print(`, `rich`, `questionary`, `ms605.cli`가 없어야 한다.

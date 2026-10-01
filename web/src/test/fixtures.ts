@@ -1,15 +1,24 @@
 // Synthetic values only (public repo): simulator Device IDs b"SIM605" + n and locally administered addresses.
 import type {
+  ApplyItemView,
+  ApplyJobView,
   BatchView,
+  CalibrationHistory,
   CalibrationJobView,
+  Change,
+  ConfigView,
+  DraftPreview,
   LiveData,
   LiveInfo,
   LiveZone,
   PendingView,
+  ProfileView,
   RegistryInfo,
+  SensorPreview,
   SensorView,
   ServerMessage,
   SiteView,
+  SnapshotList,
   StateSnapshot,
 } from '../api/types'
 import type { AppState } from '../store/reducer'
@@ -60,6 +69,7 @@ export function sensor(n: number, patch: Partial<SensorView> = {}): SensorView {
     live: null,
     last_calibration: null,
     last_snapshot: null,
+    config_rev: 0,
     ...patch,
   }
 }
@@ -77,6 +87,7 @@ export function stateSnapshot(patch: Partial<StateSnapshot> = {}): StateSnapshot
     sensors: [],
     pending: [],
     batch: null,
+    apply: null,
     ...patch,
   }
 }
@@ -113,6 +124,7 @@ export function storeState(patch: Partial<StateSnapshot> = {}): Partial<AppState
     sensors: Object.fromEntries(snap.sensors.map((s) => [s.device_id, s])),
     pending: snap.pending,
     batch: snap.batch,
+    apply: snap.apply,
   }
 }
 
@@ -209,4 +221,164 @@ export function batchView(patch: Partial<BatchView> = {}): BatchView {
 /** Three registered, connected sensors in Lab A. */
 export function calibSensors(patch: (n: number) => Partial<SensorView> = () => ({})): SensorView[] {
   return [1, 2, 3].map((n) => sensor(n, { registry: registry(SITE_A, `센서 ${n}`), live: live(n), ...patch(n) }))
+}
+
+// -- M4 (docs/GUI_API.md 15.10.2) -----------------------------------------------------------
+
+export const APPLY_ID = 'a0000000000000000000000000000001'
+export const SNAP_1 = '20261001T080000000000Z'
+export const SNAP_2 = '20260930T120000000000Z'
+
+/** The simulator's MEDIUM preset shape, with Z0 trigger 60 (the drag tests) and Z6 off. */
+export function profile(patch: Partial<ProfileView> = {}): ProfileView {
+  return {
+    sensitivity: 2,
+    detect_mode: 1,
+    zone_enable: [true, true, true, true, true, true, false],
+    zone_thresholds: [
+      { trigger: 60, maintain: 30 },
+      { trigger: 55, maintain: 30 },
+      { trigger: 50, maintain: 28 },
+      { trigger: 50, maintain: 28 },
+      { trigger: 45, maintain: 25 },
+      { trigger: 45, maintain: 25 },
+      { trigger: 40, maintain: 20 },
+    ],
+    subsensor_zones: [[0, 1, 2], [3, 4], [5, 6]],
+    subsensor_timing: [
+      [5, 30],
+      [5, 30],
+      [5, 30],
+    ],
+    subsensor_enable: [true, true, true],
+    dnd: false,
+    ...patch,
+  }
+}
+
+export function configView(n: number, patch: Partial<ConfigView> = {}): ConfigView {
+  return {
+    device_id: deviceId(n),
+    read_at: NOW_S,
+    config_rev: 0,
+    distances_m: [0.8, 1.6, 2.4, 3.2, 4.0, 4.8, 5.6],
+    profile: profile(),
+    ...patch,
+  }
+}
+
+export function change(patch: Partial<Change> = {}): Change {
+  return { section: 'zone_thresholds', index: 0, part: 'trigger', before: 60, after: 65, risks: [], ...patch }
+}
+
+export function sensorPreview(n: number, patch: Partial<SensorPreview> = {}): SensorPreview {
+  return {
+    device_id: deviceId(n),
+    config_rev: 0,
+    error: null,
+    before: profile(),
+    after: profile(),
+    changes: [change()],
+    risks: [],
+    ...patch,
+  }
+}
+
+/** One sensor, no risk. */
+export function previewPlain(): DraftPreview {
+  return { kind: 'apply', checked_at: NOW_S, items: [sensorPreview(1)], risks: [], source_rev: null }
+}
+
+/** Absolute thresholds on two sensors (absolute_overwrite + a large change), the third cannot be read. */
+export function previewRisky(): DraftPreview {
+  const risky = (n: number) =>
+    sensorPreview(n, {
+      changes: [
+        change({ before: 95, after: 60, risks: ['absolute_overwrite', 'large_change'] }),
+        change({ part: 'maintain', before: 40, after: 40 + n, risks: ['absolute_overwrite'] }),
+      ],
+      risks: ['absolute_overwrite', 'large_change'],
+    })
+  return {
+    kind: 'apply',
+    checked_at: NOW_S,
+    items: [
+      risky(1),
+      risky(2),
+      sensorPreview(3, { error: 'busy: read', before: null, after: null, changes: [], risks: [] }),
+    ],
+    risks: ['absolute_overwrite', 'large_change'],
+    source_rev: null,
+  }
+}
+
+export function applyItem(n: number, patch: Partial<ApplyItemView> = {}): ApplyItemView {
+  return {
+    device_id: deviceId(n),
+    state: 'verified',
+    restore: null,
+    snapshot: SNAP_1,
+    applied: ['zone_thresholds'],
+    skipped: [],
+    mismatched: [],
+    error: null,
+    finished_at: NOW_S + 2,
+    ...patch,
+  }
+}
+
+export function applyJob(patch: Partial<ApplyJobView> = {}): ApplyJobView {
+  return {
+    apply_id: APPLY_ID,
+    kind: 'apply',
+    state: 'done',
+    created_at: NOW_S,
+    source: null,
+    sections: ['zone_thresholds'],
+    items: [applyItem(1), applyItem(2), applyItem(3)],
+    ...patch,
+  }
+}
+
+export const jobRunning = () =>
+  applyJob({
+    state: 'running',
+    items: [
+      applyItem(1),
+      applyItem(2, { state: 'applying', snapshot: null, applied: [], finished_at: null }),
+      applyItem(3, { state: 'queued', snapshot: null, applied: [], finished_at: null }),
+    ],
+  })
+
+/** verified · failed while writing · partial. */
+export const jobPartial = () =>
+  applyJob({
+    items: [
+      applyItem(1),
+      applyItem(2, { state: 'failed', applied: [], error: 'device returned error status 5' }),
+      applyItem(3, { state: 'partial', mismatched: ['zone_thresholds'] }),
+    ],
+  })
+
+export const jobAllVerified = () => applyJob()
+
+export function snapshotList(n: number): SnapshotList {
+  return {
+    device_id: deviceId(n),
+    snapshots: [
+      { name: SNAP_1, taken_at: '2026-10-01T08:00:00Z', reason: 'apply', sections: ['zone_thresholds', 'sensitivity'] },
+      { name: SNAP_2, taken_at: '2026-09-30T12:00:00Z', reason: 'rollback', sections: ['zone_thresholds'] },
+    ],
+  }
+}
+
+export function calibrationHistoryOf(n: number): CalibrationHistory {
+  const zones = Array.from({ length: 7 }, (_, i) => ({ index: i, distance_m: 0.8 * (i + 1), trigger: 60 - i, maintain: 30 }))
+  return {
+    device_id: deviceId(n),
+    records: [
+      { timestamp: '2026-09-29T14:10:00Z', device_name: bleName(n), sensitivity: 4, detect_mode: 1, zones },
+      { timestamp: '2026-09-20T09:31:00Z', device_name: bleName(n), sensitivity: 2, detect_mode: 2, zones },
+    ],
+  }
 }

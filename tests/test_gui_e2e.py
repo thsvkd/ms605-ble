@@ -334,3 +334,192 @@ def test_gui_calibration_end_to_end(tmp_path):
         if proc.poll() is None:
             proc.kill()
             proc.wait()
+
+
+def _apply_done(apply_id: str):
+    return lambda m: m["type"] == "apply" and m["data"]["apply_id"] == apply_id and m["data"]["state"] == "done"
+
+
+def _revs(http, *device_ids: str) -> dict[str, int]:
+    """expect_rev as a fresh preview would give it: each sensor's config_rev now."""
+    sensors = {s["device_id"]: s for s in http.get("/api/state").json()["sensors"]}
+    return {i: sensors[i]["config_rev"] for i in device_ids}
+
+
+@pytest.mark.timeout(60)
+def test_gui_editing_end_to_end(tmp_path):
+    """M4: edit -> preview -> apply -> rollback over HTTP + WS on a real process; two screens
+    follow the same job (docs/GUI_API.md 15.10.3)."""
+    proc, port, token = _launch(tmp_path, speed=40)
+    try:
+        auth = {"Authorization": f"Bearer {token}"}
+        ids = [SIM1, SIM2, SIM3]
+        with httpx.Client(base_url=f"http://127.0.0.1:{port}", headers=auth, timeout=10) as http:
+            _wait_healthy(http)
+            url = f"ws://127.0.0.1:{port}/ws"
+            with connect(url, additional_headers=auth) as ws_a, connect(url, additional_headers=auth) as ws_b:
+                a, b = Reader(ws_a), Reader(ws_b)
+                for reader in (a, b):
+                    assert reader.until(lambda m: True)["type"] == "snapshot"
+                assert http.post("/api/gather/start").status_code == 200
+                for index in (1, 2, 3):
+                    assert http.post(f"/api/sim/press/{index}").status_code == 204
+                for device_id in ids:
+                    a.until(_link(device_id, "connected"))
+
+                config = http.get(f"/api/sensors/{SIM1}/config").json()
+                assert config["profile"]["sensitivity"] == 2 and config["config_rev"] == 0
+                assert config["profile"]["zone_thresholds"][0]["trigger"] == 95
+
+                edit = {"zone_thresholds": {"mode": "relative", "trigger": [5] * 7, "maintain": [None] * 7}}
+                preview = http.post("/api/drafts/preview", json={"targets": ids, "changes": edit})
+                assert preview.status_code == 200
+                items = preview.json()["items"]
+                assert all(i["after"]["zone_thresholds"][0]["trigger"] == 100 and i["risks"] == [] for i in items)
+
+                expect = {i["device_id"]: i["config_rev"] for i in items}
+                created = http.post("/api/apply", json={"targets": ids, "changes": edit, "expect_rev": expect})
+                assert created.status_code == 202
+                apply_id = created.json()["apply_id"]
+                done = [reader.until(_apply_done(apply_id), timeout=20)["data"] for reader in (a, b)]
+                assert done[0] == done[1] and [i["state"] for i in done[0]["items"]] == ["verified"] * 3
+
+                assert http.post("/api/sim/drop/3").status_code == 204
+                a.until(_link(SIM3, "lost"))
+                refused = http.post(
+                    "/api/apply", json={"targets": [SIM1, SIM3], "changes": edit, "expect_rev": _revs(http, SIM1, SIM3)}
+                )
+                assert refused.status_code == 409 and refused.json()["error"]["code"] == "not_connected"
+
+                snapshot = done[0]["items"][0]["snapshot"]
+                back = {"items": [{"device_id": SIM1, "snapshot": snapshot}], "expect_rev": _revs(http, SIM1)}
+                undo = http.post("/api/rollback", json=back)
+                assert undo.status_code == 202
+                undone = a.until(_apply_done(undo.json()["apply_id"]), timeout=20)["data"]
+                assert undone["kind"] == "rollback" and undone["items"][0]["state"] == "verified"
+                assert http.get(f"/api/sensors/{SIM1}/config").json()["profile"]["zone_thresholds"][0]["trigger"] == 95
+
+                snapshots = http.get(f"/api/sensors/{SIM1}/snapshots").json()["snapshots"]
+                assert [s["reason"] for s in snapshots] == ["rollback", "apply"]
+
+                synced = http.post("/api/time-sync", json={"device_ids": [SIM1, SIM2]})
+                assert synced.status_code == 200 and all(i["written_at"] for i in synced.json()["items"])
+
+                assert http.get(f"/api/sensors/{SIM1}/history").json()["records"] == []
+                device = http.get(f"/api/sensors/{SIM1}/device-history", params={"kind": "presence"})
+                assert device.status_code == 200 and device.json()["presence"] == []
+
+                ordered_a = [(m["seq"], m["type"]) for m in a.log if m["seq"] is not None]
+                b.until(lambda m: m["seq"] is not None and m["seq"] >= ordered_a[-1][0])
+                ordered_b = [(m["seq"], m["type"]) for m in b.log if m["seq"] is not None]
+                assert ordered_a == ordered_b[: len(ordered_a)]  # the same messages in the same order (D11)
+                seqs = [seq for seq, _ in ordered_a]
+                assert seqs == list(range(seqs[0], seqs[0] + len(seqs)))
+
+        proc.send_signal(signal.SIGINT)
+        assert proc.wait(timeout=10) in (0, 130)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+
+
+@pytest.mark.timeout(90)
+def test_gui_editing_flows_end_to_end(tmp_path):
+    """M4 integration: one sensor's draft, a failure in the middle of a bulk apply (a link dropped mid-job),
+    rollback of the rest, clone, a calibration that refuses edits, and the history list it fills."""
+    proc, port, token = _launch(tmp_path, speed=40)
+    try:
+        auth = {"Authorization": f"Bearer {token}"}
+        ids = [SIM1, SIM2, SIM3]
+        with httpx.Client(base_url=f"http://127.0.0.1:{port}", headers=auth, timeout=10) as http:
+            _wait_healthy(http)
+            with connect(f"ws://127.0.0.1:{port}/ws", additional_headers=auth) as ws:
+                reader = Reader(ws)
+                assert reader.until(lambda m: True)["type"] == "snapshot"
+
+                def connect_all(*indexes: int) -> None:
+                    assert http.post("/api/gather/start").status_code == 200
+                    for index in indexes:
+                        assert http.post(f"/api/sim/press/{index}").status_code == 204
+                    for index in indexes:
+                        reader.until(_link(ids[index - 1], "connected"))
+
+                def thresholds(device_id: str) -> list[dict]:
+                    return http.get(f"/api/sensors/{device_id}/config").json()["profile"]["zone_thresholds"]
+
+                connect_all(1, 2, 3)
+
+                # one sensor: absolute draft -> preview -> apply -> verified
+                edit = {"sensitivity": 3}
+                preview = http.post("/api/drafts/preview", json={"targets": [SIM1], "changes": edit}).json()
+                (item,) = preview["items"]
+                assert item["after"]["sensitivity"] == 3 and item["risks"] == ["sensitivity_only"]
+                body = {"targets": [SIM1], "changes": edit, "expect_rev": {SIM1: item["config_rev"]}}
+                created = http.post("/api/apply", json=body)
+                assert created.status_code == 202
+                done = reader.until(_apply_done(created.json()["apply_id"]), timeout=20)["data"]
+                assert [i["state"] for i in done["items"]] == ["verified"]
+                assert http.get(f"/api/sensors/{SIM1}/config").json()["profile"]["sensitivity"] == 3
+                stale = http.post("/api/apply", json=body)  # the preview's config_rev is behind now
+                assert stale.status_code == 409 and stale.json()["error"]["code"] == "stale"
+
+                # a bulk apply loses the third sensor in the middle of the job: it fails, the rest verify
+                before = {i: thresholds(i) for i in ids}
+                edit = {"zone_thresholds": {"mode": "relative", "trigger": [5] * 7, "maintain": [None] * 7}}
+                assert http.post("/api/gather/stop").status_code == 200  # or it would reconnect the dropped link
+                bulk = {"targets": ids, "changes": edit, "expect_rev": _revs(http, *ids)}
+                created = http.post("/api/apply", json=bulk)
+                assert created.status_code == 202
+                assert http.post("/api/sim/drop/3").status_code == 204  # each item takes ~0.2 s at speed 40
+                final = reader.until(_apply_done(created.json()["apply_id"]), timeout=20)["data"]
+                states = {i["device_id"]: i for i in final["items"]}
+                assert [states[i]["state"] for i in ids] == ["verified", "verified", "failed"]
+                assert states[SIM3]["error"]
+                for device_id in (SIM1, SIM2):
+                    assert thresholds(device_id)[0]["trigger"] == before[device_id][0]["trigger"] + 5
+
+                # rollback of what was applied (a failed item before its snapshot has none)
+                items = [{"device_id": i, "snapshot": states[i]["snapshot"]} for i in (SIM1, SIM2)]
+                undo = http.post("/api/rollback", json={"items": items, "expect_rev": _revs(http, SIM1, SIM2)})
+                assert undo.status_code == 202
+                undone = reader.until(_apply_done(undo.json()["apply_id"]), timeout=20)["data"]
+                assert [i["state"] for i in undone["items"]] == ["verified", "verified"]
+                assert {i: thresholds(i) for i in (SIM1, SIM2)} == {i: before[i] for i in (SIM1, SIM2)}
+
+                # clone SIM1's sensitivity (3, set above) onto the others, SIM3 after it reconnects
+                connect_all(3)
+                body = {"source": SIM1, "targets": [SIM2, SIM3], "sections": ["sensitivity"]}
+                seen = http.post("/api/clone/preview", json=body).json()
+                assert seen["kind"] == "clone"
+                expect = {**{i["device_id"]: i["config_rev"] for i in seen["items"]}, SIM1: seen["source_rev"]}
+                created = http.post("/api/clone", json={**body, "expect_rev": expect})
+                assert created.status_code == 202
+                cloned = reader.until(_apply_done(created.json()["apply_id"]), timeout=20)["data"]
+                assert cloned["source"] == SIM1 and [i["state"] for i in cloned["items"]] == ["verified"] * 2
+                for device_id in (SIM2, SIM3):
+                    assert http.get(f"/api/sensors/{device_id}/config").json()["profile"]["sensitivity"] == 3
+
+                # a calibrating sensor refuses edits and the other sensors do not
+                assert http.get(f"/api/sensors/{SIM1}/history").json()["records"] == []
+                rev = http.get(f"/api/sensors/{SIM1}/config").json()["config_rev"]
+                started = http.post("/api/batches", json={"device_ids": [SIM1]})
+                assert started.status_code == 202
+                reader.until(_batch("running"))
+                again = {"targets": [SIM1], "changes": {"sensitivity": 2}, "expect_rev": _revs(http, SIM1)}
+                refused = http.post("/api/apply", json=again)
+                assert refused.status_code == 409 and refused.json()["error"]["code"] == "batch_active"
+                other = http.post("/api/drafts/preview", json={"targets": [SIM2], "changes": {"sensitivity": 2}})
+                assert other.status_code == 200
+                reader.until(_batch("done"))
+
+                records = http.get(f"/api/sensors/{SIM1}/history").json()["records"]
+                assert len(records) == 1 and len(records[0]["zones"]) == 7
+                assert http.get(f"/api/sensors/{SIM1}/config").json()["config_rev"] > rev
+
+        proc.send_signal(signal.SIGINT)
+        assert proc.wait(timeout=10) in (0, 130)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()

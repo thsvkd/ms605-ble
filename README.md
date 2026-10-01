@@ -88,7 +88,8 @@ asyncio.run(main())
 ## GUI
 
 A local web dashboard for gathering sensors, naming them, watching them live and
-auto-calibrating several at once (threshold editing is planned). It is a FastAPI
+auto-calibrating several at once, and editing their settings with a preview and
+an undo. It is a FastAPI
 server plus a React app that ships pre-built inside the package, so Node is not
 needed to use it.
 
@@ -122,6 +123,25 @@ uv run ms605 gui --sim 7 --speed 20  # demo with 7 simulated sensors, no hardwar
   sensors. Results show before and after thresholds and are appended to
   `cal_results/calibration_history.jsonl`. Disconnecting is blocked while a
   round is running.
+- Edit (`/sensors/<id>/settings`, `/advanced`, `/history`): drag a zone's
+  threshold line on its live bar, or type the value, and change the sensitivity
+  preset. Nothing is written until you press preview and then apply: the diff
+  shows each change and warns about risky ones (a zone turned off, a large
+  jump, an absolute overwrite). After a write the sensor is read back and each
+  change shows as verified, partial, unverified or failed. A backup of the old
+  settings is saved before every write, and any backup can be restored from the
+  history tab. The advanced tab edits the sub-sensors (zones, timing, on/off),
+  do-not-disturb and the sensor clock. The history tab also lists past
+  calibrations and reads the sensor's own presence and light records (the
+  device-history API is experimental). Edits are refused while the sensor is
+  calibrating and a connection is needed to apply.
+- Bulk edit (`/bulk`): change several sensors in one job. Thresholds are
+  relative by default (+5 on top of each sensor's own calibrated value);
+  absolute values need an extra confirmation because they replace what
+  calibration measured. The job applies one sensor at a time, so one failure
+  does not stop the rest, and results can be rolled back per sensor or all at
+  once. Clone mode copies chosen sections from one sensor to others. One apply
+  job runs at a time and every open screen shows the same progress.
 - `--port 0` picks a free port. The wire contract is in
   [docs/GUI_API.md](docs/GUI_API.md).
 

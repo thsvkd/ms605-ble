@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { BatchView, SensorView, SiteView } from '../api/types'
+import type { ApplyItemView, ApplyJobView, BatchView, SensorView, SiteView } from '../api/types'
 import {
   addWatch,
   type AppState,
@@ -147,4 +147,40 @@ export function selectBatchMembers({ batch }: { batch: BatchView | null }): Read
 
 export function selectSites({ sites }: Pick<AppState, 'sites'>): SiteView[] {
   return Object.values(sites).sort((a, b) => ko(a.name, b.name))
+}
+
+// -- M4 (docs/GUI_API.md 15.9.4) ----------------------------------------------------------
+
+/** An apply job is running (G25: one at a time, server-wide). */
+export function selectApplyActive({ apply }: Pick<AppState, 'apply'>): boolean {
+  return apply?.state === 'running'
+}
+
+/** The sensors of the running apply job (G27); empty when nothing runs. */
+export function selectApplyMembers({ apply }: Pick<AppState, 'apply'>): ReadonlySet<string> {
+  return apply?.state === 'running' ? new Set(apply.items.map((i) => i.device_id)) : NO_MEMBERS
+}
+
+/** That sensor's item in the current (running or last) job. */
+export function selectApplyItem({ apply }: Pick<AppState, 'apply'>, id: string): ApplyItemView | undefined {
+  return apply?.items.find((i) => i.device_id === id)
+}
+
+export interface ApplyTally {
+  total: number
+  ended: number
+  verified: number
+  partial: number
+  unverified: number
+  failed: number
+}
+
+export function selectApplyTally(job: ApplyJobView): ApplyTally {
+  const out: ApplyTally = { total: job.items.length, ended: 0, verified: 0, partial: 0, unverified: 0, failed: 0 }
+  for (const i of job.items) {
+    if (i.state === 'queued' || i.state === 'applying') continue
+    out.ended += 1
+    out[i.state] += 1
+  }
+  return out
 }

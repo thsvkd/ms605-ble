@@ -53,6 +53,7 @@ class Snapshot:
     reason: str  # "apply" | "rollback"
     sections: tuple[str, ...]
     profile: ConfigProfile
+    dnd: bool | None = None  # tag32 before the write; only when that write changed DND
 
 
 def _check_component(value: str, what: str) -> str:
@@ -162,7 +163,9 @@ class Storage:
     def _snapshot_dir(self, device_id: str) -> Path:
         return self.snapshots_dir / _check_component(device_id, "device id")
 
-    def save_snapshot(self, device_id: str, profile: ConfigProfile, sections: Sequence[str], reason: str) -> Snapshot:
+    def save_snapshot(
+        self, device_id: str, profile: ConfigProfile, sections: Sequence[str], reason: str, *, dnd: bool | None = None
+    ) -> Snapshot:
         directory = self._snapshot_dir(device_id)
         taken = datetime.now(timezone.utc)
         while (directory / f"{taken.strftime(_SNAPSHOT_TIME_FORMAT)}.json").exists():
@@ -177,8 +180,10 @@ class Storage:
             "sections": list(sections),
             "profile": profile.to_dict(),
         }
+        if dnd is not None:
+            data["dnd"] = dnd
         self.write_json_atomic(directory / f"{name}.json", data)
-        return Snapshot(name, device_id, data["taken_at"], reason, tuple(sections), profile)
+        return Snapshot(name, device_id, data["taken_at"], reason, tuple(sections), profile, dnd)
 
     def load_snapshot(self, device_id: str, name: str) -> Snapshot:
         path = self._snapshot_dir(device_id) / f"{_check_component(name, 'snapshot name')}.json"
@@ -193,6 +198,11 @@ class Storage:
             sections = data["sections"]
             if not isinstance(sections, list) or not all(isinstance(s, str) for s in sections):
                 raise StorageError(f"{path}: 'sections' must be a list of names")
+            dnd = data.get("dnd")
+            if dnd is not None and not isinstance(dnd, bool):
+                raise StorageError(f"{path}: 'dnd' must be true or false")
+            if "dnd" in sections and dnd is None:
+                raise StorageError(f"{path}: the 'dnd' section has no value to restore")
             return Snapshot(
                 name=name,
                 device_id=device_id,
@@ -200,6 +210,7 @@ class Storage:
                 reason=str(data["reason"]),
                 sections=tuple(sections),
                 profile=ConfigProfile.from_dict(data["profile"]),
+                dnd=dnd,
             )
         except (KeyError, TypeError) as exc:
             raise StorageError(f"{path} is malformed: {exc!r}") from exc

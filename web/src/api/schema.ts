@@ -11,6 +11,76 @@ export interface components {
         ApiError: {
             error: components["schemas"]["ErrorBody"];
         };
+        /** ApplyIn */
+        ApplyIn: {
+            changes: components["schemas"]["SensorEdit"];
+            /** Expect Rev */
+            expect_rev: {
+                [key: string]: number;
+            };
+            /** Targets */
+            targets: string[];
+        };
+        /** ApplyItemView */
+        ApplyItemView: {
+            /** Applied */
+            applied: ("sensitivity" | "detect_mode" | "zone_enable" | "zone_thresholds" | "subsensor_zones" | "subsensor_timing" | "subsensor_enable" | "dnd")[];
+            /** Device Id */
+            device_id: string;
+            /** Error */
+            error: string | null;
+            /** Finished At */
+            finished_at: number | null;
+            /** Mismatched */
+            mismatched: ("sensitivity" | "detect_mode" | "zone_enable" | "zone_thresholds" | "subsensor_zones" | "subsensor_timing" | "subsensor_enable" | "dnd")[];
+            /** Restore */
+            restore: string | null;
+            /** Skipped */
+            skipped: ("sensitivity" | "detect_mode" | "zone_enable" | "zone_thresholds" | "subsensor_zones" | "subsensor_timing" | "subsensor_enable" | "dnd")[];
+            /** Snapshot */
+            snapshot: string | null;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "queued" | "applying" | "verified" | "partial" | "unverified" | "failed";
+        };
+        /** ApplyJobView */
+        ApplyJobView: {
+            /** Apply Id */
+            apply_id: string;
+            /** Created At */
+            created_at: number;
+            /** Items */
+            items: components["schemas"]["ApplyItemView"][];
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "apply" | "rollback" | "clone";
+            /** Sections */
+            sections: ("sensitivity" | "detect_mode" | "zone_enable" | "zone_thresholds" | "subsensor_zones" | "subsensor_timing" | "subsensor_enable" | "dnd")[];
+            /** Source */
+            source: string | null;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "running" | "done";
+        };
+        /** ApplyMessage */
+        ApplyMessage: {
+            data: components["schemas"]["ApplyJobView"];
+            /** Seq */
+            seq: number;
+            /** Ts */
+            ts: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "apply";
+        };
         /** BatchCreate */
         BatchCreate: {
             /**
@@ -106,6 +176,13 @@ export interface components {
             start: "now" | "delay" | "at";
             state: components["schemas"]["BatchState"];
         };
+        /** CalibrationHistory */
+        CalibrationHistory: {
+            /** Device Id */
+            device_id: string;
+            /** Records */
+            records: components["schemas"]["CalibrationRecord"][];
+        };
         /** CalibrationJobMessage */
         CalibrationJobMessage: {
             data: components["schemas"]["CalibrationJobView"];
@@ -145,6 +222,19 @@ export interface components {
             started: boolean;
             state: components["schemas"]["CalibrationState"];
         };
+        /** CalibrationRecord */
+        CalibrationRecord: {
+            /** Detect Mode */
+            detect_mode: number | null;
+            /** Device Name */
+            device_name: string | null;
+            /** Sensitivity */
+            sensitivity: number | null;
+            /** Timestamp */
+            timestamp: string;
+            /** Zones */
+            zones: components["schemas"]["CalibrationZone"][];
+        };
         /**
          * CalibrationState
          * @enum {string}
@@ -159,8 +249,81 @@ export interface components {
             /** Timestamp */
             timestamp: string;
         };
+        /** CalibrationZone */
+        CalibrationZone: {
+            /** Distance M */
+            distance_m: number | null;
+            /** Index */
+            index: number;
+            /** Maintain */
+            maintain: number;
+            /** Trigger */
+            trigger: number;
+        };
+        /** Change */
+        Change: {
+            /** After */
+            after: boolean | number | number[] | null;
+            /** Before */
+            before: boolean | number | number[] | null;
+            /** Index */
+            index: number | null;
+            /**
+             * Part
+             * @enum {string}
+             */
+            part: "value" | "trigger" | "maintain" | "presence_s" | "absence_s";
+            /** Risks */
+            risks: ("absolute_overwrite" | "large_change" | "beyond_ui_range" | "zone_off" | "subsensor_off" | "subsensor_no_zone" | "sensitivity_only" | "dnd_on" | "learning_skipped")[];
+            /**
+             * Section
+             * @enum {string}
+             */
+            section: "sensitivity" | "detect_mode" | "zone_enable" | "zone_thresholds" | "subsensor_zones" | "subsensor_timing" | "subsensor_enable" | "dnd";
+        };
         /** ClientMessage */
         ClientMessage: components["schemas"]["LiveSubscribeMessage"] | components["schemas"]["LiveUnsubscribeMessage"];
+        /** CloneApplyIn */
+        CloneApplyIn: {
+            /** Expect Rev */
+            expect_rev: {
+                [key: string]: number;
+            };
+            /** Sections */
+            sections: ("sensitivity" | "detect_mode" | "zone_enable" | "zone_thresholds" | "subsensor_zones" | "subsensor_timing" | "subsensor_enable" | "dnd")[];
+            /** Source */
+            source: string;
+            /** Targets */
+            targets: string[];
+        };
+        /** CloneIn */
+        CloneIn: {
+            /**
+             * Expect Rev
+             * @default null
+             */
+            expect_rev: {
+                [key: string]: number;
+            } | null;
+            /** Sections */
+            sections: ("sensitivity" | "detect_mode" | "zone_enable" | "zone_thresholds" | "subsensor_zones" | "subsensor_timing" | "subsensor_enable" | "dnd")[];
+            /** Source */
+            source: string;
+            /** Targets */
+            targets: string[];
+        };
+        /** ConfigView */
+        ConfigView: {
+            /** Config Rev */
+            config_rev: number;
+            /** Device Id */
+            device_id: string;
+            /** Distances M */
+            distances_m: number[];
+            profile: components["schemas"]["ProfileView"];
+            /** Read At */
+            read_at: number;
+        };
         /** ConnectingDevice */
         ConnectingDevice: {
             /** Address */
@@ -193,13 +356,60 @@ export interface components {
              */
             type: "countdown";
         };
+        /** DeviceHistory */
+        DeviceHistory: {
+            /** Detail */
+            detail: boolean;
+            /** Device Id */
+            device_id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "presence" | "light";
+            /** Light */
+            light: components["schemas"]["LightRecordView"][];
+            /** Presence */
+            presence: components["schemas"]["PresenceRecordView"][];
+            /** Read At */
+            read_at: number;
+        };
+        /** DraftIn */
+        DraftIn: {
+            changes: components["schemas"]["SensorEdit"];
+            /**
+             * Expect Rev
+             * @default null
+             */
+            expect_rev: {
+                [key: string]: number;
+            } | null;
+            /** Targets */
+            targets: string[];
+        };
+        /** DraftPreview */
+        DraftPreview: {
+            /** Checked At */
+            checked_at: number;
+            /** Items */
+            items: components["schemas"]["SensorPreview"][];
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "apply" | "rollback" | "clone";
+            /** Risks */
+            risks: ("absolute_overwrite" | "large_change" | "beyond_ui_range" | "zone_off" | "subsensor_off" | "subsensor_no_zone" | "sensitivity_only" | "dnd_on" | "learning_skipped")[];
+            /** Source Rev */
+            source_rev: number | null;
+        };
         /** ErrorBody */
         ErrorBody: {
             /**
              * Code
              * @enum {string}
              */
-            code: "unauthorized" | "forbidden_origin" | "not_found" | "already_exists" | "busy" | "not_connected" | "invalid" | "invalid_request" | "invalid_file" | "storage" | "internal" | "batch_active";
+            code: "unauthorized" | "forbidden_origin" | "not_found" | "already_exists" | "busy" | "not_connected" | "invalid" | "invalid_request" | "invalid_file" | "storage" | "internal" | "batch_active" | "apply_active" | "stale" | "device_error";
             /** Message */
             message: string;
         };
@@ -240,6 +450,15 @@ export interface components {
             added: components["schemas"]["PendingView"][];
             /** Site Id */
             site_id: string;
+        };
+        /** LightRecordView */
+        LightRecordView: {
+            /** Index */
+            index: number;
+            /** Light Lux */
+            light_lux: number;
+            /** Timestamp */
+            timestamp: number;
         };
         /**
          * LinkState
@@ -419,6 +638,23 @@ export interface components {
             /** Results */
             results: components["schemas"]["PresenceView"][];
         };
+        /** PresenceRecordView */
+        PresenceRecordView: {
+            /** Index */
+            index: number;
+            /** Sensor Presence */
+            sensor_presence: boolean[];
+            /** Sub Sensor Triggers */
+            sub_sensor_triggers: number[];
+            /** Timestamp */
+            timestamp: number;
+            /** Zone Enabled */
+            zone_enabled: boolean[];
+            /** Zone Presence */
+            zone_presence: boolean[];
+            /** Zone Triggers */
+            zone_triggers: number[];
+        };
         /** PresenceView */
         PresenceView: {
             /** Device Id */
@@ -433,6 +669,28 @@ export interface components {
             presence: boolean | null;
             /** Samples */
             samples: number;
+        };
+        /** ProfileView */
+        ProfileView: {
+            /** Detect Mode */
+            detect_mode: number;
+            /** Dnd */
+            dnd: boolean | null;
+            /** Sensitivity */
+            sensitivity: number;
+            /** Subsensor Enable */
+            subsensor_enable: boolean[];
+            /** Subsensor Timing */
+            subsensor_timing: [
+                number,
+                number
+            ][];
+            /** Subsensor Zones */
+            subsensor_zones: number[][];
+            /** Zone Enable */
+            zone_enable: boolean[];
+            /** Zone Thresholds */
+            zone_thresholds: components["schemas"]["ZonePair"][];
         };
         /** RegistryInfo */
         RegistryInfo: {
@@ -457,6 +715,34 @@ export interface components {
              */
             device_ids: string[] | null;
         };
+        /** RollbackApplyIn */
+        RollbackApplyIn: {
+            /** Expect Rev */
+            expect_rev: {
+                [key: string]: number;
+            };
+            /** Items */
+            items: components["schemas"]["RollbackItem"][];
+        };
+        /** RollbackIn */
+        RollbackIn: {
+            /**
+             * Expect Rev
+             * @default null
+             */
+            expect_rev: {
+                [key: string]: number;
+            } | null;
+            /** Items */
+            items: components["schemas"]["RollbackItem"][];
+        };
+        /** RollbackItem */
+        RollbackItem: {
+            /** Device Id */
+            device_id: string;
+            /** Snapshot */
+            snapshot: string;
+        };
         /** SensorCreate */
         SensorCreate: {
             /** Alias */
@@ -475,6 +761,44 @@ export interface components {
             notes: string;
             /** Site Id */
             site_id: string;
+        };
+        /** SensorEdit */
+        SensorEdit: {
+            /**
+             * Dnd
+             * @default null
+             */
+            dnd: boolean | null;
+            /**
+             * Sensitivity
+             * @default null
+             */
+            sensitivity: number | null;
+            /**
+             * Subsensor Enable
+             * @default null
+             */
+            subsensor_enable: boolean[] | null;
+            /**
+             * Subsensor Timing
+             * @default null
+             */
+            subsensor_timing: [
+                number,
+                number
+            ][] | null;
+            /**
+             * Subsensor Zones
+             * @default null
+             */
+            subsensor_zones: number[][] | null;
+            /**
+             * Zone Enable
+             * @default null
+             */
+            zone_enable: boolean[] | null;
+            /** @default null */
+            zone_thresholds: components["schemas"]["ThresholdEdit"] | null;
         };
         /** SensorInfoImport */
         SensorInfoImport: {
@@ -505,6 +829,21 @@ export interface components {
              * @enum {string}
              */
             type: "sensor";
+        };
+        /** SensorPreview */
+        SensorPreview: {
+            after: components["schemas"]["ProfileView"] | null;
+            before: components["schemas"]["ProfileView"] | null;
+            /** Changes */
+            changes: components["schemas"]["Change"][];
+            /** Config Rev */
+            config_rev: number;
+            /** Device Id */
+            device_id: string;
+            /** Error */
+            error: string | null;
+            /** Risks */
+            risks: ("absolute_overwrite" | "large_change" | "beyond_ui_range" | "zone_off" | "subsensor_off" | "subsensor_no_zone" | "sensitivity_only" | "dnd_on" | "learning_skipped")[];
         };
         /** SensorRemoved */
         SensorRemoved: {
@@ -549,6 +888,8 @@ export interface components {
         };
         /** SensorView */
         SensorView: {
+            /** Config Rev */
+            config_rev: number;
             /** Device Id */
             device_id: string;
             last_calibration: components["schemas"]["CalibrationSummary"] | null;
@@ -565,7 +906,7 @@ export interface components {
             version: string;
         };
         /** ServerMessage */
-        ServerMessage: components["schemas"]["SnapshotMessage"] | components["schemas"]["SensorMessage"] | components["schemas"]["SensorRemovedMessage"] | components["schemas"]["SitesMessage"] | components["schemas"]["PendingMessage"] | components["schemas"]["GatherMessage"] | components["schemas"]["NoticeMessage"] | components["schemas"]["BatchMessage"] | components["schemas"]["CalibrationJobMessage"] | components["schemas"]["LiveMessage"] | components["schemas"]["CountdownMessage"];
+        ServerMessage: components["schemas"]["SnapshotMessage"] | components["schemas"]["SensorMessage"] | components["schemas"]["SensorRemovedMessage"] | components["schemas"]["SitesMessage"] | components["schemas"]["PendingMessage"] | components["schemas"]["GatherMessage"] | components["schemas"]["NoticeMessage"] | components["schemas"]["BatchMessage"] | components["schemas"]["CalibrationJobMessage"] | components["schemas"]["LiveMessage"] | components["schemas"]["CountdownMessage"] | components["schemas"]["ApplyMessage"];
         /** SimInfo */
         SimInfo: {
             /** Count */
@@ -608,6 +949,20 @@ export interface components {
              */
             type: "sites";
         };
+        /** SnapshotDetail */
+        SnapshotDetail: {
+            /** Device Id */
+            device_id: string;
+            profile: components["schemas"]["ProfileView"];
+            snapshot: components["schemas"]["SnapshotView"];
+        };
+        /** SnapshotList */
+        SnapshotList: {
+            /** Device Id */
+            device_id: string;
+            /** Snapshots */
+            snapshots: components["schemas"]["SnapshotView"][];
+        };
         /** SnapshotMessage */
         SnapshotMessage: {
             data: components["schemas"]["StateSnapshot"];
@@ -630,8 +985,20 @@ export interface components {
             /** Taken At */
             taken_at: string;
         };
+        /** SnapshotView */
+        SnapshotView: {
+            /** Name */
+            name: string;
+            /** Reason */
+            reason: string;
+            /** Sections */
+            sections: string[];
+            /** Taken At */
+            taken_at: string;
+        };
         /** StateSnapshot */
         StateSnapshot: {
+            apply: components["schemas"]["ApplyJobView"] | null;
             batch: components["schemas"]["BatchView"] | null;
             gather: components["schemas"]["GatherStatus"];
             /** Pending */
@@ -643,6 +1010,37 @@ export interface components {
             server: components["schemas"]["ServerInfo"];
             /** Sites */
             sites: components["schemas"]["SiteView"][];
+        };
+        /** ThresholdEdit */
+        ThresholdEdit: {
+            /** Maintain */
+            maintain: (number | null)[];
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "relative" | "absolute";
+            /** Trigger */
+            trigger: (number | null)[];
+        };
+        /** TimeSyncIn */
+        TimeSyncIn: {
+            /** Device Ids */
+            device_ids: string[];
+        };
+        /** TimeSyncItem */
+        TimeSyncItem: {
+            /** Device Id */
+            device_id: string;
+            /** Error */
+            error: string | null;
+            /** Written At */
+            written_at: number | null;
+        };
+        /** TimeSyncResult */
+        TimeSyncResult: {
+            /** Items */
+            items: components["schemas"]["TimeSyncItem"][];
         };
         /** ZonePair */
         ZonePair: {

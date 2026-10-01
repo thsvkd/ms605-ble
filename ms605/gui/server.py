@@ -14,6 +14,7 @@ import tempfile
 import time
 from collections.abc import Collection, Sequence
 from contextlib import asynccontextmanager, contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlencode
 
@@ -25,29 +26,46 @@ from starlette.requests import HTTPConnection
 from starlette.responses import FileResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from ms605.errors import MS605ConnectionError, SessionBusyError, StorageError
+from ms605.errors import MS605ConnectionError, MS605Error, SessionBusyError, StorageError
 from ms605.events import LinkState
-from ms605.fleet import Fleet
+from ms605.fleet import Fleet, SensorChanges
+from ms605.models import ConfigProfile
+from ms605.protocol import DetectMode
 from ms605.registry import Registry
 from ms605.sim import SimFleet
 from ms605.storage import Storage
 
+from .apply import DND_READ_TIMEOUT_S, SECTIONS, edit_sections, edit_to_changes, is_absolute, profile_view
 from .batch import MAX_SCHEDULE_AHEAD_S
 from .schemas import (
     NEW_SITE_ID_PATTERN,
     ApiError,
+    ApplyIn,
     BatchCreate,
     BatchRetry,
     BatchStart,
+    CalibrationHistory,
+    CalibrationRecord,
+    CalibrationZone,
+    CloneApplyIn,
+    CloneIn,
+    DeviceHistory,
+    DeviceHistoryKind,
+    DraftIn,
     ErrorBody,
     GatherStatus,
     Health,
     ImportResult,
+    LightRecordView,
     PendingView,
     PreflightRequest,
     PreflightResult,
+    PresenceRecordView,
     PresenceView,
     ReleaseRequest,
+    RollbackApplyIn,
+    RollbackIn,
+    RollbackItem,
     SensorCreate,
     SensorInfoImport,
     SensorUpdate,
@@ -55,7 +73,14 @@ from .schemas import (
     SimInfo,
     SiteCreate,
     SiteView,
+    SnapshotDetail,
+    SnapshotList,
+    SnapshotName,
+    SnapshotView,
     StateSnapshot,
+    TimeSyncIn,
+    TimeSyncItem,
+    TimeSyncResult,
 )
 from .ws import Hub
 
@@ -231,6 +256,7 @@ def create_app(
             try:
                 await hub.live.aclose()
                 await hub.batches.aclose()
+                await hub.applies.aclose()
                 await fleet.aclose()  # cancel an unfinished batch, stop gathering, release every link (D5)
             finally:
                 hub.detach()
@@ -265,6 +291,12 @@ def create_app(
     @app.exception_handler(MS605ConnectionError)
     async def _on_not_connected(_r: Request, exc: MS605ConnectionError) -> JSONResponse:
         return _error(409, "not_connected", str(exc))
+
+    @app.exception_handler(MS605Error)  # neither a lock nor a link failure (those have their own, closer handlers)
+    async def _on_device(_r: Request, exc: MS605Error) -> JSONResponse:
+        if isinstance(exc, ValueError):  # ProfileError, FrameError: the MRO reaches MS605Error first
+            return _error(422, "invalid", str(exc))
+        return _error(502, "device_error", str(exc))
 
     @app.exception_handler(StorageError)
     async def _on_storage(_r: Request, exc: StorageError) -> JSONResponse:
@@ -374,6 +406,8 @@ def create_app(
         if body.device_ids is None:  # everything: stop gathering first, or it reconnects what is still advertising
             if hub.batches.active():  # G22: before anything changes
                 raise ApiFailure(409, "batch_active", "a calibration batch is in progress")
+            if hub.applies.active():  # G27
+                raise ApiFailure(409, "apply_active", "a settings apply is in progress")
             await fleet.stop_gather()
             hub.clear_connecting()
             ids = list(fleet.sessions)
@@ -385,6 +419,9 @@ def create_app(
             calibrating = [i for i in ids if i in hub.batches.members()]
             if calibrating:  # G22: dropping the link resets the learning
                 raise ApiFailure(409, "batch_active", f"in a calibration batch: {', '.join(calibrating)}")
+            applying = [i for i in ids if i in hub.applies.members()]
+            if applying:  # G27: closing the link mid-write leaves the sensor half-written
+                raise ApiFailure(409, "apply_active", f"in a settings apply: {', '.join(applying)}")
             if fleet.gathering:  # the button window outlasts the link: keep this gather run off them
                 released.update(fleet.sessions[i].address.lower() for i in ids)
         await fleet.release(body.device_ids)
@@ -446,6 +483,9 @@ def create_app(
         busy = [f"{i}: {fleet.sessions[i].busy}" for i in locked]
         if busy:
             raise ApiFailure(409, "busy", ", ".join(busy))
+        applying = [i for i in device_ids if i in hub.applies.members()]
+        if applying:  # G27
+            raise ApiFailure(409, "apply_active", f"in a settings apply: {', '.join(applying)}")
 
     def start_of(body: BatchStart):
         if body.start == "delay":
@@ -522,6 +562,232 @@ def create_app(
         hub.flush()
         return _json(view, 202)
 
+    # -- M4: config, drafts, apply, rollback, clone, time sync, history (15.5) --
+
+    def not_connected(device_id: str) -> bool:
+        return fleet.sessions[device_id].state is not LinkState.CONNECTED
+
+    def check_free(device_ids: Sequence[str], *, connected: bool) -> None:
+        """15.5.2: the checks shared by every M4 route that touches a device, in order."""
+        need_sessions(device_ids)
+        steps = (
+            ("batch_active", "in a calibration batch", lambda i: i in hub.batches.members()),
+            ("apply_active", "in a settings apply", lambda i: i in hub.applies.members()),
+            ("not_connected", "not connected", lambda i: connected and not_connected(i)),
+            ("busy", "calibrating", lambda i: fleet.sessions[i].busy == "calibration"),
+        )
+        for code, what, hit in steps:
+            ids = [i for i in device_ids if hit(i)]
+            if ids:
+                raise ApiFailure(409, code, f"{what}: {', '.join(ids)}")
+
+    def no_active_apply() -> None:
+        if hub.applies.active():
+            raise ApiFailure(409, "apply_active", "a settings apply is in progress")
+
+    def check_rev(expect_rev: dict[str, int]) -> None:
+        stale = [i for i, rev in expect_rev.items() if hub.applies.rev(i) != rev]
+        if stale:
+            raise ApiFailure(409, "stale", f"settings changed since the preview: {', '.join(stale)}")
+
+    def known_sensor(device_id: str) -> None:
+        if device_id not in registry.sensors and device_id not in fleet.sessions:
+            raise ApiFailure(404, "not_found", f"not found: {device_id}")
+
+    def draft_changes(body: DraftIn) -> SensorChanges:
+        changes = edit_to_changes(body.changes)
+        changes.validate()  # ProfileError -> 422 invalid
+        return changes
+
+    def load_rollback(items: Sequence[RollbackItem]) -> tuple[list[tuple[str, SensorChanges]], list[str]]:
+        """Each item's snapshot as an absolute draft, and the union of their sections (Section order)."""
+        pairs: list[tuple[str, SensorChanges]] = []
+        sections: set[str] = set()
+        for item in items:
+            if not (storage.snapshots_dir / item.device_id / f"{item.snapshot}.json").is_file():
+                raise ApiFailure(404, "not_found", f"no snapshot {item.snapshot} for {item.device_id}")
+            snap = storage.load_snapshot(item.device_id, item.snapshot)  # StorageError -> 500
+            pairs.append((item.device_id, SensorChanges.from_profile(snap.profile, snap.sections, dnd=snap.dnd)))
+            sections.update(snap.sections)
+        return pairs, [s for s in SECTIONS if s in sections]
+
+    async def read_source(source: str, sections: Sequence[str]) -> tuple[SensorChanges, bool]:
+        """G36: the clone source read now. (changes, the source is learning and detect_mode was picked)."""
+        async with fleet.sessions[source].operation("read") as ms:
+            cfg = await ms.read_config()
+            dnd = await ms.read_dnd(timeout=DND_READ_TIMEOUT_S) if "dnd" in sections else None
+        changes = SensorChanges.from_profile(ConfigProfile.from_config(cfg), sections, dnd=dnd)
+        return changes, cfg.detect_mode == DetectMode.SPACE_LEARNING and "detect_mode" in sections
+
+    @app.get("/api/sensors/{device_id}/config")
+    async def read_config(device_id: str) -> JSONResponse:
+        check_free([device_id], connected=True)
+        return _json(await hub.applies.read_config(fleet.sessions[device_id]))
+
+    @app.post("/api/drafts/preview")
+    async def preview_draft(body: DraftIn) -> JSONResponse:
+        changes = draft_changes(body)
+        check_free(body.targets, connected=False)
+        pairs = [(i, changes) for i in body.targets]
+        preview = await hub.applies.preview(
+            "apply", pairs, several=len(body.targets) > 1, absolute=is_absolute(body.changes)
+        )
+        return _json(preview)
+
+    @app.post("/api/apply")
+    async def apply_draft(body: ApplyIn) -> JSONResponse:
+        changes = draft_changes(body)
+        async with operation:
+            no_active_apply()
+            check_free(body.targets, connected=True)
+            check_rev(body.expect_rev)
+            pairs = [(i, changes) for i in body.targets]
+            view = hub.applies.start("apply", pairs, sections=edit_sections(body.changes))
+            hub.flush()
+            return _json(view, 202)
+
+    @app.get("/api/apply/{apply_id}")
+    async def get_apply(apply_id: str) -> JSONResponse:
+        view = hub.applies.view()
+        if view is None or view.apply_id != apply_id:
+            raise ApiFailure(404, "not_found", f"not found: apply {apply_id}")
+        return _json(view)
+
+    @app.get("/api/sensors/{device_id}/snapshots")
+    async def list_snapshots(device_id: str) -> JSONResponse:
+        known_sensor(device_id)
+        snapshots = [
+            SnapshotView(name=s.name, taken_at=s.taken_at, reason=s.reason, sections=list(s.sections))
+            for s in storage.list_snapshots(device_id)
+        ]
+        return _json(SnapshotList(device_id=device_id, snapshots=snapshots))
+
+    @app.get("/api/sensors/{device_id}/snapshots/{name}")
+    async def get_snapshot(device_id: str, name: SnapshotName) -> JSONResponse:
+        known_sensor(device_id)
+        if not (storage.snapshots_dir / device_id / f"{name}.json").is_file():
+            raise ApiFailure(404, "not_found", f"no snapshot {name} for {device_id}")
+        snap = storage.load_snapshot(device_id, name)
+        view = SnapshotView(name=snap.name, taken_at=snap.taken_at, reason=snap.reason, sections=list(snap.sections))
+        return _json(SnapshotDetail(device_id=device_id, snapshot=view, profile=profile_view(snap.profile, snap.dnd)))
+
+    @app.post("/api/rollback/preview")
+    async def preview_rollback(body: RollbackIn) -> JSONResponse:
+        check_free([i.device_id for i in body.items], connected=False)
+        pairs, _ = load_rollback(body.items)
+        return _json(await hub.applies.preview("rollback", pairs, several=False, absolute=False))
+
+    @app.post("/api/rollback")
+    async def rollback(body: RollbackApplyIn) -> JSONResponse:
+        async with operation:
+            no_active_apply()
+            check_free([i.device_id for i in body.items], connected=True)
+            check_rev(body.expect_rev)
+            _, sections = load_rollback(body.items)
+            view = hub.applies.start("rollback", [(i.device_id, i.snapshot) for i in body.items], sections=sections)
+            hub.flush()
+            return _json(view, 202)
+
+    def clone_sections(body: CloneIn) -> list[str]:
+        return [s for s in SECTIONS if s in body.sections]
+
+    @app.post("/api/clone/preview")
+    async def preview_clone(body: CloneIn) -> JSONResponse:
+        check_free([body.source, *body.targets], connected=False)
+        check_free([body.source], connected=True)
+        sections = clone_sections(body)
+        source_rev = hub.applies.rev(body.source)  # before the read: a change meanwhile makes the clone stale
+        changes, learning = await read_source(body.source, sections)
+        preview = await hub.applies.preview(
+            "clone",
+            [(i, changes) for i in body.targets],
+            several=len(body.targets) > 1,
+            absolute="zone_thresholds" in sections,
+            learning=learning,
+            source_rev=source_rev,
+        )
+        return _json(preview)
+
+    @app.post("/api/clone")
+    async def clone(body: CloneApplyIn) -> JSONResponse:
+        def checks() -> None:
+            no_active_apply()
+            check_free([body.source, *body.targets], connected=True)
+            check_rev(body.expect_rev)
+
+        checks()  # before the read: no device I/O for a request that is refused anyway
+        sections = clone_sections(body)
+        source_rev = hub.applies.rev(body.source)  # before the read: a change meanwhile makes the clone stale
+        changes, _ = await read_source(body.source, sections)  # outside `operation`: a slow source holds no other job
+        async with operation:
+            checks()  # again: anything may have started or changed during the read
+            check_rev({body.source: source_rev})
+            pairs = [(i, changes) for i in body.targets]
+            view = hub.applies.start("clone", pairs, sections=sections, source=body.source)
+            hub.flush()
+            return _json(view, 202)
+
+    @app.post("/api/time-sync")
+    async def time_sync(body: TimeSyncIn) -> JSONResponse:
+        items: list[TimeSyncItem] = []
+        async with operation:  # only the check: a slow sensor must not hold every apply and batch behind it
+            check_free(body.device_ids, connected=False)
+        for device_id in body.device_ids:  # one at a time (G34); the session lock keeps a job off that sensor
+            when = datetime.now(timezone.utc)
+            try:
+                async with fleet.sessions[device_id].operation("apply") as ms:
+                    await ms.set_time(when)
+            except SessionBusyError as exc:
+                items.append(TimeSyncItem(device_id=device_id, written_at=None, error=f"busy: {exc.reason}"))
+            except MS605Error as exc:  # e.g. "not connected"
+                items.append(TimeSyncItem(device_id=device_id, written_at=None, error=str(exc)))
+            else:
+                items.append(TimeSyncItem(device_id=device_id, written_at=when.timestamp(), error=None))
+        return _json(TimeSyncResult(items=items))
+
+    @app.get("/api/sensors/{device_id}/history")
+    async def calibration_history(device_id: str) -> JSONResponse:
+        known_sensor(device_id)
+        sensor, session = registry.sensors.get(device_id), fleet.sessions.get(device_id)
+        addresses = list(sensor.addresses.values()) if sensor is not None else []
+        if session is not None:
+            addresses.append(session.address)
+        records = [r for r in map(_calibration_record, storage.read_history(device_id, addresses=addresses)) if r]
+        return _json(CalibrationHistory(device_id=device_id, records=records[::-1]))
+
+    @app.get("/api/sensors/{device_id}/device-history")
+    async def device_history(
+        device_id: str, kind: DeviceHistoryKind = "presence", detail: bool = False
+    ) -> JSONResponse:
+        check_free([device_id], connected=True)
+        presence: list[PresenceRecordView] = []
+        light: list[LightRecordView] = []
+        async with fleet.sessions[device_id].operation("read") as ms:
+            if kind == "presence":
+                records = await ms.read_presence_history(detail=detail)
+                presence = [
+                    PresenceRecordView(
+                        index=r.index,
+                        timestamp=r.timestamp,
+                        sensor_presence=_bits(r.sensor_presence_mask, 3),
+                        zone_enabled=_bits(r.zone_enable_mask, 7),
+                        zone_presence=_bits(r.zone_presence_mask, 7),
+                        sub_sensor_triggers=list(r.sub_sensor_triggers),
+                        zone_triggers=list(r.zone_triggers),
+                    )
+                    for r in records
+                ]
+            else:
+                light = [
+                    LightRecordView(index=r.index, timestamp=r.timestamp, light_lux=r.light_lux)
+                    for r in await ms.read_light_history()
+                ]
+        history = DeviceHistory(
+            device_id=device_id, kind=kind, detail=detail, read_at=time.time(), presence=presence, light=light
+        )
+        return _json(history)
+
+
     if sim is not None:
 
         def sim_device(index: int):
@@ -572,6 +838,46 @@ def create_app(
 
     app.router.default = spa
     return app
+
+
+def _bits(mask: int, count: int) -> list[bool]:
+    return [bool(mask & (1 << i)) for i in range(count)]
+
+
+def _int(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _calibration_record(line: dict) -> CalibrationRecord | None:
+    """15.5.9: one history line, or None (logged) when a hand-edited line lacks the required shape."""
+    timestamp, zones = line.get("timestamp"), line.get("zones")
+    if not isinstance(timestamp, str) or not isinstance(zones, list):
+        _log.warning("skipping a calibration history line without a timestamp or zones")
+        return None
+    parsed: list[CalibrationZone] = []
+    for zone in zones:
+        if not isinstance(zone, dict) or not all(_int(zone.get(k)) for k in ("index", "trigger", "maintain")):
+            _log.warning("skipping a calibration history line with a malformed zone")
+            return None
+        distance = zone.get("distance_m")
+        if not isinstance(distance, (int, float)) or isinstance(distance, bool):
+            distance = None
+        parsed.append(
+            CalibrationZone(
+                index=zone["index"],
+                distance_m=distance,
+                trigger=zone["trigger"],
+                maintain=zone["maintain"],
+            )
+        )
+    name = line.get("device_name")
+    return CalibrationRecord(
+        timestamp=timestamp,
+        device_name=name if isinstance(name, str) else None,
+        sensitivity=line.get("sensitivity") if _int(line.get("sensitivity")) else None,
+        detect_mode=line.get("detect_mode") if _int(line.get("detect_mode")) else None,
+        zones=parsed,
+    )
 
 
 def _spa_response(request: Request, token: str, static_root: Path) -> Response:

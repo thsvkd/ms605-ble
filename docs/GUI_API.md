@@ -1,10 +1,11 @@
-# MS605 GUI API (M2, M3)
+# MS605 GUI API (M2, M3, M4)
 
 `docs/GUI_PLAN.md`의 M2(GUI 뼈대)를 구현하기 위한 계약 문서다. 백엔드 구현자(`ms605/gui/*.py`)와
 프런트엔드 구현자(`web/**`)는 서로 묻지 않고 이 문서만 보고 동시에 작업한다. 서버는 `docs/CORE_API.md`의
 코어 표면(`Fleet`, `Registry`, `Storage`, `EventBus`, `SimFleet`)을 감싸기만 하고, 코어 모듈은 고치지 않는다.
 설계 결정 D1~D15를 전제로 하며, 여기서 새로 정한 것은 G 번호와 이유를 함께 적는다.
 M3(실시간 모니터·다중 자동 보정)의 계약은 14장이고, M2 본문에서 바뀌는 곳은 14.2절에 모았다.
+M4(설정 편집·고급 설정·이력)의 계약은 15장이고, M2·M3 본문에서 바뀌는 곳은 15.2절에 모았다.
 
 이 저장소는 공개 저장소다. 이 문서, 테스트, 프런트엔드 fixture의 예시 값(Device ID, 주소, 사이트 이름, 토큰, IP)은
 모두 합성 값이다. 시뮬레이터의 Device ID(`53494d3630350001` = `b"SIM605" + 1`)와 주소(`02:00:00:00:00:01`)를 쓴다.
@@ -2534,3 +2535,1660 @@ M3 완료 기준(GUI_PLAN): `ms605 gui --sim 7`에서 7대를 모아 보정하�
 - 발사 시각의 자동 재실 재확인, 시뮬레이터의 재실 조작 API(테스트는 `SimMS605.signal`을 직접 바꾼다)
 - 노트북 잠자기 방지(`caffeinate`), 예약 보정의 서버 재시작 복구
 - 보정 취소 동작·보정 중 keep-alive와 스캔의 영향·실제 보정 시간의 실기기 검증(M5)
+
+## 15. M4 — 설정 편집, 고급 설정, 이력
+
+이 장은 M4(GUI_PLAN 4장)의 계약이다. 1~14장은 그대로 유효하고, 바뀌는 곳은 15.2절에 모두 적었다. 코어 쪽 변경은
+`docs/CORE_API.md` 2.3절(DND를 초안 섹션으로) 하나뿐이다.
+범위: 센서별 초안(민감도·존 켜기/끄기·존 임계값, 실시간 막대 위 임계선 드래그), 여러 센서 일괄 편집(임계값 상대값 기본·절대값 경고 + 공통 설정),
+서버가 기기 값으로 계산하는 차이 미리보기와 위험 표시, 적용 → 폴링 검증 → 센서별 결과, 자동 스냅샷으로 되돌리기(목록의 어느 스냅샷으로도),
+클론, 고급 설정(서브센서 구역·타이밍·사용, DND)과 시간 동기화, 보정 이력·설정 백업 목록·기기 이력(실험적), M3에서 남은 두 가지.
+
+### 15.1 새로 정한 것
+
+| # | 주제 | 결정 | 이유 |
+|---|------|------|------|
+| G24 | 기준값은 기기에서 | 차이 미리보기는 **서버가 그 순간 기기를 읽어** 계산한다(`read_config()` → `SensorChanges.resolve(current)`). 화면은 `ConfigView`로 편집을 시작할 뿐 차이를 계산하지 않고, 서버가 만든 행(`Change`)을 그린다. 적용할 때 코어가 같은 계산을 기기 값으로 다시 한다(코어 6.4절 1·2단계) | 상대값(+n)은 센서마다 다른 보정값에 더해야 뜻이 있다(D8). 화면이 가진 값은 다른 화면·보정·CLI가 바꿨을 수 있다 |
+| G25 | 적용은 서버 상태, 한 번에 하나 | 적용·되돌리기·클론은 모두 **적용 작업(apply job)** 하나로 실행한다. 서버는 작업을 **한 번에 하나** 갖고(진행 중이거나 마지막 것), 스냅샷의 `apply`와 WS `apply`로 모든 화면에 보낸다. 진행 중에 또 오면 409 `apply_active`. 작업 안의 센서는 `targets` 순서대로 **하나씩** 한다 | 코어가 초안을 순차로 적용하는 이유(동시 쓰기의 BLE 부하 미측정, 코어 6.4절)가 화면 사이에도 같다. 7대 × (쓰기 + 최대 3초 검증) ≈ 30초라 기다릴 만하다. "센서마다 적용은 하나"가 구조로 보장된다(D11). 다른 화면도 진행과 결과를 본다 |
+| G26 | 작업은 코어 함수를 센서마다 | 작업은 `Fleet.apply()` 대신 센서마다 `apply_changes(session, changes, storage)`(되돌리기는 `Fleet.rollback(id, name)`)를 차례로 부른다. 검증(`SensorChanges.validate()`, 422)은 라우트가 작업 전에 한다 | `Fleet.apply()`와 같은 순서·같은 함수다. 다만 각 센서의 I/O **전에** `applying`을 알려야 하고, 한 작업에 센서마다 다른 스냅샷을 되돌리는 항목을 담아야 한다 |
+| G27 | 작업 사이의 배제 | 진행 중인 보정 라운드의 센서(`batches.members()`)는 설정 읽기·미리보기·적용·클론·되돌리기·시간 동기화·기기 이력을 409 `batch_active`로 거절한다. 진행 중인 적용 작업의 센서(`applies.members()`)는 배치 생성·재시도·연결 해제·설정 읽기·미리보기·시간 동기화·기기 이력을 409 `apply_active`로 거절한다 | 대기 중인 라운드는 기기 잠금을 잡지 않는다(코어 6.2절). 발사 순간 다른 잠금이 잡혀 있으면 그 작업이 `busy`로 실패하므로 서버가 미리 막는다. 쓰기 도중 연결을 끊으면 반쯤 쓴 상태가 남는다 |
+| G28 | 설정 판(rev) | 서버는 센서마다 `config_rev`(이번 실행에서 0부터)를 센다. 그 센서의 `ApplyResult`가 쓰기 단계까지 갔거나(`snapshot is not None`) `CalibrationResult.started`이면 +1. `SensorView.config_rev`, `ConfigView.config_rev`, `SensorPreview.config_rev`로 보인다. 적용·되돌리기·클론 요청의 `expect_rev`(필수, 모든 대상과 클론 원본. 빠지면 422)가 지금 값과 다르면 409 `stale` | 미리보기와 적용 사이에 다른 화면·보정이 그 센서를 바꾸면, 상대값이 두 번 더해지거나 본 적 없는 차이가 써진다. 기기 I/O 없이 이번 서버가 한 변경을 모두 잡는다(CLI를 함께 띄운 경우는 범위 밖, 13장) |
+| G29 | 위험은 서버가 정한다 | 미리보기의 행과 센서마다 `risks: RiskCode[]`(9가지, 15.7.4절). 화면은 코드를 문구·강조로 바꾸기만 한다. 확인 체크를 요구하는 것은 `absolute_overwrite`(여러 센서에 절대 임계값, 클론의 임계값) 하나다 | 위험 판정이 화면마다 달라지지 않는다. D8은 절대값 덮어쓰기에만 명시적 확인을 요구한다. 나머지는 강조로 충분하다(확인이 많으면 소음이 된다, G19와 같은 판단) |
+| G30 | 초안은 화면 상태 | 초안은 클라이언트의 별도 Zustand 스토어(`store/drafts.ts`)에 범위(scope)별로 둔다: `sensor:<id>`(그 센서의 설정·고급 탭), `bulk`(일괄 편집·클론). 서버에 초안은 없다. 범위를 **떠나는 앱 안 이동**은 가드가 막고 묻는다(`머무르기` / `버리고 이동`). 새로고침·탭 닫기는 `beforeunload`. 브라우저 뒤로 가기는 막지 못하므로 초안을 지우지 않고 남겨 두며, 돌아오면 그대로 보인다 | D11(초안은 화면별). M2 G10의 "서버 상태 스토어는 WS로만 바뀐다"를 지키려고 스토어를 나눈다. 초안을 조용히 버리지 않는다 |
+| G31 | 드래그 막대는 선형 축 | 편집용 막대(`ThresholdMeter`)는 **값 = 위치**인 선형 축이다. 모니터의 막대(14.8.4절, tick 고정)와 다르다. 실시간 값의 채움은 계속 움직이고, 새 임계값(손잡이)보다 크면 빨강 | 고정 tick 막대에서는 임계값을 바꿔도 tick이 움직이지 않으므로 끌 수가 없다. "지금 값이 새 임계값을 넘는가"는 같은 비교(`값 > 임계값`)로 보인다 |
+| G32 | 단일은 절대, 일괄은 상대 기본 | 센서 하나의 편집은 임계값을 **절대값**으로 보낸다(드래그한 존만, 나머지 `null`). 일괄 편집은 **상대값이 기본**이고 절대값은 직접 골라야 하며 경고와 확인 체크가 붙는다. 클론은 절대값이다(코어 `from_profile`) | D8 그대로. 단일 센서는 그 센서의 실시간 막대를 보며 정하므로 절대값이 자연스럽다 |
+| G33 | DND는 코어 초안 섹션 | DND는 `SensorChanges.dnd`(코어 2.3절)로 같은 초안·스냅샷·검증·되돌리기를 탄다. 서브센서 세 섹션(tag41/48/49)은 코어에 이미 있다 | "고급 설정도 같은 흐름"을 코어 함수 하나로. `ConfigProfile`에 넣지 않는 이유는 코어 2.3절 |
+| G34 | 시간 동기화는 동작 | 시간 동기화는 초안이 아니다. `POST /api/time-sync`가 센서마다 `set_time()`을 쓰고 결과를 **요청한 화면에만** 준다(G18과 같다). 다시 읽어 검증하지 않는다 | 되돌릴 "이전 값"이 없는 동작이다. tag33을 다시 읽는 의미가 실기기에서 확인되지 않았다(SPEC 7장 "hardware coverage limited") |
+| G35 | 기기 이력은 실험적 | 기기 이력(tag57~60)은 코어가 노출하는 드라이버 읽기(`read_presence_history`/`read_light_history`)를 `operation("read")` 안에서 **한 번** 부른다. 페이지 넘기기 없음, 결과는 요청한 화면에만, 화면은 늘 `실험적` 배지와 한계 문구를 붙인다 | SPEC 8.8: 레코드 형식·페이지·전달 방식이 확인되지 않았다. CLI `read-history`와 같은 경로라 새 코어 표면이 없다 |
+| G36 | 클론 = 서버가 원본을 읽은 절대값 초안 | 클론은 서버가 원본 센서를 그 순간 읽어 `SensorChanges.from_profile(profile, sections, dnd=...)`를 만들고 대상마다 적용한다(코어 6.4절 "클론 전용 코드는 없다"). 원본은 연결된 센서만. 섹션은 고른다(기본 민감도·존 켜기/끄기·존 임계값) | 원본의 값을 화면이 옮기면 낡은 값을 쓸 수 있다. 적용할 때 다시 읽고 `expect_rev`에 원본을 넣어 미리보기 뒤의 변경을 잡는다 |
+| G37 | 실패 뒤 "다시 시도" 없음 | 적용 결과에는 `다시 시도`가 없다. 실패·일부 반영 센서에는 `되돌리기`(그 작업의 자동 스냅샷)를 준다. 일괄 초안의 편집값은 **제출(202) 즉시 비운다**. 단일 센서 초안(절대값)은 결과가 `verified`일 때만 비운다 | 상대값을 다시 보내면 이미 반영된 섹션에 또 더해진다. 쓰기 실패 뒤 무엇이 써졌는지는 알 수 없다(SPEC 6.2). 되돌린 뒤 새 초안을 만드는 것이 항상 맞다. 절대값은 다시 보내도 같은 결과다 |
+| G38 | (M3 잔여) 대기 취소 확인 | 카운트다운·예약 라운드의 취소도 **남은 시간이 5초 미만이면** 실행 중 취소와 같은 확인 다이얼로그를 거친다(`CANCEL_CONFIRM_WITHIN_S = 5`) | 발사 직전의 취소 요청은 서버에 닿을 때 이미 RUNNING일 수 있고, 그러면 링크를 끊어 학습을 멈춘다(코어 5.3절). 되돌릴 수 없는 결과가 날 수 있는 순간에는 같은 확인을 거친다 |
+
+### 15.2 M2·M3 본문에서 바뀌는 것
+
+| 위치 | M2·M3 | M4 |
+|------|-------|----|
+| 5장·14.4절 스키마 | `SensorView` 5필드, `StateSnapshot.batch`까지, `ErrorCode` 12개, `ServerMessage` 11종 | 15.4절대로: `SensorView.config_rev`, `StateSnapshot.apply`, `ErrorCode`에 `apply_active`·`stale`·`device_error`, `ServerMessage` 12종(`apply`), 요청 모델 4개·응답 모델 8개 추가 |
+| 6.1절 오류 표 | — | 새 행: 진행 중인 적용 작업과 겹침 → 409 `apply_active`, `expect_rev` 불일치 → 409 `stale`, 연결·잠금이 아닌 `MS605Error`(`MS605DeviceError`, `MS605TimeoutError` 등) → 502 `device_error` |
+| 6.7절 예약 이름 | `POST /api/apply {draft: DraftIn}` → `{results}`, WS `apply_result`, `POST …/rollback {snapshot}` | 본문이 `DraftIn` 그대로이고 응답은 202 `ApplyJobView`(결과는 WS `apply`). 되돌리기는 `POST /api/rollback {items}`(여러 센서). `GET /api/sensors/{id}/config`, `…/snapshots`는 이름 그대로. M3에서 옮긴 `GET /api/sensors/{id}/history`를 여기서 만든다 |
+| 7.4·14.6.6절 허브 | `ApplyResult`는 무시(`IGNORED_EVENTS`) | 처리한다(15.6.2절). `IGNORED_EVENTS`는 빈 `frozenset()`이 된다. 덮개 테스트는 그대로 통과해야 한다 |
+| 14.5.6절 잠금 거절 | release·preflight·batches가 배치만 본다 | release(전부·목록)와 `POST /api/batches`·`/retry`가 진행 중인 적용 작업의 센서를 409 `apply_active`로 거절한다(15.5.12절) |
+| 9.2·14.8.1절 라우트 | `/sensors/:id`(정보 + `detail.comingSoon`) | `/sensors/:id`는 `정보` 탭, `/settings`·`/advanced`·`/history` 탭 추가, `/bulk` 추가. `detail.comingSoon`을 지운다 |
+| 9.4·14.8.1절 `AppShell` | `CalibrationPill` | `ApplyPill`을 더하고, `<Router aroundNav={guardNav}>`와 `UnsavedChangesDialog`를 둔다(15.9.3절) |
+| 9.4절 대시보드 | 주 동작 `센서 모으기` | 세션이 하나라도 있으면 보조 버튼 `일괄 편집`(→ `/bulk`) |
+| 14.8.6절 `BatchProgress` | WAITING 취소는 확인 없음 | 남은 시간 5초 미만이면 확인(G38, 15.9.14절) |
+| 14.8.6절 `SelectStep`, 9.4절 연결 해제 버튼 | 배치 멤버만 막음 | 진행 중인 적용 작업의 센서도 고를 수 없고 해제 버튼이 비활성이다(`apply.locked`). `모두 연결 해제`는 적용 작업이 도는 동안 비활성이다(`apply.lockedRelease`) |
+| 14.9.1절 identify 대기 테스트 | `session.busy == "identify"`를 본 뒤 POST | 요청이 처리되는 동안 잠금이 **실제로 잡혀 있었음**을 단언한다(15.10.1절) |
+| 11.1·14.9.1절 `test_gui_schema.py` | `ServerMessage` 11개 | 12개 |
+
+### 15.3 파일과 소유권
+
+```
+ms605/gui/
+  schemas.py   (+15.4절)
+  apply.py     새 파일. ApplyService: 적용 작업(하나), config_rev, 설정 읽기·미리보기(차이 행·위험), 작업 실행 루프
+  ws.py        Hub가 ApplyService를 만들고 ApplyResult를 넘김, apply 발행, SensorView.config_rev, StateSnapshot.apply
+  server.py    15.5절 라우트와 검사, 502 device_error 처리기, M3 경로의 apply_active 거절
+ms605/fleet.py, ms605/storage.py   코어 2.3절 (DND 섹션)
+web/src/
+  draft.ts, apply.ts             순수 함수 (15.9.2절, 15.9.11절)
+  navGuard.ts                    aroundNav 가드와 beforeunload (15.9.3절)
+  store/drafts.ts                초안 스토어 (서버 상태 스토어와 분리, G30)
+  api/client.ts, api/types.ts, store/reducer.ts, store/store.ts, calibration.ts   (+)
+  screens/SensorDetail.tsx (탭으로), screens/BulkEdit.tsx
+  components/edit/ThresholdMeter.tsx, ZoneEditRow.tsx, SensorTabs.tsx, SettingsTab.tsx, AdvancedTab.tsx, HistoryTab.tsx,
+    SubSensorEditor.tsx, DndSwitch.tsx, TimeSync.tsx, DraftBar.tsx, DiffPreview.tsx, ApplyResults.tsx, RollbackPicker.tsx,
+    BulkTargets.tsx, BulkThresholds.tsx, CommonSettings.tsx, CloneSetup.tsx, CalibrationHistoryList.tsx, DeviceHistoryPanel.tsx,
+    edit.module.css
+  components/ApplyPill.tsx, components/UnsavedChangesDialog.tsx
+  components/calibrate/BatchProgress.tsx (G38)
+tests/
+  test_gui_apply.py, test_gui_advanced.py      새 파일
+  test_gui_batch.py, test_gui_ws.py, test_gui_schema.py, test_gui_e2e.py   수정
+  test_fleet.py, test_storage.py               코어 2.3절 회귀 (CORE_API 14장 표의 M4 행)
+```
+
+| 소유 | 파일 | 비고 |
+|------|------|------|
+| 코어 | `ms605/fleet.py`, `ms605/storage.py`, `tests/test_{fleet,storage}.py` | 가장 먼저 한다. DND 초안·되돌리기가 이것에 기댄다 |
+| 백엔드 | `ms605/gui/*.py`, `web/openapi.json`, `tests/test_gui_{apply,advanced,batch,ws,schema,e2e}.py` | `schemas.py`를 15.4절 그대로 고치고 `web/openapi.json`을 다시 만든다 |
+| 프런트엔드 | `web/**`(`openapi.json` 제외), `ms605/gui/static/**` | `schema.ts`가 생기기 전에는 15.4절을 보고 fixture로 작업한다 |
+
+### 15.4 스키마 추가 (`ms605/gui/schemas.py`)
+
+`schemas.py`의 아래 다섯 군데((1)~(5))를 **그대로** 고치고, (6)은 프런트엔드 별칭이다. import는 바꾸지 않는다(14.4절 그대로 `model_validator`, `StringConstraints`를 쓴다).
+이 문서를 쓸 때 지금의 `schemas.py`에 이 변경을 적용해 pydantic 2.13과 `openapi-typescript` 7.13으로 돌려 확인했다: `ruff check` 통과,
+`ServerMessage`가 12개의 합집합, `subsensor_timing`이 TS에서 `[number, number][]`, `Change.before/after`가 `boolean | number | number[] | null`이고
+`false`/`2`/`[0, 1]`이 그대로 직렬화된다. FastAPI 본문 검증으로 `{"sensitivity": true}`, `{"dnd": 1}`, `5.0`인 임계값, `0`인 존 플래그가 모두
+422 `invalid_request`가 된다(엄격 타입. 코어도 bool을 숫자로 받지 않는다). 기본값이 있는 요청 필드도 생성 TS 타입에서는 필수다
+(`openapi-typescript` 7의 기본 동작). 그래서 클라이언트는 `SensorEdit`의 키를 모두 보내고 바꾸지 않는 섹션은 `null`로 둔다.
+
+**(1) `SensorView`** — `last_snapshot` 다음에 한 줄:
+
+```python
+    config_rev: int  # +1 each time this server run may have changed the sensor's settings (G28)
+```
+
+**(2) 새 모델** — `class StateSnapshot(Out):` 바로 앞에 넣는다(14.4절의 M3 모델 다음):
+
+```python
+# -- M4: config, drafts, apply, rollback, clone, history ----------------------------------
+
+THRESHOLD_UI_MAX = 500  # ms605/cli/cli.py THRESHOLD_MAX: the app's threshold axis (SPEC 8.3: known-safe UI range)
+
+Section = Literal[
+    "sensitivity", "detect_mode", "zone_enable", "zone_thresholds",
+    "subsensor_zones", "subsensor_timing", "subsensor_enable", "dnd",
+]  # models.PROFILE_SECTION_KEYS + "dnd" (CORE_API 2.3)
+RiskCode = Literal[
+    "absolute_overwrite", "large_change", "beyond_ui_range", "zone_off", "subsensor_off",
+    "subsensor_no_zone", "sensitivity_only", "dnd_on", "learning_skipped",
+]  # this order is the display order
+ApplyKind = Literal["apply", "rollback", "clone"]
+ApplyItemState = Literal["queued", "applying", "verified", "partial", "unverified", "failed"]
+# strict: JSON true is not the integer 1, and 1 is not true (the core refuses bools as numbers too)
+Flag = Annotated[bool, Field(strict=True)]
+U16 = Annotated[int, Field(strict=True, ge=0, le=65535)]
+ZoneIndex = Annotated[int, Field(strict=True, ge=0, le=6)]
+# delta (relative: -500..500) or absolute (0..65535; a calibrated value may sit above 500, and
+# beyond_ui_range flags it): ThresholdEdit checks the per-mode range
+ThresholdValue = Annotated[int, Field(strict=True, ge=-THRESHOLD_UI_MAX, le=65535)]
+Thresholds7 = Annotated[list[ThresholdValue | None], Field(min_length=7, max_length=7)]
+DeviceIds = Annotated[list[DeviceId], Field(min_length=1, max_length=32)]
+ZoneList = Annotated[list[ZoneIndex], Field(max_length=7)]
+SnapshotName = Annotated[str, StringConstraints(pattern=r"^[0-9]{8}T[0-9]{12}Z$")]  # storage: %Y%m%dT%H%M%S%fZ
+
+
+def _unique(ids: list[str], what: str) -> None:
+    if len(set(ids)) != len(ids):
+        raise ValueError(f"{what} has duplicates")
+
+
+def _covers(expect_rev: dict[str, int], ids: list[str]) -> None:
+    missing = [i for i in ids if i not in expect_rev]
+    if missing:
+        raise ValueError(f"expect_rev lacks {', '.join(missing)}")
+
+
+class ProfileView(Out):  # core ConfigProfile, every section present, + DND
+    sensitivity: int  # tag61: 1 LOW, 2 MEDIUM, 3 HIGH, 4 CUSTOM
+    detect_mode: int  # tag52: 1..3; 4 = space learning
+    zone_enable: list[bool]  # 7, tag50
+    zone_thresholds: list[ZonePair]  # 7, tag51
+    subsensor_zones: list[list[int]]  # S1..S3 zone indices, sorted, tag48
+    subsensor_timing: list[tuple[int, int]]  # S1..S3 (presence_s, absence_s), tag49
+    subsensor_enable: list[bool]  # S1..S3, tag41
+    dnd: bool | None  # tag32; None: not read, or the device did not answer
+
+
+class ConfigView(Out):
+    device_id: str
+    read_at: float  # epoch s
+    config_rev: int  # SensorView.config_rev at the read
+    distances_m: list[float]  # 7 far edges, models.zone_distances(cfg)
+    profile: ProfileView
+
+
+class ThresholdEdit(In):
+    mode: Literal["relative", "absolute"]  # relative: current + value (D8 default for bulk)
+    trigger: Thresholds7  # per zone; None leaves that zone as it is
+    maintain: Thresholds7
+
+    @model_validator(mode="after")
+    def _check(self) -> "ThresholdEdit":
+        values = [v for v in self.trigger + self.maintain if v is not None]
+        if not values:
+            raise ValueError("zone_thresholds changes no zone")
+        if self.mode == "absolute" and min(values) < 0:
+            raise ValueError("absolute thresholds must be >= 0")
+        if self.mode == "relative" and max(values) > THRESHOLD_UI_MAX:
+            raise ValueError(f"relative thresholds must be within -{THRESHOLD_UI_MAX}..{THRESHOLD_UI_MAX}")
+        return self
+
+
+class SensorEdit(In):  # core SensorChanges without detect_mode; None leaves the section as it is
+    sensitivity: Annotated[int, Field(strict=True, ge=1, le=4)] | None = None
+    zone_enable: Annotated[list[Flag], Field(min_length=7, max_length=7)] | None = None
+    zone_thresholds: ThresholdEdit | None = None
+    subsensor_zones: Annotated[list[ZoneList], Field(min_length=3, max_length=3)] | None = None
+    subsensor_timing: Annotated[list[tuple[U16, U16]], Field(min_length=3, max_length=3)] | None = None
+    subsensor_enable: Annotated[list[Flag], Field(min_length=3, max_length=3)] | None = None
+    dnd: Flag | None = None
+
+    @model_validator(mode="after")
+    def _not_empty(self) -> "SensorEdit":
+        if all(getattr(self, name) is None for name in type(self).model_fields):
+            raise ValueError("nothing to change")
+        return self
+
+
+class DraftIn(In):
+    targets: DeviceIds  # apply order
+    changes: SensorEdit  # the same edit for every target; relative thresholds resolve per sensor
+    expect_rev: dict[DeviceId, int] | None = None  # not read by the preview
+
+    @model_validator(mode="after")
+    def _check_targets(self) -> "DraftIn":
+        _unique(self.targets, "targets")
+        return self
+
+
+class ApplyIn(DraftIn):
+    expect_rev: dict[DeviceId, int]  # config_rev of every target from the preview: 409 stale if one moved
+
+    @model_validator(mode="after")
+    def _check_rev(self) -> "ApplyIn":
+        _covers(self.expect_rev, self.targets)
+        return self
+
+
+class RollbackItem(In):
+    device_id: DeviceId
+    snapshot: SnapshotName
+
+
+class RollbackIn(In):
+    items: Annotated[list[RollbackItem], Field(min_length=1, max_length=32)]
+    expect_rev: dict[DeviceId, int] | None = None  # not read by the preview
+
+    @model_validator(mode="after")
+    def _check_items(self) -> "RollbackIn":
+        _unique([i.device_id for i in self.items], "items")
+        return self
+
+
+class RollbackApplyIn(RollbackIn):
+    expect_rev: dict[DeviceId, int]  # every item's sensor
+
+    @model_validator(mode="after")
+    def _check_rev(self) -> "RollbackApplyIn":
+        _covers(self.expect_rev, [i.device_id for i in self.items])
+        return self
+
+
+class CloneIn(In):
+    source: DeviceId
+    targets: DeviceIds
+    sections: Annotated[list[Section], Field(min_length=1, max_length=8)]
+    expect_rev: dict[DeviceId, int] | None = None  # not read by the preview
+
+    @model_validator(mode="after")
+    def _check_clone(self) -> "CloneIn":
+        _unique(self.targets, "targets")
+        _unique(self.sections, "sections")
+        if self.source in self.targets:
+            raise ValueError("source is one of the targets")
+        return self
+
+
+class CloneApplyIn(CloneIn):
+    expect_rev: dict[DeviceId, int]  # every target, and the source as the preview's source_rev
+
+    @model_validator(mode="after")
+    def _check_rev(self) -> "CloneApplyIn":
+        _covers(self.expect_rev, [*self.targets, self.source])
+        return self
+
+
+class Change(Out):
+    section: Section
+    index: int | None  # zone 0..6 or sub-sensor 0..2; None for sensitivity, detect_mode, dnd
+    part: Literal["value", "trigger", "maintain", "presence_s", "absence_s"]
+    before: bool | int | list[int] | None  # None: unknown (DND not readable)
+    after: bool | int | list[int] | None
+    risks: list[RiskCode]  # RiskCode order; empty: not risky
+
+
+class SensorPreview(Out):
+    device_id: str
+    config_rev: int  # send back in expect_rev
+    error: str | None  # read or resolve failed (e.g. "busy: read", a sum outside 0..65535): applying fails too
+    before: ProfileView | None
+    after: ProfileView | None  # before + the changes; what the core skips (detect_mode 4) stays as before
+    changes: list[Change]  # empty: nothing would change on this sensor
+    risks: list[RiskCode]  # union of the rows' risks and the sensor-wide ones, RiskCode order
+
+
+class DraftPreview(Out):
+    kind: ApplyKind
+    checked_at: float  # epoch s
+    items: list[SensorPreview]  # target order
+    risks: list[RiskCode]  # union over the items, RiskCode order
+    source_rev: int | None  # clone: the source's config_rev before it was read; send it back in expect_rev
+
+
+class ApplyItemView(Out):
+    device_id: str
+    state: ApplyItemState
+    restore: str | None  # rollback: the snapshot being restored
+    snapshot: str | None  # the automatic pre-apply snapshot (the rollback point); None: not reached
+    applied: list[Section]
+    skipped: list[Section]  # e.g. detect_mode 4 in a clone
+    mismatched: list[Section]  # still different after the polled verify, or after a failed write
+    error: str | None
+    finished_at: float | None  # epoch s
+
+
+class ApplyJobView(Out):
+    apply_id: str  # uuid4 hex
+    kind: ApplyKind
+    state: Literal["running", "done"]
+    created_at: float  # epoch s
+    source: str | None  # clone: the source sensor
+    sections: list[Section]  # what the job writes, Section order
+    items: list[ApplyItemView]  # target order, applied one at a time
+
+
+class TimeSyncIn(In):
+    device_ids: DeviceIds
+
+    @model_validator(mode="after")
+    def _check_ids(self) -> "TimeSyncIn":
+        _unique(self.device_ids, "device_ids")
+        return self
+
+
+class TimeSyncItem(Out):
+    device_id: str
+    written_at: float | None  # epoch s written to tag33 (as int); None: failed
+    error: str | None
+
+
+class TimeSyncResult(Out):
+    items: list[TimeSyncItem]  # request order
+
+
+class CalibrationZone(Out):
+    index: int
+    distance_m: float | None
+    trigger: int
+    maintain: int
+
+
+class CalibrationRecord(Out):
+    timestamp: str  # ISO 8601
+    device_name: str | None
+    sensitivity: int | None
+    detect_mode: int | None
+    zones: list[CalibrationZone]
+
+
+class CalibrationHistory(Out):
+    device_id: str
+    records: list[CalibrationRecord]  # newest first
+
+
+class SnapshotView(Out):
+    name: str
+    taken_at: str  # ISO 8601 UTC
+    reason: str  # "apply" | "rollback": the state just before that write
+    sections: list[str]  # what that write changed; a rollback writes these back
+
+
+class SnapshotList(Out):
+    device_id: str
+    snapshots: list[SnapshotView]  # newest first
+
+
+class SnapshotDetail(Out):
+    device_id: str
+    snapshot: SnapshotView
+    profile: ProfileView  # the whole configuration before that write
+
+
+DeviceHistoryKind = Literal["presence", "light"]
+
+
+class PresenceRecordView(Out):
+    index: int
+    timestamp: int  # epoch s by the sensor's clock (sync it first)
+    sensor_presence: list[bool]  # S1..S3
+    zone_enabled: list[bool]  # 7
+    zone_presence: list[bool]  # 7
+    sub_sensor_triggers: list[int]  # detail records only, else []
+    zone_triggers: list[int]  # detail records only, else []
+
+
+class LightRecordView(Out):
+    index: int
+    timestamp: int  # epoch s by the sensor's clock
+    light_lux: int
+
+
+class DeviceHistory(Out):  # EXPERIMENTAL (SPEC 8.8): one round trip, no pagination, layout unverified
+    device_id: str
+    kind: DeviceHistoryKind
+    detail: bool  # presence records decoded as 37-byte detail records
+    read_at: float  # epoch s
+    presence: list[PresenceRecordView]  # kind == "presence"
+    light: list[LightRecordView]  # kind == "light"
+```
+
+**(3) `StateSnapshot`** — `batch` 다음에 한 줄:
+
+```python
+    apply: ApplyJobView | None  # the running or last apply job, kept until the next one (G25)
+```
+
+**(4) `ErrorCode`** — 마지막에 세 개를 더한다:
+
+```python
+ErrorCode = Literal[
+    "unauthorized", "forbidden_origin", "not_found", "already_exists", "busy",
+    "not_connected", "invalid", "invalid_request", "invalid_file", "storage", "internal", "batch_active",
+    "apply_active", "stale", "device_error",
+]
+```
+
+**(5) WS 메시지와 모델 목록** — `class ServerMessage(`부터 `RESPONSE_MODELS = (...)`의 닫는 괄호까지를 아래로 바꾼다(`CountdownMessage`까지는 그대로):
+
+```python
+class ApplyMessage(Out):
+    type: Literal["apply"] = "apply"
+    seq: int
+    ts: float
+    data: ApplyJobView
+
+
+class ServerMessage(
+    RootModel[
+        Annotated[
+            SnapshotMessage | SensorMessage | SensorRemovedMessage | SitesMessage | PendingMessage
+            | GatherMessage | NoticeMessage | BatchMessage | CalibrationJobMessage | LiveMessage | CountdownMessage
+            | ApplyMessage,
+            Field(discriminator="type"),
+        ]
+    ]
+):
+    pass
+
+
+REQUEST_MODELS = (
+    SiteCreate, SensorCreate, SensorUpdate, ReleaseRequest, SensorInfoImport,
+    PreflightRequest, BatchCreate, BatchRetry, ClientMessage,
+    DraftIn, ApplyIn, RollbackIn, RollbackApplyIn, CloneIn, CloneApplyIn, TimeSyncIn,
+)
+RESPONSE_MODELS = (
+    Health, StateSnapshot, SiteView, SensorView, ImportResult, ApiError, ServerMessage,
+    PreflightResult, BatchView,
+    ConfigView, DraftPreview, ApplyJobView, TimeSyncResult, CalibrationHistory, SnapshotList, SnapshotDetail,
+    DeviceHistory,
+)
+```
+
+**(6) `web/src/api/types.ts`** 에 별칭을 더한다: `ProfileView`, `ConfigView`, `ThresholdEdit`, `SensorEdit`, `DraftIn`, `ApplyIn`, `RollbackIn`, `RollbackApplyIn`, `RollbackItem`, `CloneIn`, `CloneApplyIn`,
+`Change`, `SensorPreview`, `DraftPreview`, `ApplyItemView`, `ApplyJobView`, `TimeSyncResult`, `TimeSyncItem`, `CalibrationRecord`, `CalibrationHistory`,
+`SnapshotView`, `SnapshotList`, `SnapshotDetail`, `DeviceHistory`, `PresenceRecordView`, `LightRecordView`,
+`Section = Change['section']`, `RiskCode = Change['risks'][number]`, `ApplyKind = ApplyJobView['kind']`, `ApplyItemState = ApplyItemView['state']`,
+`DeviceHistoryKind = DeviceHistory['kind']`.
+
+### 15.5 REST
+
+#### 15.5.1 목록
+
+| 메서드·경로 | 요청 | 성공 | 오류 | WS 발행 |
+|-------------|------|------|------|---------|
+| `GET /api/sensors/{device_id}/config` | — | 200 `ConfigView` | 404, 409 `batch_active`/`apply_active`/`not_connected`/`busy`, 502 | — |
+| `POST /api/drafts/preview` | `DraftIn` | 200 `DraftPreview` | 404, 409 `batch_active`/`apply_active`, 422 | — |
+| `POST /api/apply` | `ApplyIn` | 202 `ApplyJobView` | 404, 409 `apply_active`/`batch_active`/`not_connected`/`busy`/`stale`, 422 | `apply` |
+| `GET /api/apply/{apply_id}` | — | 200 `ApplyJobView` | 404 | — |
+| `GET /api/sensors/{device_id}/snapshots` | — | 200 `SnapshotList` | 404, 500 | — |
+| `GET /api/sensors/{device_id}/snapshots/{name}` | — | 200 `SnapshotDetail` | 404, 422, 500 | — |
+| `POST /api/rollback/preview` | `RollbackIn` | 200 `DraftPreview` | 404, 409 `batch_active`/`apply_active`, 422, 500 | — |
+| `POST /api/rollback` | `RollbackApplyIn` | 202 `ApplyJobView` | 404, 409(적용과 같음), 422, 500 | `apply` |
+| `POST /api/clone/preview` | `CloneIn` | 200 `DraftPreview` | 404, 409 `batch_active`/`apply_active`/`not_connected`/`busy`, 422, 502 | — |
+| `POST /api/clone` | `CloneApplyIn` | 202 `ApplyJobView` | 404, 409(적용과 같음), 422, 502 | `apply` |
+| `POST /api/time-sync` | `TimeSyncIn` | 200 `TimeSyncResult` | 404, 409 `batch_active`/`apply_active` | (`sensor`, 잠금 표시) |
+| `GET /api/sensors/{device_id}/history` | — | 200 `CalibrationHistory` | 404, 500 | — |
+| `GET /api/sensors/{device_id}/device-history?kind=presence\|light&detail=false` | — | 200 `DeviceHistory` | 404, 409 `batch_active`/`apply_active`/`not_connected`/`busy`, 422, 502 | — |
+
+모든 핸들러는 `async def`다. 상태를 바꾸는 라우트는 응답 전에 `hub.flush()`한다(6장 규칙). 미리보기·설정 읽기·시간 동기화·이력은 서버 상태가
+아니므로 응답으로만 준다(G18과 같다). 설정 읽기와 기기 이력이 `GET`인데 기기 I/O를 하는 이유: 읽기만 하고, 잠금 충돌은 409로 끝나며,
+G27이 진행 중인 보정·적용의 센서를 먼저 막는다.
+
+`apply_id`는 서버가 가진 작업(진행 중이거나 마지막) 하나의 id만 맞는다. 다른 id는 404다.
+
+#### 15.5.2 공통 검사 (`server.py`)
+
+```python
+def check_free(device_ids: Sequence[str], *, connected: bool) -> None:
+    """15.5 steps shared by every M4 route that touches a device. Raises ApiFailure."""
+```
+
+차례로(앞에서 걸리면 거기서 끝나고, 아무것도 바뀌지 않는다):
+
+1. `fleet.sessions`에 없는 id → 404 `not_found`(`message`에 id 목록).
+2. `hub.batches.members()`에 든 id → 409 `batch_active`(G27).
+3. `hub.applies.members()`에 든 id → 409 `apply_active`(G27).
+4. `connected=True`이면 `session.state`가 CONNECTED가 아닌 id → 409 `not_connected`.
+5. `session.busy == "calibration"`인 id → 409 `busy`(배치가 아닌 보정은 GUI에 없지만 잠금이 기준이다).
+
+`"identify"`, `"read"`, `"apply"` 잠금은 검사하지 않는다. 그 순간의 짧은 잠금은 코어가 결과로 알린다(설정 읽기는 `SessionBusyError` → 409 `busy`,
+미리보기는 그 항목의 `error`, 적용은 그 센서의 `failed`(`busy: …`)).
+
+오류 처리기 하나를 더한다: `SessionBusyError`·`MS605ConnectionError`가 아닌 `MS605Error` → 502 `device_error`(`message`=예외 문자열).
+FastAPI는 예외 클래스의 MRO에서 가장 가까운 처리기를 고르므로 기존 409 처리기가 그대로 먼저다. `ProfileError`는 `ValueError`이기도 해서 지금처럼 422 `invalid`다.
+
+#### 15.5.3 설정 읽기
+
+`GET /api/sensors/{device_id}/config`: `check_free([id], connected=True)` 후 `hub.applies.read_config(session)`(15.7.2절) → 200 `ConfigView`.
+잠금은 `operation("read")` 한 번이다(`read_config()`와 `read_dnd()`를 같은 잠금 안에서). 화면은 설정·고급 탭을 열 때와 "새 값 불러오기"에서 부른다.
+
+#### 15.5.4 초안 미리보기
+
+`POST /api/drafts/preview` (`DraftIn`):
+
+1. 본문 검증(422 `invalid_request`). `changes = edit_to_changes(body.changes)`(15.7.1절), `changes.validate()`(`ProfileError` → 422 `invalid`).
+2. `check_free(body.targets, connected=False)`. 연결이 안 된 센서는 요청 오류가 아니라 그 항목의 `error="not connected"`다(사전점검 G18과 같다).
+3. `await hub.applies.preview("apply", [(id, changes) for id in targets], several=len(targets) > 1, absolute=<절대 임계값인가>)` → 200 `DraftPreview`.
+
+`expect_rev`는 미리보기에서 보지 않는다. 미리보기는 서버의 `operation` 잠금(14.5.6절)을 잡지 않는다(읽기만 하고, 기기 사이의 읽기는 동시에 해도 된다, 코어 10장).
+
+#### 15.5.5 적용
+
+`POST /api/apply` (`ApplyIn`), 202:
+
+1. 15.5.4절 1단계. `expect_rev`는 필수이고 모든 대상을 담아야 한다(없거나 빠진 대상이 있으면 422 `invalid_request`).
+2. `async with operation:`(14.5.6절의 서버 잠금 하나. release·배치와 차례로 처리한다)
+   1. `hub.applies.active()` → 409 `apply_active`(G25, 대상과 관계없이).
+   2. `check_free(body.targets, connected=True)`.
+   3. `body.expect_rev`의 id마다 `hub.applies.rev(id) != expect_rev[id]` → 409 `stale`(`message`에 id 목록).
+   4. `view = hub.applies.start("apply", [(id, changes) for id in targets], sections=edit_sections(body.changes))`. `hub.flush()`. 202 `view`.
+
+결과는 응답이 아니라 WS `apply`로 온다(G10). 응답의 `apply_id`로 화면은 "내가 시작한 작업"을 안다.
+
+#### 15.5.6 되돌리기
+
+`RollbackIn.items`의 센서마다 `(device_id, snapshot)`이다. 결과 화면의 `되돌리기`(그 작업의 자동 스냅샷)와 이력 탭의 목록(어느 스냅샷이든)이 같은 경로를 쓴다.
+
+- 스냅샷 읽기(`load_rollback(items)`): 센서마다 `storage.snapshots_dir / id / f"{name}.json"`이 파일이 아니면 404 `not_found`.
+  `storage.load_snapshot(id, name)`의 `StorageError` → 500 `storage`. `SensorChanges.from_profile(snap.profile, snap.sections, dnd=snap.dnd)`의 `ProfileError`(손으로 고친
+  파일의 모르는 섹션) → 422 `invalid`.
+- `POST /api/rollback/preview`: `check_free(ids, connected=False)` → 스냅샷 읽기 → `preview("rollback", pairs, several=False, absolute=False)`.
+- `POST /api/rollback`(`RollbackApplyIn`: `expect_rev`가 모든 항목의 센서를 담아야 한다, 아니면 422): `async with operation:` 15.5.5절 2-1~2-3 → 스냅샷 읽기 → `start("rollback", [(id, name) …], sections=<스냅샷 섹션의 합집합, Section 순서>)` → 202.
+  작업은 센서마다 `fleet.rollback(id, name)`을 부른다(코어가 스냅샷을 다시 읽고 `reason="rollback"`으로 적용 전 스냅샷을 또 남긴다. 그래서 되돌리기도 되돌릴 수 있다).
+
+#### 15.5.7 클론
+
+1. 본문 검증(원본이 대상에 있으면, 중복이면 422 `invalid_request`).
+2. `check_free([source, *targets], connected=…)`: 미리보기는 원본만 `connected=True`, 대상은 `False`. 적용은 모두 `True`.
+3. 원본 읽기: `async with fleet.sessions[source].operation("read") as ms:` `cfg = await ms.read_config()`, `"dnd" in sections`이면 `dnd = await ms.read_dnd(timeout=DND_READ_TIMEOUT_S)`.
+   `SessionBusyError` → 409 `busy`, `MS605ConnectionError` → 409 `not_connected`, 그 밖의 `MS605Error` → 502 `device_error`(15.5.2절 처리기).
+4. `changes = SensorChanges.from_profile(ConfigProfile.from_config(cfg), sections, dnd=dnd)`(G36).
+5. 미리보기: `preview("clone", [(id, changes) for id in targets], several=len(targets) > 1, absolute="zone_thresholds" in sections, learning=cfg.detect_mode == 4 and "detect_mode" in sections)`.
+   적용(`CloneApplyIn`: `expect_rev`가 모든 대상과 원본을 담아야 한다, 아니면 422): 2-1(`apply_active`) → 2단계 검사 → `expect_rev`(원본 포함) → `source_rev = rev(source)` →
+   3·4단계(원본을 **다시** 읽는다. `operation` 잠금 **밖**: 응답 없는 원본이 기한까지 모든 적용·배치·해제를 붙잡지 않게) →
+   `async with operation:` 2-1 → 2단계 검사 → `expect_rev` → `rev(source) != source_rev`이면 409 `stale`(읽는 동안 원본이 바뀜) → `start("clone", …, sections=<Section 순서>, source=source)` → 202.
+
+#### 15.5.8 시간 동기화
+
+`POST /api/time-sync` (`TimeSyncIn`), 200 `TimeSyncResult`:
+
+1. `async with operation:` `check_free(ids, connected=False)`. 쓰기는 이 잠금 **밖**에서 한다: 응답 없는 센서마다 `WRITE_TIMEOUT_S`(10초)까지 걸리므로,
+   잠금을 쥔 채 쓰면 그동안 모든 적용·되돌리기·클론·배치·해제가 멈춘다. 그 사이 시작된 작업과는 세션 잠금이 겹치지 않게 한다(배치 생성은 409 `busy`,
+   적용 작업의 그 센서 항목은 `failed`, `busy: apply`).
+2. 센서마다 **차례로**: `when = datetime.now(timezone.utc)`, `async with session.operation("apply") as ms: await ms.set_time(when)` →
+   `TimeSyncItem(written_at=when.timestamp(), error=None)`. `SessionBusyError` → `error=f"busy: {exc.reason}"`, 그 밖의 `MS605Error` → `error=str(exc)`
+   (미연결은 `"not connected"`), `written_at=None`.
+3. 응답. 잠금(`"apply"`)을 잡고 놓을 때의 `BusyChanged`가 M2대로 `sensor`를 다시 보낸다.
+
+잠금 이유를 `"apply"`로 쓰는 이유: 기기 상태를 쓰는 동작이다(CLI `sync-time`은 `"read"`를 쓰지만, 다른 화면에는 `설정 적용 중`으로 보이는 편이 맞다).
+`set_time()`은 tag33에 `int(when.timestamp())`를 쓴다(SPEC 7장). 다시 읽지 않는다(G34).
+
+#### 15.5.9 보정 이력
+
+`GET /api/sensors/{device_id}/history`: id가 레지스트리에도 세션에도 없으면 404. 연결은 필요 없다(연결 안 된 센서도 이력을 본다).
+
+1. `addresses = 레지스트리 addresses의 값들 + (세션이 있으면 session.address)`.
+2. `records = storage.read_history(device_id, addresses=addresses)`(`StorageError` → 500 `storage`), **최신이 앞**이 되게 뒤집는다.
+3. 줄마다 `CalibrationRecord(timestamp, device_name, sensitivity, detect_mode, zones=[CalibrationZone(index, distance_m, trigger, maintain) …])`를
+   만든다. `timestamp`가 문자열이 아니거나 `zones`가 목록이 아니거나 존 항목의 `index`/`trigger`/`maintain`이 정수가 아니면(손으로 고친 줄) 그 줄은 경고 로그 후 건너뛴다
+   (코어가 깨진 JSON 줄을 건너뛰는 것과 같은 정책). `device_name`·`sensitivity`·`detect_mode`·`distance_m`은 타입이 맞지 않으면 `None`.
+
+#### 15.5.10 설정 백업(스냅샷)
+
+- `GET /api/sensors/{device_id}/snapshots`: id가 레지스트리에도 세션에도 없으면 404. `storage.list_snapshots(id)`(최신이 앞, 깨진 파일은 코어가 건너뛴다) →
+  `SnapshotList(device_id, snapshots=[SnapshotView(name, taken_at, reason, sections=list(s.sections)) …])`.
+- `GET /api/sensors/{device_id}/snapshots/{name}`: `name`이 `SnapshotName` 형식이 아니면 422 `invalid_request`(FastAPI 경로 인자 검증. 경로 탈출 방지).
+  파일이 없으면 404. `load_snapshot()`의 `StorageError` → 500. `profile_view(snap.profile, snap.dnd)`(15.7.2절)에서 섹션이 하나라도 `None`이면 500 `storage`
+  (`message="snapshot lacks <section>"`. 코어가 남기는 스냅샷은 늘 7개 섹션을 다 갖는다, 코어 11.2절).
+
+#### 15.5.11 기기 이력 (실험적, G35)
+
+`GET /api/sensors/{device_id}/device-history?kind=presence&detail=false`:
+
+1. 쿼리: `kind: DeviceHistoryKind = "presence"`, `detail: bool = False`(FastAPI 쿼리 인자. 다른 값이면 422 `invalid_request`).
+2. `check_free([id], connected=True)`.
+3. `async with session.operation("read") as ms:` `presence = await ms.read_presence_history(detail=detail)` 또는 `light = await ms.read_light_history()`.
+   `SessionBusyError` → 409 `busy`, 그 밖의 `MS605Error`(응답 없음, push 없음) → 502 `device_error`.
+4. `PresenceRecordView(index, timestamp, sensor_presence=[bit i of sensor_presence_mask for i in 0..2], zone_enabled=[bit z of zone_enable_mask for z in 0..6],
+   zone_presence=[bit z of zone_presence_mask …], sub_sensor_triggers=list(…), zone_triggers=list(…))`, `LightRecordView(index, timestamp, light_lux)`.
+   `DeviceHistory(device_id, kind, detail, read_at=time.time(), presence=…, light=…)`(고르지 않은 쪽은 `[]`).
+
+시뮬레이터는 개수 tag(57/59)가 0이라 늘 빈 목록이다. 테스트는 합성 레코드를 시뮬레이터 `tags`에 직접 넣는다(15.10.1절).
+
+#### 15.5.12 작업 잠금: M2·M3 경로에 더하는 거절 (G27)
+
+| 경로 | 조건 | 응답 |
+|------|------|------|
+| `POST /api/release` `{device_ids: null}` | 진행 중인 적용 작업이 있음 | 409 `apply_active`, 아무것도 하지 않음 |
+| `POST /api/release` `{device_ids: [...]}` | 진행 중인 적용 작업의 센서가 하나라도 있음 | 409 `apply_active`, 아무것도 닫지 않음 |
+| `POST /api/batches`, `/retry` | 대상 중 진행 중인 적용 작업의 센서가 있음(14.5.3절 4단계 뒤) | 409 `apply_active` |
+
+`POST /api/preflight`는 막지 않는다(잠금 없이 실시간 참조만 잡는다, 14.6.4절). 적용·되돌리기·클론의 시작과 시간 동기화는 release·배치와 같은
+`operation` 잠금 안에서 검사한다. 그래서 검사를 통과한 작업의 센서를 뒤이은 release가 닫거나, 뒤이은 배치가 같은 센서를 잡는 일이 없다.
+작업 자체는 잠금 밖의 태스크로 돈다(`members()`가 그 뒤의 요청을 막는다).
+
+### 15.6 WebSocket
+
+#### 15.6.1 서버 → 클라이언트 새 메시지
+
+| `type` | `seq` | 받는 쪽 | 언제 | `data` |
+|--------|-------|---------|------|--------|
+| `apply` | 정수 | 모두 | 작업 생성(모든 항목 `queued`), 항목이 `applying`이 될 때, 항목의 결과가 정해질 때, 작업이 `done`이 될 때 | `ApplyJobView` 전체 |
+
+- 항목은 최대 32개이고 상태 변화는 항목마다 두 번이므로 작업 전체를 보낸다(M3의 `batch`/`calibration_job` 같은 나눔이 필요 없다). 같은 틱의 표시는 하나로 합쳐진다.
+- `flush()` 순서: `sites` → `pending` → `sensor`/`sensor_removed` → `batch` → `calibration_job` → **`apply`** → `gather` → `notice`.
+  `sensor`가 `apply`보다 먼저 나가므로, 작업이 끝났다는 메시지를 받을 때 그 센서의 `config_rev`·`last_snapshot`은 이미 새 값이다.
+- `StateSnapshot.apply = hub.applies.view()`. 늦게 붙은 화면도 같은 진행과 결과를 본다. 끝난 작업은 다음 작업을 만들 때까지 남는다(G16과 같다).
+- 일시적(`seq: null`) 메시지는 더하지 않는다. 편집 화면의 실시간 채움은 M3의 `live`(구독)를 그대로 쓴다.
+
+#### 15.6.2 허브: 이벤트 → 메시지 (M4, 14.6.6절 표에 더하는 행)
+
+| 코어 이벤트 | 허브 처리 | WS |
+|-------------|-----------|----|
+| `ApplyResult` | `applies.on_event(ev)`: `device_id`가 있고 `snapshot is not None`이면 `config_rev[id] += 1`, dirty(id) | `sensor`(`config_rev`, `last_snapshot`) |
+| `CalibrationResult` | M3 처리 + `started`이면 `config_rev[id] += 1`, dirty(id) | M3 + `sensor` |
+
+- `HANDLED_EVENTS`에 `ApplyResult`를 옮기고 `IGNORED_EVENTS = frozenset()`. 덮개 테스트(7.4절)는 그대로 통과해야 한다.
+- 작업 항목의 상태는 이벤트가 아니라 작업 루프가 `apply_changes()`의 반환값으로 정한다(15.7.3절). `ApplyResult`는 CLI 없이도 이 서버의 모든 쓰기에서 오므로
+  `config_rev`는 이벤트로 센다.
+
+### 15.7 `ms605/gui/apply.py`
+
+```python
+LARGE_CHANGE = 20  # one sensitivity-preset step (protocol.SENSITIVITY_PRESETS LOW -> MEDIUM trigger, zone 0)
+DND_READ_TIMEOUT_S = 3.0  # config, preview and clone-source reads: an unanswered tag32 must not stall the editor
+
+def edit_to_changes(edit: SensorEdit) -> SensorChanges: ...
+def edit_sections(edit: SensorEdit) -> list[Section]: ...          # the non-None keys, Section order
+def profile_view(profile: ConfigProfile, dnd: bool | None) -> ProfileView: ...
+def diff_rows(before: ProfileView, after: ProfileView) -> list[Change]: ...   # risks filled by assess()
+def assess(rows: list[Change], after: ProfileView, *, overwrite: bool, learning: bool) -> list[RiskCode]: ...
+
+class ApplyService:
+    def __init__(self, fleet: Fleet, hub: Hub) -> None: ...
+    current: ApplyJob | None                           # 진행 중이거나 마지막 작업
+    def active(self) -> bool: ...                      # current가 running
+    def members(self) -> frozenset[str]: ...           # active()이면 current의 대상, 아니면 빈 집합
+    def rev(self, device_id: str) -> int: ...          # config_rev, 처음 보는 id는 0
+    def view(self) -> ApplyJobView | None: ...
+    async def read_config(self, session: DeviceSession) -> ConfigView: ...
+    async def preview(self, kind: ApplyKind, pairs: Sequence[tuple[str, SensorChanges]], *,
+                      several: bool, absolute: bool, learning: bool = False) -> DraftPreview: ...
+    def start(self, kind: ApplyKind, pairs: Sequence[tuple[str, SensorChanges | str]], *,
+              sections: Sequence[Section], source: str | None = None) -> ApplyJobView: ...
+    def on_event(self, ev: Event) -> None: ...         # ApplyResult, CalibrationResult -> config_rev
+    async def aclose(self) -> None: ...                # 작업 태스크 취소와 대기
+```
+
+`batch.py`와 같은 이유로 `Hub`·`Client` 타입은 `if TYPE_CHECKING:` 안에서만 import한다. `Hub.__init__`이 `self.applies = ApplyService(fleet, self)`를 만들고
+`mark_apply()`(표시 + `_schedule()`)를 더한다. 검사(404·409·422)는 모두 라우트가 한다(14.6.5절과 같은 나눔). `ApplyService`는 검사를 통과한 요청만 실행한다.
+
+#### 15.7.1 편집 → 코어 변경
+
+`edit_to_changes(edit)`: 이름이 같은 필드를 그대로 옮긴다. `zone_thresholds`는 `ThresholdChange(relative=mode == "relative", trigger=list(…), maintain=list(…))`,
+`subsensor_timing`은 `[(p, a) for p, a in …]`, `dnd`는 그대로(코어 2.3절). `detect_mode`는 `SensorEdit`에 없다(편집 화면이 감지 모드를 바꾸지 않는다. 클론만 옮긴다).
+라우트의 "절대 임계값인가"는 `edit.zone_thresholds is not None and edit.zone_thresholds.mode == "absolute"`다.
+
+#### 15.7.2 설정 읽기와 미리보기
+
+`read_config(session)`:
+
+```python
+rev = self.rev(session.device_id)              # I/O 전에: 읽는 동안 바뀌면 적용이 stale로 걸린다
+async with session.operation("read") as ms:
+    cfg = await ms.read_config()
+    try:
+        dnd = await ms.read_dnd(timeout=DND_READ_TIMEOUT_S)
+    except MS605ConnectionError:
+        raise
+    except MS605Error:
+        dnd = None                             # 이 펌웨어가 tag32에 답하지 않음: 화면은 DND를 숨긴다
+return ConfigView(device_id=session.device_id, read_at=time.time(), config_rev=rev, distances_m=list(zone_distances(cfg)),
+                  profile=profile_view(ConfigProfile.from_config(cfg), dnd))
+```
+
+`profile_view(profile, dnd)`: 섹션을 그대로 옮기되 `zone_thresholds`는 `ZonePair` 목록, `subsensor_zones`는 각 목록을 `sorted(set(…))`(tag48은 비트마스크라 순서·중복이 없다,
+코어 `diff_sections`와 같다), `subsensor_timing`은 튜플 목록. 섹션이 `None`이면 `StorageError(f"snapshot lacks {key}")`(스냅샷에서만 생긴다).
+
+`preview(kind, pairs, *, several, absolute, learning)`: 센서마다 **동시에**(`asyncio.gather`, 기기 사이의 읽기는 동시에 해도 된다) 아래를 하고 `pairs` 순서로 모은다.
+
+1. `rev = self.rev(id)`, `session = fleet.sessions[id]`.
+2. `async with session.operation("read") as ms:` `cfg = await ms.read_config()`, `changes.dnd is not None`이면 `dnd = await ms.read_dnd(timeout=DND_READ_TIMEOUT_S)`(실패하면 항목
+   `error`. 적용도 같은 읽기를 하므로 적용도 실패한다), 아니면 `dnd = None`.
+3. `target = changes.resolve(ConfigProfile.from_config(cfg))`. 범위를 벗어난 상대값은 코어가 `ProfileError`를 낸다(잘라 내지 않는다, 코어 6.3절).
+4. `before = profile_view(current, dnd)`. `after = before`에 `target.sections_present()`의 섹션을 덮어쓴 것(단 `target.detect_mode == 4`는 코어가 건너뛰므로
+   덮어쓰지 않는다), `changes.dnd is not None`이면 `after.dnd = changes.dnd`.
+5. `rows = diff_rows(before, after)`, `risks = assess(rows, after, overwrite=absolute and (several or kind == "clone"), learning=learning)`.
+6. 2·3단계의 예외: `SessionBusyError` → `error=f"busy: {exc.reason}"`, 그 밖의 `MS605Error`·`ProfileError` → `error=str(exc)`. 그때 `before`/`after`는 `None`,
+   `changes`·`risks`는 `[]`.
+
+결과 `DraftPreview(kind, checked_at=time.time(), items, risks=<항목 risks의 합집합, RiskCode 순서>)`.
+
+`overwrite` 규칙(G29): 일괄 편집의 절대 임계값은 대상이 2대 이상일 때, 클론은 대상 수와 관계없이 `zone_thresholds`를 고르면 켠다. 단일 센서 편집의 절대값(G32)과
+되돌리기(`absolute=False`)는 켜지 않는다.
+
+#### 15.7.3 작업 실행
+
+`start(kind, pairs, *, sections, source)`: `ApplyJob(apply_id=uuid4().hex, kind, state="running", created_at=time.time(), source, sections, items=<pairs 순서, 모두 queued>)`를
+`current`로 두고(이전 작업을 버린다) 실행 태스크를 띄우고 `mark_apply()`, 뷰를 돌려준다. 실행 루프:
+
+```python
+for item in job.items:
+    item.state = "applying"; self.hub.mark_apply()
+    session = self.fleet.sessions.get(item.device_id)
+    if session is None:
+        result = None; item.state, item.error = "failed", "not connected"
+    elif job.kind == "rollback":
+        try:
+            result = await self.fleet.rollback(item.device_id, item.restore)
+        except StorageError as exc:          # 요청 뒤에 파일이 사라지거나 깨짐
+            result = None; item.state, item.error = "failed", str(exc)
+    else:
+        result = await apply_changes(session, job.changes, self.fleet.storage)
+    if result is not None:
+        item.state = STATE[result.status]   # OK verified, PARTIAL partial, UNVERIFIED unverified, FAILED failed
+        item.snapshot, item.error = result.snapshot, result.error
+        item.applied, item.skipped, item.mismatched = list(result.applied), list(result.skipped), list(result.mismatched)
+    item.finished_at = time.time(); self.hub.mark_apply()
+job.state = "done"; self.hub.mark_apply()
+```
+
+- `apply_changes()`·`Fleet.rollback()`은 기기 쪽 실패를 결과로 돌려준다(코어 9장). 그래서 한 센서의 실패가 다음 센서를 멈추지 않는다.
+- 클론은 모든 항목이 같은 `SensorChanges`(`job.changes`)를 쓴다. 적용도 모든 대상에 같은 편집이다(`DraftIn.changes` 하나. 상대값은 센서마다 그 센서의 현재값으로 풀린다).
+- `aclose()`(서버 종료)는 태스크를 취소하고 기다린다. `apply_changes()`는 취소되면 잠금을 놓고 `CancelledError`를 올린다. 곧이어 `fleet.aclose()`가 링크를 끊는다.
+  lifespan 종료 순서: `hub.close_clients()` → `live.aclose()` → `batches.aclose()` → **`applies.aclose()`** → `fleet.aclose()` → `hub.detach()`.
+
+`view()`: `ApplyJobView(apply_id, kind, state, created_at, source, sections, items=[ApplyItemView(…) …])`. `restore`는 되돌리기 항목의 스냅샷 이름(그 밖은 `None`).
+
+#### 15.7.4 차이 행과 위험
+
+`diff_rows(before, after)`: `Section` 순서로, 값이 **다른 것만** 행을 만든다(같은 값으로 고친 존은 행이 없다).
+
+| 섹션 | 행 | `index` | `part` | `before`/`after` |
+|------|----|---------|--------|------------------|
+| `sensitivity`, `detect_mode`, `dnd` | 하나 | `None` | `value` | 정수, 정수, bool 또는 `None`(DND를 못 읽음) |
+| `zone_enable` | 다른 존마다 | 존 0~6 | `value` | bool |
+| `zone_thresholds` | 다른 존마다 트리거, 그다음 유지 | 존 0~6 | `trigger` / `maintain` | 정수 |
+| `subsensor_zones` | 다른 서브센서마다 | 0~2 | `value` | 정렬한 존 목록 |
+| `subsensor_timing` | 다른 서브센서마다 재실, 그다음 부재 | 0~2 | `presence_s` / `absence_s` | 정수(초) |
+| `subsensor_enable` | 다른 서브센서마다 | 0~2 | `value` | bool |
+
+`assess(rows, after, *, overwrite, learning)`이 각 행의 `risks`를 채우고 센서의 `risks`(합집합 + 행 없는 위험)를 돌려준다. 모두 `RiskCode` 순서:
+
+| 코드 | 붙는 행 | 조건 | 이유 |
+|------|---------|------|------|
+| `absolute_overwrite` | 임계값 행 | `overwrite` | D8: 센서마다 다른 보정값을 같은 값으로 덮는다 |
+| `large_change` | 임계값 행 | `abs(after - before) >= LARGE_CHANGE`(20) | 프리셋 한 단계보다 큰 변화. 감지 성향이 크게 바뀐다 |
+| `beyond_ui_range` | 임계값 행 | `after > THRESHOLD_UI_MAX`(500) | 앱의 임계값 축 밖이다(SPEC 8.3: 알려진 안전 범위를 쓴다). 상대값을 더해 생길 수 있다 |
+| `zone_off` | `zone_enable` 행 | `before and not after` | 그 존에서 감지하지 않는다 |
+| `subsensor_off` | `subsensor_enable` 행 | `before and not after` | 그 서브센서가 재실을 판정하지 않는다 |
+| `subsensor_no_zone` | `subsensor_zones` 행, 또는 켜지는 `subsensor_enable` 행 | 그 서브센서가 `after`에서 켜져 있고 구역이 비어 있음 | 켜져 있지만 감지할 구역이 없다 |
+| `sensitivity_only` | `sensitivity` 행 | 같은 센서에 임계값 행이 없음 | 측정: tag61 프리셋을 써도 tag51이 바뀌지 않는다(SPEC 8.9). "민감도를 높였으니 임계값도 바뀌었다"는 오해를 막는다 |
+| `dnd_on` | `dnd` 행 | `after is True` | DND가 기기 동작에 주는 영향은 확인되지 않았다(SPEC 7장) |
+| `learning_skipped` | (행 없음, 센서) | `learning`: 클론 원본이 학습 중(`detect_mode == 4`)이고 `detect_mode`를 골랐음 | 코어가 그 섹션을 건너뛴다(`skipped`). 고른 것이 빠졌음을 알린다 |
+
+### 15.8 코어 접점
+
+| GUI가 쓰는 것 | 어디서 | 비고 |
+|---------------|--------|------|
+| `DeviceSession.operation("read")` + `MS605.read_config()`, `read_dnd()` | 설정 읽기, 미리보기, 클론 원본 | 기기 사이에는 동시에. 잠금 충돌은 409(설정 읽기) 또는 항목 `error`(미리보기) |
+| `ConfigProfile.from_config()`, `SensorChanges.resolve()`, `validate()`, `ThresholdChange` | 미리보기, 라우트 검증 | 상대값은 기기 값으로 풀린다(G24). 범위 밖은 `ProfileError`(자르지 않음) |
+| `SensorChanges.dnd`, `from_profile(..., dnd=)` | DND 편집, 되돌리기, 클론 | **코어 2.3절(M4 유일한 코어 변경)** |
+| `apply_changes(session, changes, storage)` | 적용·클론 작업의 항목 | 현재값 → 스냅샷 → 쓰기 → 폴링 검증(최대 `VERIFY_TIMEOUT_S` 3초, 측정된 반영 지연 약 1초) |
+| `Fleet.rollback(device_id, name)` | 되돌리기 작업의 항목 | 되돌리기 전에도 스냅샷을 남긴다 |
+| `ApplyResult`(`status`, `applied`, `skipped`, `mismatched`, `snapshot`, `error`) | 작업 항목, `config_rev` | `ApplyStatus` → 항목 상태(15.7.3절) |
+| `CalibrationResult.started` | `config_rev` | 학습을 시작한 보정은 임계값을 바꿨을 수 있다 |
+| `Storage.list_snapshots()`, `load_snapshot()`, `Snapshot.dnd`, `snapshots_dir` | 백업 목록·상세, 되돌리기 검사 | 목록은 최신이 앞, 깨진 파일은 코어가 건너뜀 |
+| `Storage.read_history(device_id, addresses=)` | 보정 이력 | 예전 줄은 주소로 맞춘다(코어 8장) |
+| `MS605.set_time(when)` | 시간 동기화 | `operation("apply")` 안에서. 다시 읽지 않음(G34) |
+| `MS605.read_presence_history(detail=)`, `read_light_history()` | 기기 이력 | **실험적**(SPEC 8.8). 한 번 왕복, 페이지 없음 |
+| `models.zone_distances(cfg)` | `ConfigView.distances_m` | |
+| `BatchService.members()`, `active()` | 15.5.2절 검사 | G27 |
+
+코어의 `Fleet.apply()`는 GUI가 부르지 않는다(G26). CLI 클론이 계속 쓴다.
+
+### 15.9 프런트엔드
+
+M2·M3의 시각 언어(토큰, `StatusBadge`의 아이콘 + 문구 + 색, 화면마다 주 동작 하나, 폰 하단 고정 주 버튼 64px, 접힌 보조 영역)를 그대로 쓴다.
+새 색 토큰은 만들지 않는다. 위험 행은 `--warn-bg` 배경 + `--warn` 왼쪽 테두리 3px + `AlertTriangle`, 오류는 `--danger`.
+
+#### 15.9.1 라우트와 내비게이션
+
+| 경로 | 화면 |
+|------|------|
+| `/sensors/:deviceId` | 센서 상세 `정보` 탭: M2·M3 내용(정보, 이름 편집, `LiveStrip`, `이 센서 보정`, 연결 해제, 등록 삭제). `detail.comingSoon`은 지운다 |
+| `/sensors/:deviceId/settings` | `설정` 탭(15.9.6절) |
+| `/sensors/:deviceId/advanced` | `고급` 탭(15.9.7절) |
+| `/sensors/:deviceId/history` | `이력` 탭(15.9.8절) |
+| `/bulk` | 일괄 편집(15.9.9절). `?ids=a,b`는 처음 선택. `?mode=clone&source=<id>`이면 클론 모드(15.9.10절) |
+
+- `SensorTabs`: 제목 아래 `<nav aria-label="센서 메뉴">`의 링크 4개(`정보`·`설정`·`고급`·`이력`), 현재 탭은 `aria-current="page"`. 탭은 라우트이므로 ARIA tablist가 아니다.
+  그 센서의 초안이 바뀌었으면 `설정`·`고급` 링크에 점(`•`, 시각적으로 숨긴 문구 `edit.tabDirty`)을 붙인다. 폰에서는 가로 4칸, 칸마다 최소 48px 높이.
+- 탭 바(4개)는 늘리지 않는다. `일괄 편집`은 대시보드의 보조 버튼, 센서 상세 설정 탭의 `다른 센서에 복제`(→ `/bulk?mode=clone&source=<id>`)로 들어간다.
+- 헤더에 `ApplyPill`(15.9.12절). `CalibrationPill` 옆.
+
+#### 15.9.2 초안 모델 (`draft.ts`, 순수 함수) 과 초안 스토어 (`store/drafts.ts`)
+
+```ts
+export const THRESHOLD_UI_MAX = 500 // schemas.THRESHOLD_UI_MAX
+export type ThresholdPart = 'trigger' | 'maintain'
+
+export interface Edit {                      // 단일 센서: 바꾼 것만, 나머지 null (임계값은 절대값, G32)
+  sensitivity: number | null
+  zone_enable: boolean[] | null              // 7, 하나라도 바꾸면 7개 전체
+  trigger: (number | null)[]                 // 7
+  maintain: (number | null)[]                // 7
+  subsensor_zones: number[][] | null         // 3, 정렬
+  subsensor_timing: [number, number][] | null
+  subsensor_enable: boolean[] | null
+  dnd: boolean | null
+}
+export interface SensorDraft { deviceId: string; base: ConfigView; edit: Edit }
+
+export interface BulkDraft {                 // 일괄 편집 (G32: 상대값 기본)
+  ids: string[]
+  mode: 'relative' | 'absolute'
+  trigger: (number | null)[]                 // 7: 상대면 ±n(0은 null과 같다), 절대면 값
+  maintain: (number | null)[]
+  sensitivity: number | null                 // null = 그대로
+  zone_enable: boolean[] | null              // null = 그대로, 아니면 7개 전체를 모든 센서에 같게
+  dnd: boolean | null
+  absoluteAck: boolean
+}
+export interface CloneDraft { source: string | null; sections: Section[]; ids: string[]; ack: boolean }
+
+export function emptyEdit(): Edit
+export function draftThreshold(d: SensorDraft, zone: number, part: ThresholdPart): number   // 편집값 ?? 기준값
+export function draftSection<K extends keyof Edit>(d: SensorDraft, key: K): NonNullable<Edit[K]>  // 그 밖의 섹션: 편집값 ?? 기준값
+export function setThreshold(d: SensorDraft, zone: number, part: ThresholdPart, v: number): SensorDraft
+                                                                            // clampThreshold 후, 기준값과 같으면 그 칸을 null로
+export function setSection<K extends keyof Edit>(d: SensorDraft, key: K, v: Edit[K]): SensorDraft
+                                                                            // 기준값과 같으면(subsensor_zones는 정렬 비교) null로
+export function changedCount(d: SensorDraft): number                        // 바뀐 칸 수 (존·서브센서·스칼라 단위, DiffPreview 행 수와 같은 단위)
+export function isDirty(e: Edit): boolean
+export function toSensorEdit(e: Edit): SensorEdit                           // trigger/maintain 중 하나라도 있으면 {mode:'absolute', …}, 키는 모두 보낸다
+export function toDraftIn(d: SensorDraft): DraftIn                          // {targets:[id], changes, expect_rev: null}
+export function bulkToDraftIn(b: BulkDraft): DraftIn | null                 // 아무것도 없으면 null
+export function bulkIsDirty(b: BulkDraft): boolean
+export function setBulkMode(b: BulkDraft, mode: BulkDraft['mode']): BulkDraft // 값과 absoluteAck를 비운다 (+5와 5는 다른 뜻)
+export function expectRevOf(p: DraftPreview): Record<string, number>        // 적용 요청의 expect_rev
+export function clampThreshold(v: number, base: number): number              // Math.round, [0, max(THRESHOLD_UI_MAX, base)]
+export function valueAt(clientX: number, rect: { left: number; width: number }, axisMax: number, max: number): number
+                                                                            // round(clamp((x-left)/width, 0, 1) × axisMax), 다시 [0, max]
+export function axisFor(base: number, value: number, live: number | null): number
+                                                                            // m = 1.25 × max(base, value, live ?? 0); 100·200·500 중 m 이상인 가장 작은 것, 넘으면 ceil(m/100)×100
+export function keyStep(key: string, shift: boolean): number | 'min' | 'max' | null  // 15.9.5절 키 표
+```
+
+`store/drafts.ts`(G30, 서버 상태 스토어와 다른 Zustand 스토어):
+
+```ts
+interface DraftsState {
+  sensors: Record<string, SensorDraft>       // 범위 'sensor:<id>'
+  bulk: BulkDraft | null                     // 범위 'bulk'
+  clone: CloneDraft | null                   // 범위 'bulk'
+  pendingNav: { to: string; options?: NavigateOptions; go: () => void } | null
+  openSensor(base: ConfigView): void         // 이미 있으면 그대로 둔다 (뒤로 갔다 돌아온 경우)
+  rebase(base: ConfigView): void             // 기준값만 바꾸고, 새 기준값과 같아진 칸은 null로. 배열 섹션은 원소(타이밍은 필드)별로:
+                                             // 옛 기준값과 다른 원소만 새 기준값 위에 얹는다 (손대지 않은 원소는 기기의 현재 값)
+  updateSensor(id: string, f: (d: SensorDraft) => SensorDraft): void
+  setBulk(b: BulkDraft | null): void
+  setClone(c: CloneDraft | null): void
+  discard(scope: string, forget?: boolean): void  // forget: 센서 초안을 기준값째 지운다 (다음 방문은 설정을 다시 읽는다)
+}
+export function scopeOf(path: string): string | null    // /sensors/<id>(/...)? -> 'sensor:<id>', /bulk -> 'bulk', 그 밖 null
+export function isScopeDirty(s: DraftsState, scope: string): boolean   // sensor: isDirty(edit), bulk: bulkIsDirty || (clone && clone.source && clone.ids.length > 0)
+```
+
+초안의 수명:
+
+| 사건 | 단일 센서 초안 (`sensor:<id>`) | 일괄 초안 (`bulk`) |
+|------|-------------------------------|--------------------|
+| 탭 사이 이동(설정 ↔ 고급 ↔ 이력 ↔ 정보) | 그대로(같은 범위) | — |
+| 범위를 떠나는 앱 안 이동 | 바뀐 것이 있으면 가드(15.9.3절). `버리고 이동`은 초안을 기준값째 지운다 | 같음 |
+| 적용 제출(202) | 그대로 둔다 | **편집값을 비운다**(선택은 남김, G37) |
+| 내 작업에서 그 센서가 `verified` | 비우고 설정을 다시 읽는다(`getConfig` → `rebase`) | — |
+| 그 밖의 결과 | 남겨 두고 설정을 다시 읽어 `rebase`(절대값이라 다시 보내도 안전, G37) | — |
+| `sensor.config_rev !== draft.base.config_rev` (다른 화면·보정이 바꿈) | 배너 `edit.revChanged` + `새 값 불러오기`(→ `rebase`). 미리보기를 하면 서버가 어차피 새 값으로 계산한다 | 미리보기가 항상 새로 읽는다 |
+| 연결된 센서의 `live.gathered_at > draft.base.read_at` (끊겼다 다시 모임, 서버 재시작) | 설정을 다시 읽어 `rebase`(바뀐 칸은 남는다). 그 사이 앱 밖에서 바뀐 값은 `config_rev`가 못 본다 | — |
+| `모두 되돌리기` | 편집값을 비우고 설정을 다시 읽어 `rebase` | 편집값을 비운다 |
+| 409 `stale` | `edit.stale` 문구, 미리보기를 다시 하게 한다 | 같음 |
+
+#### 15.9.3 저장하지 않은 변경 가드 (`navGuard.ts`)
+
+wouter 3.13의 `Router`는 모든 이동(`Link`, `useLocation`의 `navigate`, `Redirect`)을 `aroundNav(navigate, to, options)`로 감싼다(`node_modules/wouter/src/index.js`의
+`useLocationFromRouter`). 이것을 쓴다:
+
+```ts
+export function guardNav(navigate: (to: string, o?: NavigateOptions) => void, to: string, options?: NavigateOptions): void {
+  const s = useDrafts.getState()
+  const from = scopeOf(window.location.pathname)
+  if (from !== null && from !== scopeOf(to) && isScopeDirty(s, from)) {
+    useDrafts.setState({ pendingNav: { to, options, go: () => { s.discard(from, true); navigate(to, options) } } })
+    return
+  }
+  navigate(to, options)
+}
+export function useBeforeUnloadGuard(): void   // 바뀐 범위가 하나라도 있으면 beforeunload에서 preventDefault + returnValue = ''
+```
+
+- `main.tsx`: `<Router aroundNav={guardNav}><App/></Router>`. `AppShell`이 `useBeforeUnloadGuard()`를 부르고 `UnsavedChangesDialog`를 둔다.
+- `UnsavedChangesDialog`: `pendingNav`가 있으면 열린다(`ConfirmDialog`, 위험 색 확인 버튼). 제목 `guard.title`, 본문 `guard.body`(바뀐 칸 수), 버튼 `guard.stay`(기본 포커스, `pendingNav = null`) /
+  `guard.discard`(`pendingNav.go()` 후 `null`). Esc는 `머무르기`.
+- 브라우저 뒤로·앞으로(popstate)는 `aroundNav`를 거치지 않는다. 초안은 스토어에 남고, 돌아오면 편집 화면이 그대로 그린다(G30).
+- 같은 범위 안의 이동(탭)과 `?` 쿼리만 바뀌는 이동은 막지 않는다.
+
+#### 15.9.4 서버 상태 스토어와 리듀서
+
+```ts
+interface AppState {
+  // ... M2·M3 그대로
+  apply: ApplyJobView | null
+}
+```
+
+| 메시지 | 적용 |
+|--------|------|
+| `snapshot` | M3 + `apply = data.apply` |
+| `apply` | `apply = data` |
+| `sensor` | M2 그대로(`config_rev`가 함께 바뀐다) |
+
+셀렉터(`store.ts`): `selectApplyActive`(`apply?.state === 'running'`), `selectApplyMembers`(활성이면 항목 `device_id`의 `Set`, 아니면 빈 `Set`),
+`selectApplyItem(id)`(현재 작업에 그 센서가 있으면 그 항목), `selectApplyTally(job)` → `{ total, ended, verified, partial, unverified, failed }`.
+
+#### 15.9.5 드래그 임계값 막대 (`components/edit/ThresholdMeter.tsx`, G31)
+
+```tsx
+<div className={styles.tmeter} data-over={over} data-changed={value !== base}>
+  <span id={labelId} className={styles.tmLabel}>{label}</span>
+  <div ref={trackRef} className={styles.tmTrack} role="slider" tabIndex={disabled ? -1 : 0}
+       aria-labelledby={labelId} aria-valuemin={0} aria-valuemax={max} aria-valuenow={value}
+       aria-valuetext={t.edit.sliderText(value, base, live === null ? null : over)} aria-describedby={captionId} aria-disabled={disabled || undefined}
+       onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}
+       onLostPointerCapture={up} onKeyDown={key}>
+    {live !== null && <span className={styles.tmFill} style={{ width: pct(live) }} />}
+    <span className={styles.tmBase} style={{ left: pct(base) }} aria-hidden />
+    <span className={styles.tmHandle} style={{ left: pct(value) }} aria-hidden />
+  </div>
+  <input className={styles.tmInput} type="number" inputMode="numeric" min={0} max={max} step={1}
+         aria-label={t.edit.exact(label)} value={text} onChange={…} onBlur={commitText} onKeyDown={enterCommits} />
+  {value !== base && <button type="button" className={styles.tmReset} aria-label={t.edit.resetOne(label)} onClick={() => onChange(base)}><RotateCcw size={16} aria-hidden /></button>}
+  <span id={captionId} className={styles.tmCaption}>{t.edit.caption(live, base, value)}</span>
+</div>
+```
+
+props: `label`(`재실 트리거`/`재실 유지`), `value`(초안 값 = 편집값 ?? 기준값), `base`(기기의 지금 tag51 값), `live`(실시간 `LiveZone.trigger`/`maintain`, 없으면 `null`),
+`onChange(v)`, `disabled`. `max = Math.max(THRESHOLD_UI_MAX, base)`. `over = live !== null && live > value`(모니터 막대와 같은 비교: 값이 임계값보다 크면 초과).
+`pct(v) = clamp(v / axis, 0, 1) × 100 + '%'`.
+
+축(`axis`): 드래그 중이 아니면 렌더마다 `axisFor(base, value, live)`. 드래그를 시작할 때 그 값을 고정하고 끝날 때 풀린다(끄는 동안 눈금이 바뀌지 않게).
+
+포인터(마우스·터치·펜 모두 Pointer Events):
+
+1. `down(e)`: `disabled`이거나 `e.button !== 0`이면 무시. `rect = trackRef.current.getBoundingClientRect()`를 이 드래그 동안 기억, 축 고정,
+   `startValue = value`, `e.currentTarget.setPointerCapture?.(e.pointerId)`(jsdom에는 없으므로 `?.`), 트랙에 포커스, `onChange(valueAt(e.clientX, rect, axis, max))`.
+   트랙의 어디를 눌러도 손잡이가 그 자리로 온다. 단 `e.pointerType === 'touch'`이면 캡처·포커스·`onChange`를 미룬다(대기): 세로로 쓸면 브라우저가
+   페이지 스크롤로 가져가며(`pointercancel`) 값이 바뀌면 안 된다. 손잡이 중심에서 24px(`HANDLE_GRAB_PX`) 안에서 누른 터치는 손잡이를 잡은 것이다.
+2. `move(e)`: 드래그 중이면 `onChange(valueAt(e.clientX, rect, axis, max))`. 같은 값이면 부르지 않는다. 대기 중인 터치는 가로로 8px(`TOUCH_SLOP_PX`,
+   손잡이를 잡았으면 1px) 움직이면 그때 1단계의 캡처·포커스·`onChange`를 한다.
+3. `up(e)`: 드래그를 끝내고 축 고정을 푼다. 대기 중인 터치(탭)는 값을 바꾸지 않는다(손잡이 위든 밖이든).
+4. `pointercancel`·드래그 중 `Escape` → 값이 바뀌었으면 `onChange(startValue)` 후 끝낸다(그 드래그는 초안에 남지 않는다).
+
+키보드(트랙에 포커스, 각 키는 `preventDefault`):
+
+| 키 | 동작 |
+|----|------|
+| `→` `↑` | +1 |
+| `←` `↓` | −1 |
+| `Shift` + 화살표, `PageUp` / `PageDown` | ±10 |
+| `Home` / `End` | 0 / `max` |
+
+결과는 늘 `clampThreshold`(정수, `[0, max]`)를 거친다. 숫자 칸은 같은 범위의 정수만 받고, 벗어나면 Enter·blur 때 범위로 맞춘다(입력 중에는 고치지 않는다).
+
+모양(`edit.module.css`):
+
+- 트랙: 높이 32px(터치 대상), 그 안 가운데 12px 막대 `var(--surface-2)` + `1px solid var(--border)`, `border-radius: var(--radius-sm)`, `touch-action: pan-y`
+  (세로 스크롤은 페이지가, 가로 끌기는 막대가 받는다), `cursor: ew-resize`.
+- 채움: 막대 안 왼쪽부터 `width`, `var(--ok)`, `[data-over=true]`이면 `var(--danger)`. 전환 애니메이션 없음(4 Hz로 바뀐다).
+- 기준 tick(`tmBase`): 폭 2px, 트랙 높이 전체, `var(--text-muted)` 점선. "기기의 지금 임계값"이다.
+- 손잡이(`tmHandle`): 보이는 크기 20×28px, `var(--primary)` 채움 + `var(--surface)` 테두리 2px. 투명한 `::before`로 48×48px 눌림 영역. `:focus-visible`이면 트랙에 포커스 링.
+  바뀌었으면(`data-changed`) 손잡이 위에 새 값을 작은 말풍선으로 보인다.
+- 숫자 칸 6ch, `tabular-nums`. 캡션 한 줄 `지금 58 · 현재 60 → 새 64`(`live`가 없으면 `현재 60 → 새 64`), 초과면 `지금 58`이 `--danger`.
+- 색만으로 전달하지 않는다: 캡션의 숫자, `aria-valuetext`의 `넘음`/`넘지 않음`이 같은 정보를 준다.
+- `prefers-reduced-motion`과 관계없이 움직임 효과가 없다.
+
+#### 15.9.6 설정 탭 (`SettingsTab`)
+
+`useLiveWatch([id])`(14.8.3절)로 실시간 값을 받는다. 상태별 본문(위에서 처음 맞는 것):
+
+| 조건 | 보이는 것 |
+|------|-----------|
+| `live === null` 또는 링크가 CONNECTED가 아님 | `EmptyState`: `edit.needConnection` + 상태 hint(예: "센서 버튼을 다시 누르세요"). 이력 탭 링크 |
+| 진행 중인 보정 라운드의 센서 | `edit.lockedByBatch`. 편집 칸 비활성(초안은 그대로) |
+| 진행 중인 적용 작업의 센서 | `ApplyResults`(이 센서 항목만) + `edit.lockedByApply`, 편집 칸 비활성 |
+| 초안 없음 | `getConfig(id)` 중 `edit.loading`, 실패하면 `errorText(code)` + `다시 읽기` |
+| 그 밖 | 편집 화면(아래) |
+
+편집 화면(위에서 아래로):
+
+1. `config_rev` 배너(15.9.2절)와, 내 작업이 끝났고 닫지 않았으면 `ApplyResults`(이 센서 항목, `닫기`).
+2. **민감도**: 분할 라디오 `낮음`/`보통`/`높음`/`사용자`(1~4). 아래 작은 글씨 `edit.sensitivityNote`(측정: 민감도만 바꾸면 존 임계값은 그대로다).
+3. **존**: 범례 한 줄(`edit.legend`) + `ZoneEditRow` × 7. 줄: 머리 `Z0 · 0.8 m`(`ConfigView.distances_m`) + 켜짐 스위치(`role="switch"`, `aria-checked`) +
+   트리거 `ThresholdMeter` + 유지 `ThresholdMeter`. 꺼진 존(초안 기준)은 막대를 흐리게(투명도 0.6) 두지만 편집은 된다(나중에 켤 수 있다).
+4. 보조 링크 `다른 센서에 복제`(→ `/bulk?mode=clone&source=<id>`).
+5. `DraftBar`(바뀐 것이 있을 때만): `변경 {n}개` · 보조 `모두 되돌리기`(확인 없음: 초안만 지운다) · 주 `미리보기`. 폰에서는 탭 바 위에 고정(64px), 넓은 화면에서는 오른쪽 열 아래에 sticky.
+
+`미리보기` → `previewDraft(toDraftIn(draft))` → `DiffPreview`(폰: 하단 시트, 넓은 화면: 오른쪽 열). `적용` → `applyDraft({...toDraftIn(draft), expect_rev: expectRevOf(preview)})` →
+202이면 시트를 닫고 1번 자리에 `ApplyResults`를 보인다. 409·422는 `errorText(code)`를 미리보기 안에 보인다.
+보이는 미리보기는 요청과 `draft.base.read_at`에 묶인다: 편집값이 그대로인 `rebase`도 미리보기를 닫아, 서버에 다시 묻게 한다.
+
+#### 15.9.7 고급 탭 (`AdvancedTab`)
+
+설정 탭과 **같은 초안**(`sensor:<id>`), 같은 `DraftBar`·`DiffPreview`·결과다. 잠금·연결 조건 표도 같다.
+
+- **서브센서**(`SubSensorEditor` × 3, 제목 `S1`~`S3`): `사용` 스위치(tag41) · `구역` Z0~Z6 토글 칩(`aria-pressed`, 7개 줄바꿈, tag48) ·
+  `재실 유지 시간` / `부재 판정 시간` 숫자 칸(0~65535, 단위 `초`, tag49). 켜져 있는데 구역이 비면 칩 아래 `--warn` 문구 `adv.noZone`(서버의 `subsensor_no_zone`과 같은 규칙).
+- **방해 금지(DND)**(`DndSwitch`): 스위치(tag32). `ConfigView.profile.dnd === null`이면 스위치 대신 `adv.dndUnknown`. 아래 `adv.dndNote`.
+- **시간 동기화**(`TimeSync`): 설명 `timeSync.body` + 보조 버튼 `센서 시계 맞추기` → `timeSync([id])`. 결과 줄: 성공 `timeSync.done(시각)`, 실패 `timeSync.failed(error)`.
+  초안과 무관하다(G34). 확인 다이얼로그 없음(되돌릴 것이 없고 해가 없다).
+
+#### 15.9.8 이력 탭 (`HistoryTab`)
+
+연결 없이도 보인다(기기 기록만 연결 필요). 위에서 아래로:
+
+1. **보정 기록**(`CalibrationHistoryList`): `calibrationHistory(id)`. 줄마다 `RelativeTime(timestamp)` + 절대 시각 + 민감도 문구 + 감지 모드 문구. 펼치면 존 표(`존`·`거리`·`재실 트리거`·`재실 유지`).
+   없으면 `history.empty`.
+2. **설정 백업**(`RollbackPicker`, 15.9.13절).
+3. **기기 기록 — 실험적**(`DeviceHistoryPanel`, 접힌 보조 영역): 제목 옆 `실험적` 배지(`--warn-bg`). 펼치면 `history.deviceNote`(한계 설명), 분할 라디오 `재실`/`조도`,
+   체크박스 `history.detail`(재실만), 보조 버튼 `기기에서 읽기` → `deviceHistory(id, kind, detail)`. 결과: 재실이면 줄마다 시각(센서 시계, `history.deviceClock`) · `S1 재실`… · 재실 존 목록,
+   조도면 시각 · `{lux} lx`. 빈 목록이면 `history.deviceEmpty`. 연결이 없으면 버튼 비활성 + `edit.needConnection`.
+
+#### 15.9.9 일괄 편집 화면 (`BulkEditScreen`, `h1` 일괄 편집)
+
+상단 분할 버튼 `일괄 편집` / `복제`(쿼리 `mode`). 단계(화면 상태, 위에서 처음 맞는 것):
+
+| 조건 | 단계 |
+|------|------|
+| 서버 작업이 있고 내 화면이 그 `apply_id`를 닫지 않았으며 (작업이 진행 중이거나 이 화면이 시작했음) | `ApplyResults`(작업 전체) |
+| 미리보기를 받았음 | `DiffPreview` |
+| 그 밖 | `BulkTargets` → `BulkThresholds` + `CommonSettings` (한 화면, 폰에서는 위아래) |
+
+"닫음"은 결과의 `새 초안` 버튼이 `sessionStorage['ms605.dismissedApply'] = apply_id`(try/catch)로 남긴다(14.8.6절의 배치와 같다).
+
+**`BulkTargets`**: 세션이 있는 센서(사이트·별명 순) 체크 목록. CONNECTED가 아니거나 보정 라운드·적용 작업의 센서이면 체크할 수 없고 이유(`calib.notConnected`, `bulk.lockedBatch`, `apply.locked`). `연결된 센서 모두 선택`. 고른 수 `{n}대 선택`.
+
+**`BulkThresholds`**(D8):
+
+- 분할 라디오 `상대값 (기본)` / `절대값`. 바꾸면 `setBulkMode`(값을 비운다). 그 아래 설명 한 줄: 상대 `bulk.relativeHint`, 절대 `bulk.absoluteHint`.
+- 절대값이면 경고 상자(`--warn-bg`, `AlertTriangle`) `bulk.absoluteWarn`과 체크박스 `bulk.absoluteAck`. 체크하지 않으면 `미리보기`가 비활성이다(G29).
+- 표: 행 = 존 7개(`Z0`… 거리는 표시하지 않는다: 센서마다 다를 수 있다), 열 = `재실 트리거` · `재실 유지`. 칸은 `StepInput`: `−` 버튼 · 숫자 칸 · `+` 버튼(각 48px).
+  상대면 빈칸 = `그대로`, 숫자는 부호를 붙여 보인다(`+5`, `−3`), 버튼은 ±1(Shift+클릭 ±10), 범위 −500~+500. 절대면 빈칸 = `그대로`, 0~500, 빈칸이면 `−`·`+`가 비활성이다(기준값이 없어 0에서 세지 않는다. 값을 먼저 입력한다).
+- 첫 줄 `모든 존`: 여기 넣은 값을 7칸에 같이 넣는다(열마다). 7칸이 모두 같으면 그 값을 보이고 아니면 빈칸.
+- `0`은 상대값에서 `그대로`와 같다(`bulkToDraftIn`이 `null`로 바꾼다).
+
+**`CommonSettings`**(접힌 보조 영역 `bulk.common`, 펼치면): `민감도` select(`그대로`·낮음·보통·높음·사용자), `존 켜기/끄기` select(`그대로` / `직접 고르기` → 7개 스위치, 모든 센서에 같게 씀,
+안내 `bulk.zoneEnableHint`), `방해 금지` 분할(`그대로`/`켜기`/`끄기`). 서브센서는 일괄 편집에 없다(센서마다 고급 탭).
+
+주 버튼(폰 하단 고정): `미리보기 ({n}대)`. 대상 0대, 바뀐 것 없음, 절대값인데 확인 안 함이면 비활성이고 이유를 버튼 위 한 줄로 보인다.
+`previewDraft(bulkToDraftIn(b))` → `DiffPreview`. `적용 ({n}대)` → `applyDraft({..., expect_rev})` → 202이면 `setBulk({...b, 편집값 비움})`(G37).
+
+#### 15.9.10 클론 (`/bulk?mode=clone`, `CloneSetup`)
+
+1. **원본**: `source` 쿼리 또는 select(CONNECTED이고 잠금이 없는 센서). 원본이 정해지면 `getConfig(source)`로 요약(민감도, 존 켜짐 수, 임계값 첫 두 존)을 보인다.
+2. **섹션**: 체크 목록, `Section` 순서, 문구는 `section.*`. 기본 체크: `sensitivity`, `zone_enable`, `zone_thresholds`. 원본의 DND를 못 읽었으면 `dnd`는 체크할 수 없다.
+   `zone_thresholds`를 고르면 경고 `clone.thresholdWarn`(각 센서의 보정값을 원본 값으로 덮는다).
+3. **대상**: `BulkTargets`와 같은 목록(원본은 빠진다).
+4. 주 버튼 `미리보기 ({n}대)` → `previewClone({source, targets, sections, expect_rev: null})` → `DiffPreview`(머리에 `clone.from(원본 별명)`).
+   `absolute_overwrite`가 있으면 확인 체크(15.9.11절). `복제 ({n}대)` → `clone({..., expect_rev})`(원본 rev 포함: 미리보기의 `source_rev`, 원본을 읽기 **전**의 값).
+
+#### 15.9.11 차이 미리보기 (`DiffPreview`)와 `apply.ts`
+
+props: `preview: DraftPreview`, `names: Record<string, string>`, `onApply(): Promise<void>`, `onBack()`, `applyLabel`, `onDropErrors?(ids)`, `dropping?`(그 다시 미리보기가 진행 중: `diff.dropErrors` 비활성). 위에서 아래로:
+
+1. 요약 `diff.summary(대수, 바뀌는 칸 수, 주의 칸 수)`. `preview.risks`가 비어 있지 않으면 위험 코드마다 칩 하나(`riskText(code)`, `--warn`).
+2. 센서마다 카드(`items` 순서): 이름 + `diff.count(n)` + 그 센서의 위험 칩. `error`가 있으면 카드 전체가 `--danger` 테두리와 `diff.itemError(error)`. `changes`가 비면 `diff.noChange`.
+   행 표(`<table>`, caption `diff.caption(이름)`, 열 `항목` · `바뀜`): `rowLabel(change)` · `formatChange(change)`(예 `70 → 75 (+5)`, `켜짐 → 꺼짐`, `Z0, Z1 → 없음`).
+   위험 행은 `data-risk` + 왼쪽 `AlertTriangle` + 그 아래 작은 글씨로 위험 문구(행의 `risks` 각각). 여러 센서면 카드는 접을 수 있고, 위험·오류가 있는 카드는 펼친 채로 시작한다.
+3. `absolute_overwrite`가 있으면 확인 체크 `diff.ackOverwrite`(일괄 화면에서 이미 체크했으면 체크된 채로 보인다).
+4. 버튼: 보조 `diff.back`(편집으로), 주 `applyLabel`. 주 버튼은 아래면 비활성: 항목 중 `error`가 있음(문구 `diff.hasErrors` + 보조 버튼 `diff.dropErrors`: 오류 난 센서를 대상에서 빼고
+   다시 미리보기), 모든 항목의 `changes`가 빔(`diff.nothing`), 확인 체크가 필요한데 안 함.
+
+`apply.ts`(순수 함수, 테스트 대상):
+
+```ts
+export function rowLabel(c: Change): string            // 15.9.16절 표
+export function formatChange(c: Change): string         // 값 문구 + 임계값·시간은 차이 (+n)/(−n)
+export function riskText(code: RiskCode): string
+export function sectionLabel(s: Section): string
+export function applyItemStatus(item: ApplyItemView, kind: ApplyKind): Status   // 15.9.16절 표
+export function applyHeadline(job: ApplyJobView): string
+export function canRollback(item: ApplyItemView): boolean   // snapshot !== null && 상태가 queued·applying이 아님
+export function needsOverwriteAck(p: DraftPreview): boolean // p.risks에 absolute_overwrite
+```
+
+#### 15.9.12 적용 결과 (`ApplyResults`)와 `ApplyPill`
+
+`ApplyResults` props: `job: ApplyJobView`, `only?: string`(한 센서만), `onDismiss()`. 머리말 `applyHeadline(job)`. 항목마다 `JobRow`와 같은 모양의 줄: 이름 + `StatusBadge(applyItemStatus(item, kind))` + hint,
+`applying`이면 회전 아이콘(축소 동작 설정이면 정지). 끝난 항목 중 `canRollback`이면 보조 버튼 `되돌리기` → 15.9.13절의 미리보기(`items: [{device_id, snapshot: item.snapshot}]`).
+작업이 `done`이면: `되돌릴 수 있는 항목이 2개 이상`이면 보조 버튼 `모두 되돌리기`(같은 미리보기, 항목 전부), 그리고 `닫기`/`새 초안`. 부분 실패는 머리말 숫자와 항목 색으로 한눈에 보인다
+(`verified`만 `ok`, `partial`·`unverified`·시작 못 함은 `warn`, 쓰는 중 실패는 `danger`).
+
+`ApplyPill`(헤더): 작업이 `running`일 때만. `[Loader2 회전] 설정 적용 {ended}/{total}`. 누르면 대상이 한 대면 `/sensors/<id>/settings`, 아니면 `/bulk`.
+
+`LiveRegion`이 알린다: 작업 시작 `announce.applyStarted`, 끝 `announce.applyDone`(확인됨·실패 수). 같은 문구 1초 안 반복 금지는 그대로다.
+
+#### 15.9.13 되돌리기 고르기 (`RollbackPicker`)
+
+이력 탭과 결과의 `되돌리기`가 쓴다.
+
+- 목록: `listSnapshots(id)`. 줄마다 라디오, `RelativeTime(taken_at)` + 절대 시각, 이유 문구(`apply` → `rollback.beforeApply`, `rollback` → `rollback.beforeRollback`, 그 밖은 원문),
+  섹션 칩(`sectionLabel`). 첫 줄(가장 최근) 옆에 `rollback.latest`. 없으면 `rollback.empty`.
+- 줄을 고르면 `getSnapshot(id, name)`으로 그 시점의 값 요약을 펼친다(고른 섹션만).
+- 주 버튼 `이 시점으로 되돌리기 미리보기` → `previewRollback({items:[{device_id, snapshot}], expect_rev: null})` → `DiffPreview`(머리 `rollback.title(시각)`, 적용 버튼 `되돌리기`) →
+  `rollback({items, expect_rev})` → 202, 결과는 `ApplyResults`.
+- 센서가 CONNECTED가 아니면 미리보기 버튼 비활성 + `edit.needConnection`(목록은 보인다).
+- 설명 한 줄 `rollback.note`: 스냅샷은 그 쓰기 **직전**의 값이고, 되돌리기도 직전 값을 남기므로 되돌리기를 다시 되돌릴 수 있다.
+
+#### 15.9.14 M3 잔여: 대기 중 취소 확인 (`calibration.ts`, `BatchProgress`, G38)
+
+```ts
+export const CANCEL_CONFIRM_WITHIN_S = 5
+export function needsCancelConfirm(batch: BatchView, remainingS: number | null): boolean
+// running → true. waiting → remainingS === null || remainingS < CANCEL_CONFIRM_WITHIN_S. 그 밖 false
+```
+
+- `BatchProgress`의 취소 버튼: `needsCancelConfirm(batch, useCountdown())`이면 `ConfirmDialog`를 연다. WAITING이면 본문 `batch.cancelConfirmSoon`, RUNNING이면 지금의 `batch.cancelConfirm`.
+  아니면(5초 이상 남은 대기) 지금처럼 바로 `cancelBatch`.
+- `start: "now"`의 WAITING(발사 직전)은 남은 시간이 0이므로 확인을 거친다.
+- 다이얼로그가 열린 사이 라운드가 RUNNING이 되면 본문을 `batch.cancelConfirm`으로 바꾼다. 확인하면 그때의 상태로 취소된다(서버가 상태를 정한다).
+- 라운드가 끝나면(`done`/`cancelled`) 열린 다이얼로그를 닫는다.
+
+#### 15.9.15 `api/client.ts`에 더할 함수
+
+```ts
+export const getConfig = (deviceId: string) => request<ConfigView>('GET', `/api/sensors/${enc(deviceId)}/config`)
+export const previewDraft = (body: DraftIn) => request<DraftPreview>('POST', '/api/drafts/preview', body)
+export const applyDraft = (body: ApplyIn) => request<ApplyJobView>('POST', '/api/apply', body)
+export const getApply = (applyId: string) => request<ApplyJobView>('GET', `/api/apply/${enc(applyId)}`)
+export const listSnapshots = (deviceId: string) => request<SnapshotList>('GET', `/api/sensors/${enc(deviceId)}/snapshots`)
+export const getSnapshot = (deviceId: string, name: string) =>
+  request<SnapshotDetail>('GET', `/api/sensors/${enc(deviceId)}/snapshots/${enc(name)}`)
+export const previewRollback = (body: RollbackIn) => request<DraftPreview>('POST', '/api/rollback/preview', body)
+export const rollback = (body: RollbackApplyIn) => request<ApplyJobView>('POST', '/api/rollback', body)
+export const previewClone = (body: CloneIn) => request<DraftPreview>('POST', '/api/clone/preview', body)
+export const clone = (body: CloneApplyIn) => request<ApplyJobView>('POST', '/api/clone', body)
+export const timeSync = (deviceIds: string[]) => request<TimeSyncResult>('POST', '/api/time-sync', { device_ids: deviceIds })
+export const calibrationHistory = (deviceId: string) => request<CalibrationHistory>('GET', `/api/sensors/${enc(deviceId)}/history`)
+export const deviceHistory = (deviceId: string, kind: DeviceHistoryKind, detail = false) =>
+  request<DeviceHistory>('GET', `/api/sensors/${enc(deviceId)}/device-history?kind=${kind}&detail=${detail}`)
+```
+
+본문의 생성 타입은 기본값이 있는 필드도 필수이므로(15.4절) `expect_rev`는 미리보기에서는 `null`, 적용에서는 `expectRevOf(preview)`를 넣는다.
+응답은 폼의 성공·실패와 "내 작업의 `apply_id`"에만 쓰고, 작업 상태는 WS `apply`로 바뀐다(G10). 미리보기·설정·이력·시간 동기화의 응답은 그대로 그린다(서버 상태가 아니다).
+
+#### 15.9.16 상태 문구 (microcopy)
+
+**적용 항목** — `applyItemStatus(item, kind)`, 위에서부터 처음 맞는 행:
+
+| 조건 | kind | 아이콘 | label | hint |
+|------|------|--------|-------|------|
+| `queued` | `off` | `Clock` | 대기 | — |
+| `applying` | `progress` | `Loader2`(회전) | 적용 중… | 쓰고 다시 읽어 확인합니다 (최대 3초) |
+| `verified`, `skipped` 있음 | `ok` | `CheckCircle2` | 적용됨 · 확인함 | 건너뜀: {섹션들} |
+| `verified`, kind `rollback` | `ok` | `CheckCircle2` | 되돌림 · 확인함 | — |
+| `verified` | `ok` | `CheckCircle2` | 적용됨 · 확인함 | — |
+| `partial` | `warn` | `AlertTriangle` | 일부만 반영됨 | 반영 안 됨: {mismatched 섹션들}. 되돌리기를 권합니다 |
+| `unverified` | `warn` | `HelpCircle` | 적용했지만 확인하지 못함 | 다시 읽기에 실패했습니다. 설정 탭에서 값을 확인하세요 |
+| `failed`, `error`가 `busy: `로 시작 | `warn` | `AlertTriangle` | 시작하지 못함 (다른 작업 중) | 바뀐 것은 없습니다. 잠시 뒤 새 초안으로 다시 하세요 |
+| `failed`, `error === "not connected"` | `warn` | `AlertTriangle` | 연결 끊김 | 바뀐 것은 없습니다. 센서 버튼을 누르고 다시 하세요 |
+| `failed`, `snapshot === null` | `danger` | `XCircle` | 실패 (바뀐 것 없음) | 오류: {error} |
+| `failed` | `danger` | `XCircle` | 실패 (쓰는 중) | 일부가 바뀌었을 수 있습니다. 되돌리기로 이전 값을 복원하세요 · 오류: {error} |
+
+`snapshot !== null`인 `failed`는 쓰기 단계에서 실패한 것이다(코어 6.4절 4단계: 무엇이 써졌는지 가정하지 않는다). 그래서 "바뀐 것 없음"과 "쓰는 중"을 나눠 보인다.
+
+**작업 머리말** — `applyHeadline(job)`:
+
+| 조건 | 문구 |
+|------|------|
+| `running` | {종류} 중 · {끝난 수}/{전체} (종류: 설정 적용 / 되돌리기 / 복제) |
+| `done`, 모두 `verified` | {종류} 끝 · 모두 확인함 ({n}대) |
+| `done` | {종류} 끝 · 확인함 {v} · 일부 {p} · 확인 못 함 {u} · 실패 {f} (0인 항목은 뺀다. 확인함은 늘 보인다) |
+
+**행 이름** — `rowLabel(change)`:
+
+| 섹션·part | 문구 |
+|-----------|------|
+| `sensitivity` | 민감도 |
+| `detect_mode` | 감지 모드 |
+| `dnd` | 방해 금지 |
+| `zone_enable` | Z{i} 켜기/끄기 |
+| `zone_thresholds` `trigger` / `maintain` | Z{i} 재실 트리거 / Z{i} 재실 유지 |
+| `subsensor_zones` | S{i+1} 구역 |
+| `subsensor_timing` `presence_s` / `absence_s` | S{i+1} 재실 유지 시간 / S{i+1} 부재 판정 시간 |
+| `subsensor_enable` | S{i+1} 사용 |
+
+**값** — `formatChange(change)`: 민감도 `낮음`/`보통`/`높음`/`사용자`, 감지 모드 1 `레이더` · 2 `레이더+PIR` · 3 `PIR+레이더` · 4 `공간 학습`, bool `켜짐`/`꺼짐`,
+`null` `알 수 없음`, 구역 목록 `Z0, Z1` 또는 `없음`, 시간 `{n}초`. 임계값과 시간은 끝에 `(+n)`/`(−n)`(유니코드 빼기 기호, 14.8.6절의 전후 비교와 같다).
+
+**위험** — `riskText(code)`:
+
+| 코드 | 문구 |
+|------|------|
+| `absolute_overwrite` | 각 센서의 보정값을 같은 값으로 덮어씁니다 |
+| `large_change` | 크게 바뀝니다 (20 이상) |
+| `beyond_ui_range` | 앱 범위(0~500)를 벗어납니다 |
+| `zone_off` | 이 존에서는 감지하지 않습니다 |
+| `subsensor_off` | 이 서브센서는 재실을 판정하지 않습니다 |
+| `subsensor_no_zone` | 구역이 없어 이 서브센서는 감지하지 않습니다 |
+| `sensitivity_only` | 민감도만 바뀌고 존 임계값은 그대로입니다 |
+| `dnd_on` | 방해 금지를 켭니다. 센서 동작에 주는 영향은 확인되지 않았습니다 |
+| `learning_skipped` | 원본이 학습 중이라 감지 모드는 복제하지 않습니다 |
+
+#### 15.9.17 문구 (`strings.ts`에 더할 키)
+
+| 키 | 문구 |
+|----|------|
+| `detail.tabs` / `detail.tabInfo` / `detail.tabSettings` / `detail.tabAdvanced` / `detail.tabHistory` | 센서 메뉴 / 정보 / 설정 / 고급 / 이력 |
+| `detail.comingSoon` | (지운다) |
+| `dash.bulk` | 일괄 편집 |
+| `section.sensitivity` / `section.detect_mode` / `section.zone_enable` / `section.zone_thresholds` | 민감도 / 감지 모드 / 존 켜기·끄기 / 존 임계값 |
+| `section.subsensor_zones` / `section.subsensor_timing` / `section.subsensor_enable` / `section.dnd` | 서브센서 구역 / 서브센서 시간 / 서브센서 사용 / 방해 금지 |
+| `sens.1` / `sens.2` / `sens.3` / `sens.4` | 낮음 / 보통 / 높음 / 사용자 |
+| `mode.1` / `mode.2` / `mode.3` / `mode.4` | 레이더 / 레이더+PIR / PIR+레이더 / 공간 학습 |
+| `edit.loading` / `edit.reload` | 센서에서 지금 설정을 읽는 중… / 다시 읽기 |
+| `edit.needConnection` | 연결된 센서만 설정을 읽고 바꿀 수 있습니다 |
+| `edit.lockedByBatch` / `edit.lockedByApply` | 보정이 끝난 뒤 편집할 수 있습니다 / 설정을 적용하는 중입니다. 끝난 뒤 편집할 수 있습니다 |
+| `edit.revChanged` / `edit.rebase` | 다른 화면이나 보정이 이 센서의 설정을 바꿨습니다 / 새 값 불러오기 |
+| `edit.stale` | 미리보기 뒤에 설정이 바뀌었습니다. 미리보기를 다시 하세요 |
+| `edit.sensitivity` / `edit.sensitivityNote` | 민감도 / 민감도만 바꾸면 존 임계값은 그대로입니다 |
+| `edit.zones` / `edit.zoneHead` / `edit.zoneOn` | 존 / Z{i} · {m} m / 켜짐 |
+| `edit.legend` | 막대 = 지금 값 · 점선 = 현재 임계값 · 손잡이 = 새 임계값 (끌거나 화살표 키) · 막대가 손잡이를 넘으면 빨강 |
+| `edit.sliderText` | 새 임계값 {v}, 현재 {base} — 지금 값이 넘음 (넘지 않으면 `넘지 않음`, 실시간 값이 없으면 `—` 뒤를 뺀다). 실시간 숫자는 넣지 않는다: 초당 여러 번 바뀌어 화면 낭독기가 계속 읽는다. 숫자는 캡션(`aria-describedby`)에 있다 |
+| `edit.caption` | 지금 {live} · 현재 {base} → 새 {v} (같으면 `현재 {base}`) |
+| `edit.exact` / `edit.resetOne` / `edit.resetAll` | {label} 값 입력 / {label} 되돌리기 / 모두 되돌리기 |
+| `edit.changed` / `edit.preview` / `edit.tabDirty` | 변경 {n}개 / 미리보기 / 바뀜 |
+| `edit.cloneTo` | 다른 센서에 복제 |
+| `adv.subsensors` / `adv.sub` / `adv.use` / `adv.zones` | 서브센서 / S{n} / 사용 / 구역 |
+| `adv.presence` / `adv.absence` / `adv.seconds` | 재실 유지 시간 / 부재 판정 시간 / 초 |
+| `adv.noZone` | 구역이 없으면 이 서브센서는 감지하지 않습니다 |
+| `adv.dnd` / `adv.dndNote` / `adv.dndUnknown` | 방해 금지 (DND) / 센서 동작에 주는 영향은 확인되지 않았습니다 / 이 센서에서 방해 금지 상태를 읽지 못했습니다 |
+| `timeSync.title` / `timeSync.body` / `timeSync.action` | 시간 동기화 / 이 컴퓨터의 시각을 센서에 씁니다. 기기 기록의 시각이 맞으려면 먼저 맞추세요 / 센서 시계 맞추기 |
+| `timeSync.done` / `timeSync.failed` | {time}에 맞췄습니다 / 맞추지 못했습니다: {error} |
+| `history.calibration` / `history.empty` / `history.zones` | 보정 기록 / 보정 기록이 없습니다 / 존별 값 |
+| `history.backups` | 설정 백업 |
+| `history.device` / `history.experimental` | 기기 기록 / 실험적 |
+| `history.deviceNote` | 센서에 저장된 기록을 한 번 읽습니다. 형식과 개수 제한이 확인되지 않아 일부만 보이거나 틀릴 수 있습니다 |
+| `history.kindPresence` / `history.kindLight` / `history.detail` | 재실 / 조도 / 상세 형식으로 해석 (37바이트) |
+| `history.read` / `history.deviceEmpty` / `history.deviceClock` | 기기에서 읽기 / 센서에 기록이 없습니다 / 센서 시계 기준 |
+| `history.lux` | {n} lx |
+| `bulk.title` / `bulk.modeEdit` / `bulk.modeClone` | 일괄 편집 / 일괄 편집 / 복제 |
+| `bulk.targets` / `bulk.selected` / `bulk.selectAll` | 대상 센서 / {n}대 선택 / 연결된 센서 모두 선택 |
+| `bulk.lockedBatch` | 보정 중인 센서는 고를 수 없습니다 |
+| `bulk.thresholds` / `bulk.relative` / `bulk.absolute` | 존 임계값 / 상대값 (기본) / 절대값 |
+| `bulk.relativeHint` | 각 센서의 지금 값에 더하거나 뺍니다. 센서마다 다른 보정 결과가 유지됩니다 |
+| `bulk.absoluteHint` | 모든 센서에 같은 값을 씁니다 |
+| `bulk.absoluteWarn` | 절대값은 각 센서의 보정 결과를 같은 값으로 덮어씁니다. 센서마다 다시 보정해야 할 수 있습니다 |
+| `bulk.absoluteAck` | 보정값을 덮어쓰는 것을 이해했습니다 |
+| `bulk.allZones` / `bulk.keep` | 모든 존 / 그대로 |
+| `bulk.common` / `bulk.zoneEnableHint` | 공통 설정 / 고른 대로 모든 센서의 7개 존을 같게 씁니다 |
+| `bulk.dndOn` / `bulk.dndOff` | 켜기 / 끄기 |
+| `bulk.previewN` / `bulk.applyN` / `bulk.newDraft` | 미리보기 ({n}대) / 적용 ({n}대) / 새 초안 |
+| `bulk.needTargets` / `bulk.needChange` / `bulk.needAck` | 대상 센서를 고르세요 / 바꿀 값을 넣으세요 / 덮어쓰기 확인을 체크하세요 |
+| `clone.source` / `clone.sections` / `clone.from` | 원본 센서 / 복제할 항목 / {name}의 설정을 복제 |
+| `clone.thresholdWarn` | 존 임계값을 복제하면 각 센서의 보정값이 원본 값으로 바뀝니다 |
+| `clone.dndUnknown` | 원본의 방해 금지 상태를 읽지 못해 복제할 수 없습니다 |
+| `clone.applyN` | 복제 ({n}대) |
+| `diff.title` / `diff.summary` | 바뀌는 내용 / {n}대 · {c}칸 바뀜 · 주의 {r}칸 |
+| `diff.count` / `diff.noChange` / `diff.caption` | 변경 {n}개 / 바뀌는 것이 없습니다 / {name} 바뀌는 내용 |
+| `diff.colItem` / `diff.colChange` | 항목 / 바뀜 |
+| `diff.itemError` | 이 센서는 적용할 수 없습니다: {error} |
+| `diff.hasErrors` / `diff.dropErrors` | 적용할 수 없는 센서가 있습니다 / 그 센서를 빼고 다시 미리보기 |
+| `diff.nothing` / `diff.ackOverwrite` / `diff.back` | 바뀌는 것이 없습니다 / 위 센서들의 보정값을 덮어쓰는 것을 확인했습니다 / 편집으로 돌아가기 |
+| `diff.apply` | 적용 |
+| `risk.absolute_overwrite` … `risk.learning_skipped` | 15.9.16절 위험 표 그대로 |
+| `apply.kind.apply` / `apply.kind.rollback` / `apply.kind.clone` | 설정 적용 / 되돌리기 / 복제 |
+| `apply.running` / `apply.doneAll` / `apply.done` | {kind} 중 · {e}/{n} / {kind} 끝 · 모두 확인함 ({n}대) / {kind} 끝 · {counts} |
+| `apply.cVerified` / `apply.cPartial` / `apply.cUnverified` / `apply.cFailed` | 확인함 {n} / 일부 {n} / 확인 못 함 {n} / 실패 {n} |
+| `apply.queued` / `apply.applying` / `apply.applyingHint` | 대기 / 적용 중… / 쓰고 다시 읽어 확인합니다 (최대 3초) |
+| `apply.verified` / `apply.rolledBack` / `apply.skipped` | 적용됨 · 확인함 / 되돌림 · 확인함 / 건너뜀: {sections} |
+| `apply.partial` / `apply.partialHint` | 일부만 반영됨 / 반영 안 됨: {sections}. 되돌리기를 권합니다 |
+| `apply.unverified` / `apply.unverifiedHint` | 적용했지만 확인하지 못함 / 다시 읽기에 실패했습니다. 설정 탭에서 값을 확인하세요 |
+| `apply.busy` / `apply.busyHint` | 시작하지 못함 (다른 작업 중) / 바뀐 것은 없습니다. 잠시 뒤 새 초안으로 다시 하세요 |
+| `apply.lost` / `apply.lostHint` | 연결 끊김 / 바뀐 것은 없습니다. 센서 버튼을 누르고 다시 하세요 |
+| `apply.failedClean` / `apply.failedWrite` / `apply.failedWriteHint` | 실패 (바뀐 것 없음) / 실패 (쓰는 중) / 일부가 바뀌었을 수 있습니다. 되돌리기로 이전 값을 복원하세요 |
+| `apply.error` | 오류: {error} |
+| `apply.rollback` / `apply.rollbackAll` / `apply.close` | 되돌리기 / 모두 되돌리기 / 닫기 |
+| `apply.locked` | 설정 적용이 끝난 뒤 고를 수 있습니다 |
+| `apply.pill` | 설정 적용 {e}/{n} |
+| `rollback.title` / `rollback.empty` / `rollback.latest` | {time} 시점으로 되돌리기 / 설정 백업이 없습니다. 설정을 적용하면 그 직전 값이 자동으로 저장됩니다 / 가장 최근 |
+| `rollback.beforeApply` / `rollback.beforeRollback` | 설정 적용 전 / 되돌리기 전 |
+| `rollback.preview` / `rollback.go` | 이 시점으로 되돌리기 미리보기 / 되돌리기 |
+| `rollback.note` | 백업은 그 쓰기 직전의 값입니다. 되돌리기도 직전 값을 남기므로 되돌리기를 다시 되돌릴 수 있습니다 |
+| `guard.title` / `guard.body` | 적용하지 않은 변경이 있습니다 / 이 화면을 떠나면 변경 {n}개를 버립니다 |
+| `guard.stay` / `guard.discard` | 머무르기 / 버리고 이동 |
+| `batch.cancelConfirmSoon` | 곧 보정이 시작됩니다. 이미 시작된 센서는 연결을 끊어 학습을 멈춥니다. 다시 연결하려면 각 센서의 버튼을 눌러야 합니다. |
+| `announce.applyStarted` / `announce.applyDone` | {kind}을(를) 시작했습니다 / {kind}이(가) 끝났습니다: 확인함 {v}, 실패 {f} |
+| `error.apply_active` | 다른 설정 적용이 진행 중입니다 |
+| `error.stale` | 미리보기 뒤에 설정이 바뀌었습니다. 미리보기를 다시 하세요 |
+| `error.device_error` | 센서가 응답하지 않았거나 거절했습니다 |
+
+#### 15.9.18 반응형
+
+| 폭 | 설정·고급 탭 | 일괄 편집 | 미리보기·결과 |
+|----|--------------|-----------|---------------|
+| < 640px | 한 열. 존 줄은 머리(존·거리·스위치) 한 줄 + 트리거 막대 + 유지 막대(각 한 줄, 숫자 칸은 막대 오른쪽). `DraftBar`는 탭 바 위 고정 64px | 한 열. 임계값 표는 존마다 두 줄(트리거 / 유지). 주 버튼 하단 고정 | 하단 시트(최대 높이 90vh, 안에서 스크롤). 주 버튼은 시트 아래 고정 |
+| 640–1023px | 가운데 한 열(최대 720px), 존 줄은 머리 · 트리거 · 유지가 한 줄 | 가운데 한 열(최대 720px) | 다이얼로그(최대 640px) |
+| ≥ 1024px | 두 열: 왼쪽(민감도 + 존 7줄), 오른쪽(sticky: `DraftBar`, 미리보기, 결과) | 두 열: 왼쪽(대상 + 공통 설정), 오른쪽(임계값 표 + 주 버튼) | 오른쪽 열 안에 그린다 |
+
+#### 15.9.19 와이어프레임
+
+기호는 10.4·14.8.12절과 같다. 더한 것: `▓` 실시간 채움이 새 임계값을 넘음(빨강), `┆` 현재 임계값(점선), `◆` 새 임계값 손잡이, `[ 64 ]` 숫자 칸, `↺` 되돌리기,
+`(●)`/`( )` 켜짐 스위치, `[!]` 위험 행, `>` 접힌 영역.
+
+**설정 탭 — 폰 (360px)**
+
+```
++----------------------------------+
+| MS605   [~ 설정 적용 1/3]   [◐]  |  ApplyPill (작업이 있을 때만)
++----------------------------------+
+| < 대시보드                        |
+| 센서 1              [v] 연결됨   |
+| [정보] [설정•] [고급] [이력]       |  설정에 바뀜 점
+|----------------------------------|
+| 민감도                            |
+| [ 낮음 ][ 보통 ][ 높음 ][사용자]   |
+| 민감도만 바꾸면 존 임계값은 그대로입니다 |
+| 막대 = 지금 값 · 점선 = 현재 임계값 ·|
+| 손잡이 = 새 임계값 · 넘으면 빨강     |
+| Z0 · 0.8 m                 (●)켜짐 |
+| 재실 트리거          [ 64 ] ↺     |
+| ██████████████┆▓◆─────────────── |  지금 66 > 새 64: 빨강
+| 지금 66 · 현재 60 → 새 64          |
+| 재실 유지            [ 40 ]       |
+| ████████──────┆◆──────────────── |  바뀌지 않음: 손잡이가 점선 위
+| 지금 22 · 현재 40                  |
+| Z1 · 1.6 m                 (●)켜짐 |
+| …                                 |
+| Z6 · 5.6 m                 ( )꺼짐 |  막대 흐리게, 편집은 됨
+| 다른 센서에 복제                    |
+| +------------------------------+ |
+| | 변경 2개  (모두 되돌리기) [미리보기]| |  DraftBar 64px, 탭 바 위 고정
+| +------------------------------+ |
+| [=]대시보드 [BT]모으기 [~]모니터 [+]보정 |
++----------------------------------+
+```
+
+**설정 탭 — 데스크톱 (≥1024px)**
+
+```
++-------------------------------------------------------------------------------------------+
+| MS605  [대시보드] [센서 모으기] [모니터] [보정]                                  [◐]       |
++-------------------------------------------------------------------------------------------+
+| < 대시보드   센서 1 · 북쪽 벽   [v] 연결됨          [정보] [설정•] [고급] [이력]               |
+| +------------------------------------------------------+  +-----------------------------+ |
+| | 민감도 [ 낮음 ][ 보통 ][ 높음 ][ 사용자 ]              |  | 변경 2개                     | |
+| | 막대 = 지금 값 · 점선 = 현재 임계값 · 손잡이 = 새 임계값  |  | (모두 되돌리기)  [ 미리보기 ] | |
+| | Z0 0.8 m (●) 트리거 █████████┆▓◆──── [64]↺ 유지 ███──┆◆── [40] | +-----------------------------+ |
+| | Z1 1.6 m (●) 트리거 ██████─┆◆─────── [55]  유지 ██──┆◆─── [40] | | 바뀌는 내용 (미리보기 뒤)     | |
+| | …                                                    |  | Z0 재실 트리거 60 → 64 (+4)  | |
+| | Z6 5.6 m ( ) 트리거 (흐림)                            |  | Z2 재실 유지  40 → 18 (−22) [!]| |
+| | 다른 센서에 복제                                       |  |   크게 바뀝니다 (20 이상)     | |
+| +------------------------------------------------------+  | ( 편집으로 )      [  적용  ]  | |
+|                                                           +-----------------------------+ |
++-------------------------------------------------------------------------------------------+
+```
+
+**차이 미리보기 — 폰 (하단 시트, 일괄 3대)**
+
+```
++----------------------------------+
+| 바뀌는 내용                    [x]|
+| 3대 · 21칸 바뀜 · 주의 2칸         |
+| [!] 크게 바뀝니다 (20 이상)         |  위험 칩
+| v 센서 1   변경 7개                |
+|   항목            바뀜             |
+|   Z0 재실 트리거  95 → 100 (+5)    |
+|   …                               |
+| > 센서 2   변경 7개                |  접힘
+| v 센서 3   변경 7개  [!]           |  위험이 있어 펼침
+|   Z0 재실 트리거  82 → 87 (+5)     |
+|[!]Z5 재실 트리거  498 → 503 (+5)   |  --warn-bg
+|   앱 범위(0~500)를 벗어납니다       |
+| ( 편집으로 돌아가기 )               |
+| +------------------------------+ |
+| |         적용 (3대)            | |
+| +------------------------------+ |
++----------------------------------+
+```
+
+**적용 결과 — 폰 (부분 실패)**
+
+```
++----------------------------------+
+| 일괄 편집                         |
+| 설정 적용 끝 · 확인함 2 · 실패 1    |
+| 센서 1  [v] 적용됨 · 확인함  (되돌리기)|
+| 센서 2  [x] 실패 (바뀐 것 없음)     |  danger
+| 오류: device returned error status 5…|
+| 센서 3  [v] 적용됨 · 확인함  (되돌리기)|
+| ( 모두 되돌리기 )                  |
+| +------------------------------+ |
+| |          새 초안              | |
+| +------------------------------+ |
++----------------------------------+
+```
+
+**일괄 편집 — 폰 (상대값)**
+
+```
++----------------------------------+
+| 일괄 편집                         |
+| [ 일괄 편집 ][ 복제 ]              |
+| 대상 센서 · 3대 선택               |
+| [x] 센서 1             [v] 연결됨 |
+| [x] 센서 2             [v] 연결됨 |
+| [x] 센서 3             [v] 연결됨 |
+| [ ] 센서 4   보정 중인 센서는 고를 수 없습니다 |
+| (연결된 센서 모두 선택)            |
+|----------------------------------|
+| 존 임계값                          |
+| [ 상대값 (기본) ][ 절대값 ]         |
+| 각 센서의 지금 값에 더하거나 뺍니다  |
+| 모든 존 트리거 [−][  +5 ][+]       |
+|        유지   [−][ 그대로][+]       |
+| Z0     트리거 [−][  +5 ][+]        |
+|        유지   [−][ 그대로][+]       |
+| Z1 …                              |
+| > 공통 설정                        |
+| +------------------------------+ |
+| |        미리보기 (3대)          | |
+| +------------------------------+ |
++----------------------------------+
+```
+
+**일괄 편집 — 폰 (절대값을 골랐을 때)**
+
+```
+| [ 상대값 (기본) ][ 절대값 ]         |
+| +------------------------------+ |
+| | [!] 절대값은 각 센서의 보정 결과를| |  --warn-bg
+| |  같은 값으로 덮어씁니다. 센서마다 | |
+| |  다시 보정해야 할 수 있습니다     | |
+| | [ ] 보정값을 덮어쓰는 것을       | |
+| |     이해했습니다                | |
+| +------------------------------+ |
+| Z0     트리거 [−][ 그대로][+]       |
+| …                                 |
+| 덮어쓰기 확인을 체크하세요          |
+| +------------------------------+ |
+| |   미리보기 (3대)  (비활성)      | |
+| +------------------------------+ |
+```
+
+**일괄 편집 — 데스크톱**
+
+```
++-------------------------------------------------------------------------------------------+
+| 일괄 편집   [ 일괄 편집 ][ 복제 ]                                                           |
+| +-------------------------------------+  +---------------------------------------------+ |
+| | 대상 센서 · 3대 선택                  |  | 존 임계값  [ 상대값 (기본) ][ 절대값 ]         | |
+| | [x] 센서 1  Lab A   [v] 연결됨        |  |        재실 트리거        재실 유지          | |
+| | [x] 센서 2  Lab A   [v] 연결됨        |  | 모든 존 [−][ +5 ][+]      [−][그대로][+]     | |
+| | [x] 센서 3  Lab B   [v] 연결됨        |  | Z0      [−][ +5 ][+]      [−][그대로][+]     | |
+| | [ ] 센서 4  보정 중인 센서는 …         |  | …                                           | |
+| | v 공통 설정                           |  | Z6      [−][ +5 ][+]      [−][ −3  ][+]     | |
+| |   민감도 [그대로 v]                    |  |                                             | |
+| |   존 켜기/끄기 [그대로 v]              |  |                         [ 미리보기 (3대) ]   | |
+| |   방해 금지 [그대로][켜기][끄기]        |  +---------------------------------------------+ |
+| +-------------------------------------+                                                  |
++-------------------------------------------------------------------------------------------+
+```
+
+**복제 — 폰**
+
+```
++----------------------------------+
+| 일괄 편집                         |
+| [ 일괄 편집 ][ 복제 ]              |
+| 원본 센서 [센서 1           v]     |
+|   보통 · 켜진 존 6/7 · Z0 95/40 …  |
+| 복제할 항목                        |
+| [x] 민감도   [x] 존 켜기·끄기       |
+| [x] 존 임계값  [ ] 감지 모드        |
+| [ ] 서브센서 구역 [ ] 서브센서 시간  |
+| [ ] 서브센서 사용 [ ] 방해 금지      |
+| [!] 존 임계값을 복제하면 각 센서의   |
+|     보정값이 원본 값으로 바뀝니다    |
+| 대상 센서 · 2대 선택               |
+| [x] 센서 2   [x] 센서 3            |
+| +------------------------------+ |
+| |        미리보기 (2대)          | |
+| +------------------------------+ |
++----------------------------------+
+```
+
+**고급 탭 — 폰**
+
+```
++----------------------------------+
+| [정보] [설정] [고급•] [이력]        |
+| 서브센서                          |
+| S1                        (●)사용 |
+| 구역 [Z0][Z1][Z2] Z3  Z4  Z5  Z6   |  눌린 칩 = 배정
+| 재실 유지 시간 [    5 ] 초          |
+| 부재 판정 시간 [   30 ] 초          |
+| S2                        (●)사용 |
+| 구역  Z0  Z1  Z2 [Z3][Z4] Z5  Z6   |
+| …                                 |
+| S3                        (●)사용 |
+| 구역  (없음)                       |
+| [!] 구역이 없으면 이 서브센서는     |
+|     감지하지 않습니다               |
+|----------------------------------|
+| 방해 금지 (DND)            ( )꺼짐 |
+| 센서 동작에 주는 영향은 확인되지 않았습니다 |
+|----------------------------------|
+| 시간 동기화                        |
+| 이 컴퓨터의 시각을 센서에 씁니다 …    |
+| ( 센서 시계 맞추기 )                |
+| 14:02에 맞췄습니다                  |
+| +------------------------------+ |
+| | 변경 2개  (모두 되돌리기) [미리보기]| |
+| +------------------------------+ |
++----------------------------------+
+```
+
+**이력 탭 — 폰 (되돌리기 고르기 포함)**
+
+```
++----------------------------------+
+| [정보] [설정] [고급] [이력]         |
+| 보정 기록                          |
+| > 3일 전 · 2026-09-29 14:10 · 사용자 |
+| > 12일 전 · 2026-09-20 09:31 · 보통  |
+|----------------------------------|
+| 설정 백업                          |
+| (•) 10분 전 · 설정 적용 전  가장 최근 |
+|     [존 임계값] [민감도]             |
+|     민감도 보통 · Z0 95/40 …        |
+| ( ) 1시간 전 · 되돌리기 전           |
+|     [존 임계값]                     |
+| 백업은 그 쓰기 직전의 값입니다 …     |
+| ( 이 시점으로 되돌리기 미리보기 )     |
+|----------------------------------|
+| > 기기 기록 [실험적]                |
+|   센서에 저장된 기록을 한 번 읽습니다…|
+|   [ 재실 ][ 조도 ] [ ] 상세 형식     |
+|   ( 기기에서 읽기 )                  |
+|   센서에 기록이 없습니다             |
++----------------------------------+
+```
+
+### 15.10 테스트
+
+M2 11장·M3 14.9절의 공통 규칙(시뮬레이터, `Storage(root=tmp_path)`, 건너뛰기·xfail·빈 테스트 금지, WS 테스트에 `@pytest.mark.timeout`, `no_chunk_pacing`, `make_gui`의
+`SimFleet(3, speed=100)`, 순서 검사 전 `seq is None` 거르기)을 그대로 따른다. 시간 비율: 시뮬레이터 `apply_delay`(기본 1 기기초)는 속도 100에서 벽시계 0.01초다.
+폴링 검증의 기한(`VERIFY_TIMEOUT_S` 3초)은 벽시계이므로 줄지 않는다. 그래서 "첫 재조회는 이전 값"을 재현하려면 `dev.apply_delay = 100.0`(벽시계 1초)처럼 키운다.
+Device ID·주소·이력 레코드·시각은 모두 합성 값이다.
+
+#### 15.10.1 백엔드
+
+| 파일 | 꼭 검증할 것 |
+|------|--------------|
+| `test_gui_apply.py` | **설정 읽기**: `GET …/config` → `profile.sensitivity == 2`, `zone_thresholds[0] == {"trigger": 95, "maintain": 40}`(시뮬레이터 MEDIUM 프리셋), `distances_m == [0.8, 1.6, 2.4, 3.2, 4.0, 4.8, 5.6]`, `dnd is False`, `subsensor_zones == [[0,1,2],[3,4],[5,6]]`, `subsensor_timing == [[5,30]]*3`, `config_rev == 0`. LOST 센서 → 409 `not_connected`, 없는 id → 404. **초안 → 미리보기 → 적용 → 폴링 검증**: `dev.apply_delay = 100.0`. 미리보기 `{targets:[SIM1], changes:{zone_thresholds:{mode:"absolute", trigger:[100,null×6], maintain:[null×7]}}}` → 항목 하나, `changes == [{section:"zone_thresholds", index:0, part:"trigger", before:95, after:100, risks:[]}]`, `before`/`after` 프로파일, 기기는 그대로(미리보기는 쓰지 않음, `frames_in`에 쓰기 없음). 적용(`expect_rev`=미리보기 값) → 202 `ApplyJobView`(모든 항목 `queued`) → WS `apply`에서 그 항목이 `queued` → `applying` → `verified` 부분열, 작업 `done`. tag51 쓰기 프레임 **뒤**에 tag51을 읽는 프레임이 2개 이상(첫 재조회는 이전 값이라 폴링했다). 시뮬레이터 `thresholds[0] == (100, 40)`. 같은 흐름의 `sensor` 메시지에서 `config_rev == 1`, `last_snapshot`이 채워짐. `GET …/snapshots` → 1개, `reason == "apply"`, `sections == ["zone_thresholds"]`. **부분 실패 + 되돌리기(M4 완료 기준)**: 3대, 초안 `{sensitivity: 3, zone_thresholds: 상대 trigger +5 ×7}`, `sim.devices[1].inject_status(5)` → 센서 1·3 `verified`, 센서 2 `failed`이고 `snapshot`이 있고 `error`에 `status 5`, `applied == []`, 머리말을 만드는 집계(확인함 2, 실패 1)가 마지막 `apply` 메시지와 같음, 시뮬레이터 2는 민감도 2·MEDIUM 그대로. 그 뒤 `POST /api/rollback {items:[{SIM1, 센서 1의 snapshot}, {SIM2, 센서 2의 snapshot}]}` → `kind == "rollback"`, 두 항목 `verified` → 시뮬레이터 1이 민감도 2·MEDIUM으로 **복원**, 시뮬레이터 2도 같음. 센서 1의 백업이 2개(최신이 `reason == "rollback"`). 그 최신 백업으로 다시 되돌리면 +5 상태로 돌아간다(되돌리기의 되돌리기). **일부만 반영**: `dev.apply_delay = 1000.0`(벽시계 10초 > 검증 3초) → `partial`, `mismatched == ["zone_thresholds"]`. **상대값 3대(보정값이 서로 다름)**: 모으기 전에 시뮬레이터마다 다른 tag51(`encode_zone_thresholds`로 예: 센서 1 `(60,30)…`, 2 `(70,32)…`, 3 `(55,28)…`, 합성)을 넣는다. `trigger +5 ×7`, `maintain[2] = -3` → 미리보기 항목마다 `after = 그 센서의 before + 차이`, 행 8개, `risks == []` → 적용 → 모두 `verified`, 시뮬레이터마다 자기 값 + 차이. 한 센서의 `trigger[6]`이 3이고 −5를 주면 그 미리보기 항목만 `error`(`outside 0..65535`), 적용하면 그 항목만 `failed`이고 `snapshot is None`, 그 시뮬레이터의 `frames_in`에 tag51 쓰기 없음, 다른 둘은 `verified`. **위험 플래그**: 절대 임계값 2대 → `preview.risks`와 두 항목의 임계값 행에 `absolute_overwrite`. 1대 절대 → 없음. 2대 상대 → 없음. 클론(`zone_thresholds`, 대상 1대) → 있음. 되돌리기 미리보기 → 없음. 그 밖: 95 → 60 → `large_change`, 495 + 10(상대, tag51을 495로 둔 센서) → `beyond_ui_range`, 620인 존을 절대 619로(500 위의 보정값을 조금 낮춤) → 200, `beyond_ui_range`, 존 끔 → `zone_off`, 민감도만 → `sensitivity_only`, 모든 행의 `risks`가 `RiskCode` 순서. **거절(G27)**: 배치 라운드 RUNNING 동안 그 센서의 설정 읽기·미리보기·적용·되돌리기·클론(대상 또는 원본)·시간 동기화·기기 이력 → 409 `batch_active`, 다른 센서의 미리보기는 200. 적용 작업이 도는 동안(`dev.response_delay = 50.0`: 응답마다 벽시계 0.5초) 두 번째 적용(다른 센서) → 409 `apply_active`, 그 센서로 `POST /api/batches` → 409 `apply_active`, `release [그 센서]`·`release {}` → 409 `apply_active`(링크 유지), 그 센서 미리보기 → 409 `apply_active`. 모두 끝나면 다시 된다. **stale**: SIM1 미리보기(`config_rev` 0) → 다른 적용이 SIM1을 바꿈(1) → 처음 미리보기의 `expect_rev`로 적용 → 409 `stale`이고 쓰기 없음. 보정 성공도 `config_rev`를 올린다(배치 1대 → `sensor.config_rev == 1`). **클론**: SIM1에 합성 tag51, `sections: ["sensitivity","zone_thresholds"]`, 대상 SIM2·SIM3 → 미리보기 `kind == "clone"`, 적용 → `source == SIM1`, 모두 `verified`, 시뮬레이터 2·3의 tag51·tag61이 SIM1과 같음. 원본이 대상에 있음 → 422 `invalid_request`, 원본 LOST → 409 `not_connected`. 원본의 tag52를 4로 둔 시뮬레이터(`dev.tags[TAG_DETECT_MODE] = b"\x04"`)에서 `detect_mode`를 고르면 `learning_skipped`, 결과 `skipped == ["detect_mode"]`. **WS**: 두 클라이언트가 같은 `(seq, type, data)` 열을 받음(`seq` 정수만), 작업 도중 붙은 클라이언트의 스냅샷 `apply`가 앞선 클라이언트의 마지막 `apply`와 같고 `seq`가 이어짐, `GET /api/apply/<id>` 200·다른 id 404. **검증**: 15.4절의 422 사례(중복 대상, 빈 편집, 절대 음수, 상대 501, 절대 65536, `true`인 민감도, `1`인 DND, 모르는 필드), 적용·되돌리기·클론의 `expect_rev`가 없거나 대상(클론은 원본도)이 빠짐 → 422이고 쓰기 없음 |
+| `test_gui_advanced.py` | **DND·서브센서(G33)**: 초안 `{dnd: true, subsensor_timing: [[10,60],[5,30],[5,30]], subsensor_zones: [[0],[3,4],[5,6]]}` → 미리보기 `risks`에 `dnd_on`, 적용 `verified`, `applied`의 끝이 `"dnd"`, 시뮬레이터 `tags[TAG_DND] == b"\x01"`과 tag49·48이 새 값 → 되돌리기 → `b"\x00"`과 원래 값. `subsensor_zones: [[],[3,4],[5,6]]`(S1 켜짐) → `subsensor_no_zone`. **시간 동기화**: `POST /api/time-sync {device_ids:[SIM1, SIM2, SIM3]}`, SIM3은 LOST → SIM1·2 `written_at`이 있고 `int.from_bytes(dev.tags[TAG_TIME_SYNC], "big") == int(written_at)`, SIM3 `error == "not connected"`. 없는 id → 404, 배치 멤버 → 409 `batch_active`. 버스에서 `BusyChanged(busy="apply")`가 보임. **보정 이력**: `storage.append_history()`로 합성 줄 셋(`device_id`가 있는 줄, `device_id` 없이 그 센서의 등록 주소인 예전 줄, `zones`가 문자열인 깨진 줄)을 넣는다 → `GET …/history` → 2개, 최신이 앞, 존 7개. 센서를 해제해도(등록만 남음) 200, 등록도 세션도 없는 id → 404. 배치 보정이 성공한 센서는 그 줄이 맨 앞. **설정 백업**: 적용 뒤 목록 1개 → 상세 `profile`이 적용 **전** 값(MEDIUM, `dnd`는 DND를 바꾸지 않았으므로 `None`), 형식이 틀린 이름(`nope`) → 422 `invalid_request`, 형식은 맞고 없는 이름 → 404. **기기 이력(실험적)**: 기본 시뮬레이터 → `presence == []`. `dev.tags[TAG_PRESENCE_HISTORY_COUNT] = (1).to_bytes(2, "big")`, `dev.tags[TAG_PRESENCE_HISTORY_PUSH] = struct.pack(">HBBBI", 1, 0b001, 0x7F, 0b011, 1_700_000_000)`(합성) → 레코드 하나, `sensor_presence == [True, False, False]`, `zone_presence[:2] == [True, True]`, `timestamp == 1700000000`, `sub_sensor_triggers == []`. 조도: `TAG_LIGHT_HISTORY_COUNT`와 `TAG_LIGHT_HISTORY_PUSH = struct.pack(">HIH", 1, 1_700_000_000, 120)` → `light_lux == 120`. `kind=nope` → 422, LOST → 409 `not_connected` |
+| `test_gui_batch.py` (수정, M3 잔여) | identify 대기 두 테스트가 **요청 중 잠금이 잡혀 있었음**을 단언한다. ① `hold_identify`는 시간 대신 앱 루프의 `asyncio.Event`(`release`)를 기다리며 `"identify"`를 잡는다. `_wait(session.busy == "identify")` → `POST /api/batches` 202 → **응답 직후 `session.busy == "identify"`**(요청 내내 잡혀 있었다) → 그 센서의 `calibration_job`이 아직 `idle`이고 시뮬레이터 `frames_in`에 tag52 쓰기 없음 → `portal.call(release.set)`(`IDENTIFY_WAIT_S` 2초 안에) → `succeeded`, 첫 tag52 쓰기가 잠금을 놓은 뒤(놓을 때의 `frames_in` 길이보다 뒤 인덱스). ② 재수집 경로: 버스 구독으로 `BusyChanged`를 `(busy, time.monotonic())`로 기록한다. `dev.response_delay = 100.0`(벽시계 1초, `IDENTIFY_WAIT_S` 2초보다 짧다). POST 전후의 `monotonic()`을 재서 `("identify", t0)`가 POST 전이고 그 잠금의 `(None, t1)`이 POST 응답 **뒤**임을 단언한 뒤 `succeeded` |
+| `test_gui_ws.py` (수정) | 이벤트 덮개 테스트가 새 `HANDLED_EVENTS`(+`ApplyResult`)와 빈 `IGNORED_EVENTS`로 통과 |
+| `test_gui_schema.py` (수정) | `ServerMessage` 12개를 `type`으로 구별, `SensorView`의 필수 필드에 `config_rev`, `StateSnapshot`에 `apply`, `web/openapi.json`이 최신 |
+| 코어 | `docs/CORE_API.md` 14장 표의 M4 행(`test_fleet.py`, `test_storage.py`: DND 섹션) |
+
+#### 15.10.2 프런트엔드 (vitest)
+
+- `draft.test.ts`: `valueAt`(왼쪽 끝 0, 오른쪽 끝 `axisMax`, 트랙 밖은 양끝, 반올림: 폭 200·축 100에서 `clientX` 130 → 65, 131.2 → 66), `axisFor`(60·64·58 → 100, 90 → 200(1.25배 112.5),
+  450 → 600(1.25배 562.5가 500을 넘으면 `ceil(m/100)×100`), 기준값 600 → 800), `keyStep` 표의 모든 키와 그 밖의 키 `null`, `clampThreshold`(−3 → 0, 501 → 500, 기준값 620이면 620까지, 64.6 → 65),
+  `setThreshold`가 기준값과 같아지면 칸을 `null`로, 7칸이 모두 `null`이면 `toSensorEdit`의 `zone_thresholds === null`, `toSensorEdit`이 키를 모두 보내고 임계값은 `mode: 'absolute'`,
+  `bulkToDraftIn`(상대 0 → `null`, 아무것도 없으면 `null`, `zone_enable` 7개 전체), `setBulkMode`가 값과 `absoluteAck`를 비움, `expectRevOf`, `scopeOf`(`/sensors/a/settings` → `sensor:a`, `/sensors/a` → `sensor:a`, `/bulk` → `bulk`, `/` → `null`).
+- `apply.test.ts`: 15.9.16절 적용 항목 표의 모든 행(`label`이 늘 비어 있지 않음), 머리말 세 행(0인 집계는 빠짐), `rowLabel`의 모든 섹션·part, `formatChange`(`70 → 75 (+5)`, `40 → 18 (−22)`, `켜짐 → 꺼짐`,
+  `Z0, Z1 → 없음`, `알 수 없음 → 켜짐`, `5초 → 10초 (+5)`), 모든 `RiskCode`에 비어 있지 않은 `riskText`, `canRollback`, `needsOverwriteAck`.
+- `calibration.test.ts`(더함): `needsCancelConfirm` — running → true, waiting 4.9초 → true, 5초 → false, `null` → true, done → false.
+- `reducer.test.ts`(더함): 스냅샷이 `apply`를 정함, `apply` 메시지가 바꿈, 모르는 `type`처럼 `lastSeq`도 오름.
+- 컴포넌트(fixture 스토어, `fetch` 모의, jsdom의 `getBoundingClientRect`를 `{left: 0, width: 200}`으로 모의):
+  - `ThresholdMeter`: **드래그** — 축 100(기준 60, 실시간 58)에서 `pointerDown(clientX 130)` → `onChange(65)`, `pointerMove(150)` → 75, `pointerUp` 뒤 `pointerMove`는 부르지 않음,
+    드래그 중 `Escape` → 시작 값으로. **키보드** — `ArrowRight` +1, `Shift+ArrowRight` +10, `PageDown` −10, `ArrowLeft`가 0 아래로 가지 않음, `End` → 500, `Home` → 0.
+    `role="slider"`와 `aria-valuemin/max/now`, `aria-valuetext`에 `넘음`은 실시간 값이 새 값보다 클 때만(실시간 66, 새 64 → `넘음`, `data-over="true"`), 숫자 칸 입력 `72` + Enter → `onChange(72)`,
+    `600` → 500으로 맞춤, `↺`는 바뀌었을 때만 보이고 누르면 `onChange(60)`.
+  - `SettingsTab`: **드래그가 기대한 초안을 만든다** — 설정 fixture(`ConfigView`, Z0 트리거 60)로 열고 Z0 트리거 막대를 130으로 끌면 초안 스토어의
+    `sensors[id].edit.trigger` 가 `[65, null, null, null, null, null, null]`, `DraftBar`에 `변경 1개`, `미리보기`가 `POST /api/drafts/preview`를 본문
+    `{targets:[id], changes:{sensitivity:null, zone_enable:null, zone_thresholds:{mode:'absolute', trigger:[65,null×6], maintain:[null×7]}, subsensor_zones:null, subsensor_timing:null, subsensor_enable:null, dnd:null}, expect_rev:null}`로 부름,
+    응답 fixture의 행 `Z0 재실 트리거 · 60 → 65 (+5)`가 보이고 `적용`이 `POST /api/apply`를 `expect_rev:{[id]: 0}`로 부름. 같은 값으로 다시 끌면 `DraftBar`가 사라짐.
+    연결 안 됨이면 `edit.needConnection`, 보정 멤버면 편집 칸 비활성, `config_rev`가 바뀌면 `edit.revChanged`.
+  - `BulkEditScreen`: 기본이 `상대값`, `+5`를 넣고 미리보기 → 본문 `zone_thresholds.mode === 'relative'`. `절대값`을 고르면 값이 비고 경고가 보이며 확인 체크 전에는 `미리보기`가 비활성, 체크 후 활성.
+    미리보기 응답에 `absolute_overwrite`가 있으면 `DiffPreview`의 확인 체크가 체크된 채로 보임. 적용 202 뒤 편집값이 비고 선택은 남음(G37). 409 `apply_active` → `다른 설정 적용이 진행 중입니다`.
+  - `DiffPreview`: 위험 행에 `data-risk`와 위험 문구, 오류 항목이 있으면 `적용` 비활성과 `그 센서를 빼고 다시 미리보기`, 모든 항목의 `changes`가 비면 `바뀌는 것이 없습니다`.
+  - `ApplyResults`: fixture 작업(verified · failed(snapshot 있음) · partial) → 머리말 `설정 적용 끝 · 확인함 1 · 일부 1 · 실패 1`, 각 줄 문구, `되돌리기`는 snapshot이 있는 줄만, `모두 되돌리기`.
+  - `RollbackPicker`: 목록 fixture 2개 → 최신에 `가장 최근`, 고르고 미리보기 → `POST /api/rollback/preview` 본문 `{items:[{device_id, snapshot}], expect_rev:null}` → `되돌리기` → `POST /api/rollback`.
+  - `CloneSetup`: 기본 섹션 세 개 체크, 원본은 대상 목록에 없음, `zone_thresholds` 체크 시 경고, 미리보기 본문.
+  - `HistoryTab`: 보정 기록 두 줄, 기기 기록 영역에 `실험적` 배지, `기기에서 읽기`가 `kind=presence&detail=false`로 부름, 빈 결과 문구.
+  - `AdvancedTab`: 구역 칩 토글이 초안 `subsensor_zones`를 바꿈(정렬), 켜진 서브센서의 구역을 모두 끄면 `adv.noZone`, `dnd: null`이면 `adv.dndUnknown`, `센서 시계 맞추기` → `POST /api/time-sync`.
+  - **가드**: `Router hook={memoryLocation({ path: '/sensors/a/settings' }).hook} aroundNav={guardNav}`로 그린 앱에서 초안을 바꾸고 대시보드 링크를 누르면 위치가 그대로이고
+    `적용하지 않은 변경이 있습니다`가 보임 → `머무르기`면 그대로 → 다시 눌러 `버리고 이동`이면 `/`이고 초안이 지워짐. `/sensors/a/advanced`로의 이동(같은 범위)은 막지 않음.
+    바뀐 것이 있을 때 `beforeunload` 이벤트가 `defaultPrevented`.
+  - `BatchProgress`(더함, G38): waiting이고 남은 3초 → 취소 버튼이 확인 다이얼로그(`batch.cancelConfirmSoon`)를 열고 확인 전에는 `cancelBatch`를 부르지 않음, 남은 30초 → 바로 `cancelBatch`.
+  - `ApplyPill`: running이면 `설정 적용 1/3`, done이면 없음.
+- fixture는 `test/fixtures.ts`에 합성 값으로 더한다(`ConfigView` 하나, `DraftPreview` 둘(위험 없음 / `absolute_overwrite`·오류 항목), `ApplyJobView` 셋(running · done 부분 실패 · done 모두 확인), 스냅샷 목록, 보정 이력).
+
+#### 15.10.3 e2e (`tests/test_gui_e2e.py`에 함수 하나 더)
+
+실제 프로세스로 편집 → 적용 → 되돌리기를 HTTP + WS로 끝까지 돌린다. 30초 안이어야 한다(`@pytest.mark.timeout(60)`).
+
+1. M2 e2e의 1~3단계와 같되 `--sim 3 --speed 40`. WS 클라이언트 둘(A, B). `gather/start`, `sim/press/1..3` → 세 센서 CONNECTED.
+2. `GET /api/sensors/<SIM1>/config` → `sensitivity == 2`, `zone_thresholds[0].trigger == 95`, `config_rev == 0`.
+3. `POST /api/drafts/preview {targets:[3대], changes:{… zone_thresholds:{mode:"relative", trigger:[5]*7, maintain:[null]*7} …}}` → 세 항목 모두 `after.zone_thresholds[0].trigger == 100`, `risks == []`.
+4. `POST /api/apply`(같은 본문 + `expect_rev`) → 202. A·B 둘 다 그 `apply_id`의 `apply`를 `done`까지 받고, 모든 항목 `verified`.
+5. `POST /api/sim/drop/3` → 센서 3 LOST. `POST /api/apply {targets:[SIM1, SIM3], …}` → 409 `not_connected`(아무것도 쓰지 않음).
+6. `POST /api/rollback {items:[{SIM1, 4단계 항목의 snapshot}]}` → 202 → `verified`. `GET …/config` → `trigger == 95`.
+7. `GET /api/sensors/<SIM1>/snapshots` → 2개, 최신이 `rollback`.
+8. `POST /api/time-sync {device_ids:[SIM1, SIM2]}` → 두 항목 `written_at`이 있음.
+9. `GET /api/sensors/<SIM1>/history` → 200 `records == []`. `GET …/device-history?kind=presence` → 200 `presence == []`.
+10. A·B가 받은 메시지 중 `seq`가 정수인 것의 `(seq, type)` 열이 같고 끊김이 없다(D11).
+11. `SIGINT` → 10초 안에 종료, 종료 코드 0 또는 130.
+
+#### 15.10.4 명령
+
+11.3절과 같다. 더해서 `git status --short web/src/api/schema.ts web/openapi.json ms605/gui/static`이 깨끗해야 한다.
+
+### 15.11 통합 순서와 완료 기준
+
+1. (코어) `docs/CORE_API.md` 2.3절과 그 테스트. `pytest -q`, `ruff check .`.
+2. (백엔드) `schemas.py`를 15.4절 그대로, `python -m ms605.gui.schemas web/openapi.json`. 그 뒤 프런트엔드는 `npm run typegen`.
+3. (병행) 백엔드: `apply.py`, `ws.py`·`server.py` 변경과 테스트(15.10.1절, M3 잔여 포함). 프런트엔드: `draft.ts`·`apply.ts`·`navGuard.ts`·초안 스토어, `ThresholdMeter`,
+   탭·일괄 편집·미리보기·결과·되돌리기·클론, `BatchProgress`(G38), vitest. 프런트엔드는 2가 끝나기 전에는 15.4절을 보고 fixture로 작업한다.
+4. (통합) `uv run ms605 gui --sim 7 --speed 20`으로 노트북과 폰에서 확인하고 `npm run build` 결과를 커밋 대상에 넣는다.
+
+M4 완료 기준(GUI_PLAN): 시뮬레이터에 status 오류를 주입해 부분 실패를 만들면(15.10.1절 `inject_status`) 센서별로 `verified`/`failed`가 표시되고, 되돌리기로 원래 상태가 복원된다.
+더해서 `ms605 gui --sim 7`에서: 센서 하나의 실시간 막대 위 임계선을 끌어 바꾸고 미리보기 → 적용하면 확인됨이 보인다. 3대에 상대값 +5를 일괄 적용하면 센서마다 자기 보정값 + 5가 되고,
+절대값을 고르면 경고와 확인 체크가 나온다. 폰에서 시작한 적용의 진행과 결과가 노트북에도 같게 보이고, 보정 중인 센서의 적용은 `보정이 끝난 뒤 편집할 수 있습니다`로 거절된다.
+설정 백업 목록의 어느 시점으로도 되돌릴 수 있다. 고급 탭에서 서브센서·DND를 같은 흐름으로 바꾸고 시간 동기화를 할 수 있으며, 이력 탭에서 보정 기록·설정 백업·기기 기록(실험적)을 본다.
+전체 pytest, ruff, `npm run typecheck`, `npm test`, `npm run build`가 통과한다.
+
+### 15.12 범위 밖 (M5+)
+
+- 적용 작업 여러 개의 동시 실행, 작업 기록(지난 작업 목록). 서버는 마지막 작업 하나만 기억하고, 서버를 다시 띄우면 잊는다(스냅샷은 파일에 남는다).
+- 적용 작업의 취소, 실패 항목만 다시 시도(G37), 센서마다 다른 값의 일괄 초안(코어 `Draft.per_sensor`는 GUI가 쓰지 않는다)
+- 감지 모드(tag52) 편집 화면(클론으로만 옮긴다), 샘플 간격(tag98), 서브센서 일괄 편집
+- 스냅샷 지우기·이름 붙이기·보존 정책(코어 16장), 프로파일 파일 내보내기·가져오기(CLI `clone --save/--from-file`)
+- 기기 이력의 페이지 넘기기, 레코드 형식 자동 판별, 이력 그래프. 시간 동기화의 다시 읽기 검증
+- CLI와 GUI가 같은 센서를 동시에 바꿀 때의 `config_rev` 감지(13장과 같다)
+- 실기기 검증(M5): tag32·tag33·tag57~60의 실제 동작, DND 읽기 응답 시간(`DND_READ_TIMEOUT_S`), 7대 순차 적용 시간, tag48·49·50 쓰기의 반영 지연(지금은 tag51만 측정됨)

@@ -357,3 +357,31 @@ def test_snapshot_paths_cannot_escape_the_snapshot_dir(tmp_path, bad):
         s.save_snapshot(bad, ConfigProfile(sensitivity=1), ["sensitivity"], "apply")
     with pytest.raises(StorageError):
         s.list_snapshots(bad)
+
+
+# -- DND in snapshots (docs/CORE_API.md 2.3) -----------------------------------------
+
+
+def test_snapshot_keeps_dnd_only_when_given(tmp_path):
+    s = Storage(tmp_path)
+    plain = s.save_snapshot(DEVICE_ID, ConfigProfile(sensitivity=1), ["sensitivity"], "apply")
+    with_dnd = s.save_snapshot(DEVICE_ID, ConfigProfile(sensitivity=1), ["sensitivity", "dnd"], "apply", dnd=False)
+    plain_data = json.loads((s.snapshots_dir / DEVICE_ID / f"{plain.name}.json").read_text("utf-8"))
+    dnd_data = json.loads((s.snapshots_dir / DEVICE_ID / f"{with_dnd.name}.json").read_text("utf-8"))
+    assert "dnd" not in plain_data and plain_data["version"] == 1
+    assert dnd_data["dnd"] is False and dnd_data["sections"] == ["sensitivity", "dnd"] and dnd_data["version"] == 1
+    assert s.load_snapshot(DEVICE_ID, plain.name).dnd is None  # an older file without the key
+    loaded = s.load_snapshot(DEVICE_ID, with_dnd.name)
+    assert loaded == with_dnd and loaded.dnd is False
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [lambda d: d.update(sections=["dnd"]), lambda d: d.update(dnd=1), lambda d: d.update(dnd="false")],
+    ids=["dnd-section-without-value", "int", "string"],
+)
+def test_load_snapshot_with_a_bad_dnd_raises_storage_error(tmp_path, mutate):
+    s = Storage(tmp_path)
+    name = _snapshot_file(s, mutate)
+    with pytest.raises(StorageError):
+        s.load_snapshot(DEVICE_ID, name)

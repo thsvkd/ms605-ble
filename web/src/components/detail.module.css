@@ -5,6 +5,10 @@
   margin: 0 auto;
 }
 
+.screenWide {
+  max-width: 1200px;
+}
+
 .back {
   display: inline-flex;
   align-items: center;
@@ -111,17 +115,6 @@
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
-}
-
-.soon {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-4);
-  border-radius: var(--radius);
-  border: 1px dashed var(--border);
-  color: var(--text-muted);
-  font-size: var(--font-sm);
 }
 
 .empty {

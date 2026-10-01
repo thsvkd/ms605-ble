@@ -197,3 +197,13 @@ export function compareCell(before: number, after: number): string {
   const delta = d > 0 ? `+${d}` : d < 0 ? `−${-d}` : '0'
   return t.compare.cell(before, after, delta)
 }
+
+/** G38: a cancel this close to the fire time may reach the server once the round runs (core 5.3). */
+export const CANCEL_CONFIRM_WITHIN_S = 5
+
+/** running -> true; waiting -> remainingS unknown or under 5 s; anything else false. */
+export function needsCancelConfirm(batch: BatchView, remainingS: number | null): boolean {
+  if (batch.state === 'running') return true
+  if (batch.state === 'waiting') return remainingS === null || remainingS < CANCEL_CONFIRM_WITHIN_S
+  return false
+}

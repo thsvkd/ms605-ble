@@ -208,6 +208,39 @@ describe('CalibrateScreen: a batch from the server', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
+  it('waiting with under 5 s left: the cancel asks first (G38)', async () => {
+    const calls = mockApi({ [`POST /api/batches/${BATCH_ID}/cancel`]: { status: 200, body: batchView() } })
+    const waiting = batchView({ state: 'waiting', start: 'delay', jobs: [job(1), job(2), job(3)] })
+    act(() => {
+      useStore
+        .getState()
+        .applyMessage(snapshotMsg({ sensors: calibSensors(), batch: { ...waiting, fire_at: NOW_S + 3 } }))
+    })
+    render(<CalibrateScreen />)
+    fireEvent.click(screen.getByRole('button', { name: '카운트다운 취소' }))
+    expect(calls).toHaveLength(0)
+    const dialog = screen.getByRole('dialog')
+    expect(within(dialog).getByText(/곧 보정이 시작됩니다/)).toBeInTheDocument()
+    fireEvent.click(within(dialog).getByRole('button', { name: '카운트다운 취소' }))
+    await waitFor(() => expect(calls).toHaveLength(1))
+  })
+
+  it('the open confirm follows the round: running changes the words, an end closes it (G38)', () => {
+    mockApi({})
+    const waiting = batchView({ state: 'waiting', start: 'delay', jobs: [job(1), job(2), job(3)] })
+    act(() => {
+      useStore
+        .getState()
+        .applyMessage(snapshotMsg({ sensors: calibSensors(), batch: { ...waiting, fire_at: NOW_S + 2 } }))
+    })
+    render(<CalibrateScreen />)
+    fireEvent.click(screen.getByRole('button', { name: '카운트다운 취소' }))
+    act(() => useStore.setState({ batch: { ...waiting, state: 'running' }, countdown: null }))
+    expect(within(screen.getByRole('dialog')).getByText(/보정을 취소하면 센서 연결을 끊어/)).toBeInTheDocument()
+    act(() => useStore.setState({ batch: { ...waiting, state: 'cancelled' } }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
   it('done: results, before/after, and a retry for the reconnected sensor only', async () => {
     const calls = mockApi({ [`POST /api/batches/${BATCH_ID}/retry`]: { status: 202, body: batchView() } })
     resetStore(
@@ -288,6 +321,6 @@ describe('operation lock (G22)', () => {
     expect(screen.getByRole('button', { name: '연결 해제' })).toBeDisabled()
     expect(screen.getByText('보정이 끝난 뒤 해제할 수 있습니다')).toBeInTheDocument()
     expect(screen.getByRole('link', { name: '이 센서 보정' })).toHaveAttribute('href', `/calibrate?ids=${deviceId(1)}`)
-    expect(screen.getByText('설정 편집은 다음 버전에서 제공됩니다')).toBeInTheDocument()
+    expect(screen.getByRole('navigation', { name: '센서 메뉴' })).toBeInTheDocument()
   })
 })

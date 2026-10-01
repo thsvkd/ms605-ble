@@ -13,6 +13,272 @@
         "title": "ApiError",
         "type": "object"
       },
+      "ApplyIn": {
+        "additionalProperties": false,
+        "properties": {
+          "changes": {
+            "$ref": "#/components/schemas/SensorEdit"
+          },
+          "expect_rev": {
+            "patternProperties": {
+              "^[0-9a-f]{2,128}$": {
+                "type": "integer"
+              }
+            },
+            "title": "Expect Rev",
+            "type": "object"
+          },
+          "targets": {
+            "items": {
+              "pattern": "^[0-9a-f]{2,128}$",
+              "type": "string"
+            },
+            "maxItems": 32,
+            "minItems": 1,
+            "title": "Targets",
+            "type": "array"
+          }
+        },
+        "required": [
+          "targets",
+          "changes",
+          "expect_rev"
+        ],
+        "title": "ApplyIn",
+        "type": "object"
+      },
+      "ApplyItemView": {
+        "properties": {
+          "applied": {
+            "items": {
+              "enum": [
+                "sensitivity",
+                "detect_mode",
+                "zone_enable",
+                "zone_thresholds",
+                "subsensor_zones",
+                "subsensor_timing",
+                "subsensor_enable",
+                "dnd"
+              ],
+              "type": "string"
+            },
+            "title": "Applied",
+            "type": "array"
+          },
+          "device_id": {
+            "title": "Device Id",
+            "type": "string"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "mismatched": {
+            "items": {
+              "enum": [
+                "sensitivity",
+                "detect_mode",
+                "zone_enable",
+                "zone_thresholds",
+                "subsensor_zones",
+                "subsensor_timing",
+                "subsensor_enable",
+                "dnd"
+              ],
+              "type": "string"
+            },
+            "title": "Mismatched",
+            "type": "array"
+          },
+          "restore": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Restore"
+          },
+          "skipped": {
+            "items": {
+              "enum": [
+                "sensitivity",
+                "detect_mode",
+                "zone_enable",
+                "zone_thresholds",
+                "subsensor_zones",
+                "subsensor_timing",
+                "subsensor_enable",
+                "dnd"
+              ],
+              "type": "string"
+            },
+            "title": "Skipped",
+            "type": "array"
+          },
+          "snapshot": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Snapshot"
+          },
+          "state": {
+            "enum": [
+              "queued",
+              "applying",
+              "verified",
+              "partial",
+              "unverified",
+              "failed"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "device_id",
+          "state",
+          "restore",
+          "snapshot",
+          "applied",
+          "skipped",
+          "mismatched",
+          "error",
+          "finished_at"
+        ],
+        "title": "ApplyItemView",
+        "type": "object"
+      },
+      "ApplyJobView": {
+        "properties": {
+          "apply_id": {
+            "title": "Apply Id",
+            "type": "string"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "number"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ApplyItemView"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "kind": {
+            "enum": [
+              "apply",
+              "rollback",
+              "clone"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "sections": {
+            "items": {
+              "enum": [
+                "sensitivity",
+                "detect_mode",
+                "zone_enable",
+                "zone_thresholds",
+                "subsensor_zones",
+                "subsensor_timing",
+                "subsensor_enable",
+                "dnd"
+              ],
+              "type": "string"
+            },
+            "title": "Sections",
+            "type": "array"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "state": {
+            "enum": [
+              "running",
+              "done"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "apply_id",
+          "kind",
+          "state",
+          "created_at",
+          "source",
+          "sections",
+          "items"
+        ],
+        "title": "ApplyJobView",
+        "type": "object"
+      },
+      "ApplyMessage": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ApplyJobView"
+          },
+          "seq": {
+            "title": "Seq",
+            "type": "integer"
+          },
+          "ts": {
+            "title": "Ts",
+            "type": "number"
+          },
+          "type": {
+            "const": "apply",
+            "default": "apply",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "seq",
+          "ts",
+          "data"
+        ],
+        "title": "ApplyMessage",
+        "type": "object"
+      },
       "BatchCreate": {
         "additionalProperties": false,
         "properties": {
@@ -252,6 +518,27 @@
         "title": "BatchView",
         "type": "object"
       },
+      "CalibrationHistory": {
+        "properties": {
+          "device_id": {
+            "title": "Device Id",
+            "type": "string"
+          },
+          "records": {
+            "items": {
+              "$ref": "#/components/schemas/CalibrationRecord"
+            },
+            "title": "Records",
+            "type": "array"
+          }
+        },
+        "required": [
+          "device_id",
+          "records"
+        ],
+        "title": "CalibrationHistory",
+        "type": "object"
+      },
       "CalibrationJobMessage": {
         "properties": {
           "data": {
@@ -382,6 +669,63 @@
         "title": "CalibrationJobView",
         "type": "object"
       },
+      "CalibrationRecord": {
+        "properties": {
+          "detect_mode": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detect Mode"
+          },
+          "device_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Device Name"
+          },
+          "sensitivity": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sensitivity"
+          },
+          "timestamp": {
+            "title": "Timestamp",
+            "type": "string"
+          },
+          "zones": {
+            "items": {
+              "$ref": "#/components/schemas/CalibrationZone"
+            },
+            "title": "Zones",
+            "type": "array"
+          }
+        },
+        "required": [
+          "timestamp",
+          "device_name",
+          "sensitivity",
+          "detect_mode",
+          "zones"
+        ],
+        "title": "CalibrationRecord",
+        "type": "object"
+      },
       "CalibrationState": {
         "enum": [
           "idle",
@@ -433,6 +777,149 @@
         "title": "CalibrationSummary",
         "type": "object"
       },
+      "CalibrationZone": {
+        "properties": {
+          "distance_m": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Distance M"
+          },
+          "index": {
+            "title": "Index",
+            "type": "integer"
+          },
+          "maintain": {
+            "title": "Maintain",
+            "type": "integer"
+          },
+          "trigger": {
+            "title": "Trigger",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "index",
+          "distance_m",
+          "trigger",
+          "maintain"
+        ],
+        "title": "CalibrationZone",
+        "type": "object"
+      },
+      "Change": {
+        "properties": {
+          "after": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "After"
+          },
+          "before": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Before"
+          },
+          "index": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Index"
+          },
+          "part": {
+            "enum": [
+              "value",
+              "trigger",
+              "maintain",
+              "presence_s",
+              "absence_s"
+            ],
+            "title": "Part",
+            "type": "string"
+          },
+          "risks": {
+            "items": {
+              "enum": [
+                "absolute_overwrite",
+                "large_change",
+                "beyond_ui_range",
+                "zone_off",
+                "subsensor_off",
+                "subsensor_no_zone",
+                "sensitivity_only",
+                "dnd_on",
+                "learning_skipped"
+              ],
+              "type": "string"
+            },
+            "title": "Risks",
+            "type": "array"
+          },
+          "section": {
+            "enum": [
+              "sensitivity",
+              "detect_mode",
+              "zone_enable",
+              "zone_thresholds",
+              "subsensor_zones",
+              "subsensor_timing",
+              "subsensor_enable",
+              "dnd"
+            ],
+            "title": "Section",
+            "type": "string"
+          }
+        },
+        "required": [
+          "section",
+          "index",
+          "part",
+          "before",
+          "after",
+          "risks"
+        ],
+        "title": "Change",
+        "type": "object"
+      },
       "ClientMessage": {
         "discriminator": {
           "mapping": {
@@ -450,6 +937,160 @@
           }
         ],
         "title": "ClientMessage"
+      },
+      "CloneApplyIn": {
+        "additionalProperties": false,
+        "properties": {
+          "expect_rev": {
+            "patternProperties": {
+              "^[0-9a-f]{2,128}$": {
+                "type": "integer"
+              }
+            },
+            "title": "Expect Rev",
+            "type": "object"
+          },
+          "sections": {
+            "items": {
+              "enum": [
+                "sensitivity",
+                "detect_mode",
+                "zone_enable",
+                "zone_thresholds",
+                "subsensor_zones",
+                "subsensor_timing",
+                "subsensor_enable",
+                "dnd"
+              ],
+              "type": "string"
+            },
+            "maxItems": 8,
+            "minItems": 1,
+            "title": "Sections",
+            "type": "array"
+          },
+          "source": {
+            "pattern": "^[0-9a-f]{2,128}$",
+            "title": "Source",
+            "type": "string"
+          },
+          "targets": {
+            "items": {
+              "pattern": "^[0-9a-f]{2,128}$",
+              "type": "string"
+            },
+            "maxItems": 32,
+            "minItems": 1,
+            "title": "Targets",
+            "type": "array"
+          }
+        },
+        "required": [
+          "source",
+          "targets",
+          "sections",
+          "expect_rev"
+        ],
+        "title": "CloneApplyIn",
+        "type": "object"
+      },
+      "CloneIn": {
+        "additionalProperties": false,
+        "properties": {
+          "expect_rev": {
+            "anyOf": [
+              {
+                "patternProperties": {
+                  "^[0-9a-f]{2,128}$": {
+                    "type": "integer"
+                  }
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Expect Rev"
+          },
+          "sections": {
+            "items": {
+              "enum": [
+                "sensitivity",
+                "detect_mode",
+                "zone_enable",
+                "zone_thresholds",
+                "subsensor_zones",
+                "subsensor_timing",
+                "subsensor_enable",
+                "dnd"
+              ],
+              "type": "string"
+            },
+            "maxItems": 8,
+            "minItems": 1,
+            "title": "Sections",
+            "type": "array"
+          },
+          "source": {
+            "pattern": "^[0-9a-f]{2,128}$",
+            "title": "Source",
+            "type": "string"
+          },
+          "targets": {
+            "items": {
+              "pattern": "^[0-9a-f]{2,128}$",
+              "type": "string"
+            },
+            "maxItems": 32,
+            "minItems": 1,
+            "title": "Targets",
+            "type": "array"
+          }
+        },
+        "required": [
+          "source",
+          "targets",
+          "sections"
+        ],
+        "title": "CloneIn",
+        "type": "object"
+      },
+      "ConfigView": {
+        "properties": {
+          "config_rev": {
+            "title": "Config Rev",
+            "type": "integer"
+          },
+          "device_id": {
+            "title": "Device Id",
+            "type": "string"
+          },
+          "distances_m": {
+            "items": {
+              "type": "number"
+            },
+            "title": "Distances M",
+            "type": "array"
+          },
+          "profile": {
+            "$ref": "#/components/schemas/ProfileView"
+          },
+          "read_at": {
+            "title": "Read At",
+            "type": "number"
+          }
+        },
+        "required": [
+          "device_id",
+          "read_at",
+          "config_rev",
+          "distances_m",
+          "profile"
+        ],
+        "title": "ConfigView",
+        "type": "object"
       },
       "ConnectingDevice": {
         "properties": {
@@ -522,6 +1163,157 @@
         "title": "CountdownMessage",
         "type": "object"
       },
+      "DeviceHistory": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "boolean"
+          },
+          "device_id": {
+            "title": "Device Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "presence",
+              "light"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "light": {
+            "items": {
+              "$ref": "#/components/schemas/LightRecordView"
+            },
+            "title": "Light",
+            "type": "array"
+          },
+          "presence": {
+            "items": {
+              "$ref": "#/components/schemas/PresenceRecordView"
+            },
+            "title": "Presence",
+            "type": "array"
+          },
+          "read_at": {
+            "title": "Read At",
+            "type": "number"
+          }
+        },
+        "required": [
+          "device_id",
+          "kind",
+          "detail",
+          "read_at",
+          "presence",
+          "light"
+        ],
+        "title": "DeviceHistory",
+        "type": "object"
+      },
+      "DraftIn": {
+        "additionalProperties": false,
+        "properties": {
+          "changes": {
+            "$ref": "#/components/schemas/SensorEdit"
+          },
+          "expect_rev": {
+            "anyOf": [
+              {
+                "patternProperties": {
+                  "^[0-9a-f]{2,128}$": {
+                    "type": "integer"
+                  }
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Expect Rev"
+          },
+          "targets": {
+            "items": {
+              "pattern": "^[0-9a-f]{2,128}$",
+              "type": "string"
+            },
+            "maxItems": 32,
+            "minItems": 1,
+            "title": "Targets",
+            "type": "array"
+          }
+        },
+        "required": [
+          "targets",
+          "changes"
+        ],
+        "title": "DraftIn",
+        "type": "object"
+      },
+      "DraftPreview": {
+        "properties": {
+          "checked_at": {
+            "title": "Checked At",
+            "type": "number"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SensorPreview"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "kind": {
+            "enum": [
+              "apply",
+              "rollback",
+              "clone"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "risks": {
+            "items": {
+              "enum": [
+                "absolute_overwrite",
+                "large_change",
+                "beyond_ui_range",
+                "zone_off",
+                "subsensor_off",
+                "subsensor_no_zone",
+                "sensitivity_only",
+                "dnd_on",
+                "learning_skipped"
+              ],
+              "type": "string"
+            },
+            "title": "Risks",
+            "type": "array"
+          },
+          "source_rev": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Rev"
+          }
+        },
+        "required": [
+          "kind",
+          "checked_at",
+          "items",
+          "risks",
+          "source_rev"
+        ],
+        "title": "DraftPreview",
+        "type": "object"
+      },
       "ErrorBody": {
         "properties": {
           "code": {
@@ -537,7 +1329,10 @@
               "invalid_file",
               "storage",
               "internal",
-              "batch_active"
+              "batch_active",
+              "apply_active",
+              "stale",
+              "device_error"
             ],
             "title": "Code",
             "type": "string"
@@ -643,6 +1438,29 @@
           "added"
         ],
         "title": "ImportResult",
+        "type": "object"
+      },
+      "LightRecordView": {
+        "properties": {
+          "index": {
+            "title": "Index",
+            "type": "integer"
+          },
+          "light_lux": {
+            "title": "Light Lux",
+            "type": "integer"
+          },
+          "timestamp": {
+            "title": "Timestamp",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "index",
+          "timestamp",
+          "light_lux"
+        ],
+        "title": "LightRecordView",
         "type": "object"
       },
       "LinkState": {
@@ -1146,6 +1964,64 @@
         "title": "PreflightResult",
         "type": "object"
       },
+      "PresenceRecordView": {
+        "properties": {
+          "index": {
+            "title": "Index",
+            "type": "integer"
+          },
+          "sensor_presence": {
+            "items": {
+              "type": "boolean"
+            },
+            "title": "Sensor Presence",
+            "type": "array"
+          },
+          "sub_sensor_triggers": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Sub Sensor Triggers",
+            "type": "array"
+          },
+          "timestamp": {
+            "title": "Timestamp",
+            "type": "integer"
+          },
+          "zone_enabled": {
+            "items": {
+              "type": "boolean"
+            },
+            "title": "Zone Enabled",
+            "type": "array"
+          },
+          "zone_presence": {
+            "items": {
+              "type": "boolean"
+            },
+            "title": "Zone Presence",
+            "type": "array"
+          },
+          "zone_triggers": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Zone Triggers",
+            "type": "array"
+          }
+        },
+        "required": [
+          "index",
+          "timestamp",
+          "sensor_presence",
+          "zone_enabled",
+          "zone_presence",
+          "sub_sensor_triggers",
+          "zone_triggers"
+        ],
+        "title": "PresenceRecordView",
+        "type": "object"
+      },
       "PresenceView": {
         "properties": {
           "device_id": {
@@ -1210,6 +2086,89 @@
           "error"
         ],
         "title": "PresenceView",
+        "type": "object"
+      },
+      "ProfileView": {
+        "properties": {
+          "detect_mode": {
+            "title": "Detect Mode",
+            "type": "integer"
+          },
+          "dnd": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dnd"
+          },
+          "sensitivity": {
+            "title": "Sensitivity",
+            "type": "integer"
+          },
+          "subsensor_enable": {
+            "items": {
+              "type": "boolean"
+            },
+            "title": "Subsensor Enable",
+            "type": "array"
+          },
+          "subsensor_timing": {
+            "items": {
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "integer"
+                }
+              ],
+              "type": "array"
+            },
+            "title": "Subsensor Timing",
+            "type": "array"
+          },
+          "subsensor_zones": {
+            "items": {
+              "items": {
+                "type": "integer"
+              },
+              "type": "array"
+            },
+            "title": "Subsensor Zones",
+            "type": "array"
+          },
+          "zone_enable": {
+            "items": {
+              "type": "boolean"
+            },
+            "title": "Zone Enable",
+            "type": "array"
+          },
+          "zone_thresholds": {
+            "items": {
+              "$ref": "#/components/schemas/ZonePair"
+            },
+            "title": "Zone Thresholds",
+            "type": "array"
+          }
+        },
+        "required": [
+          "sensitivity",
+          "detect_mode",
+          "zone_enable",
+          "zone_thresholds",
+          "subsensor_zones",
+          "subsensor_timing",
+          "subsensor_enable",
+          "dnd"
+        ],
+        "title": "ProfileView",
         "type": "object"
       },
       "RegistryInfo": {
@@ -1287,6 +2246,92 @@
         "title": "ReleaseRequest",
         "type": "object"
       },
+      "RollbackApplyIn": {
+        "additionalProperties": false,
+        "properties": {
+          "expect_rev": {
+            "patternProperties": {
+              "^[0-9a-f]{2,128}$": {
+                "type": "integer"
+              }
+            },
+            "title": "Expect Rev",
+            "type": "object"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/RollbackItem"
+            },
+            "maxItems": 32,
+            "minItems": 1,
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items",
+          "expect_rev"
+        ],
+        "title": "RollbackApplyIn",
+        "type": "object"
+      },
+      "RollbackIn": {
+        "additionalProperties": false,
+        "properties": {
+          "expect_rev": {
+            "anyOf": [
+              {
+                "patternProperties": {
+                  "^[0-9a-f]{2,128}$": {
+                    "type": "integer"
+                  }
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Expect Rev"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/RollbackItem"
+            },
+            "maxItems": 32,
+            "minItems": 1,
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "RollbackIn",
+        "type": "object"
+      },
+      "RollbackItem": {
+        "additionalProperties": false,
+        "properties": {
+          "device_id": {
+            "pattern": "^[0-9a-f]{2,128}$",
+            "title": "Device Id",
+            "type": "string"
+          },
+          "snapshot": {
+            "pattern": "^[0-9]{8}T[0-9]{12}Z$",
+            "title": "Snapshot",
+            "type": "string"
+          }
+        },
+        "required": [
+          "device_id",
+          "snapshot"
+        ],
+        "title": "RollbackItem",
+        "type": "object"
+      },
       "SensorCreate": {
         "additionalProperties": false,
         "properties": {
@@ -1326,6 +2371,138 @@
           "alias"
         ],
         "title": "SensorCreate",
+        "type": "object"
+      },
+      "SensorEdit": {
+        "additionalProperties": false,
+        "properties": {
+          "dnd": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Dnd"
+          },
+          "sensitivity": {
+            "anyOf": [
+              {
+                "maximum": 4,
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Sensitivity"
+          },
+          "subsensor_enable": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "boolean"
+                },
+                "maxItems": 3,
+                "minItems": 3,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Subsensor Enable"
+          },
+          "subsensor_timing": {
+            "anyOf": [
+              {
+                "items": {
+                  "maxItems": 2,
+                  "minItems": 2,
+                  "prefixItems": [
+                    {
+                      "maximum": 65535,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    {
+                      "maximum": 65535,
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  ],
+                  "type": "array"
+                },
+                "maxItems": 3,
+                "minItems": 3,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Subsensor Timing"
+          },
+          "subsensor_zones": {
+            "anyOf": [
+              {
+                "items": {
+                  "items": {
+                    "maximum": 6,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "maxItems": 7,
+                  "type": "array"
+                },
+                "maxItems": 3,
+                "minItems": 3,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Subsensor Zones"
+          },
+          "zone_enable": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "boolean"
+                },
+                "maxItems": 7,
+                "minItems": 7,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Zone Enable"
+          },
+          "zone_thresholds": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ThresholdEdit"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "title": "SensorEdit",
         "type": "object"
       },
       "SensorInfoImport": {
@@ -1405,6 +2582,85 @@
           "data"
         ],
         "title": "SensorMessage",
+        "type": "object"
+      },
+      "SensorPreview": {
+        "properties": {
+          "after": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProfileView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "before": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProfileView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "changes": {
+            "items": {
+              "$ref": "#/components/schemas/Change"
+            },
+            "title": "Changes",
+            "type": "array"
+          },
+          "config_rev": {
+            "title": "Config Rev",
+            "type": "integer"
+          },
+          "device_id": {
+            "title": "Device Id",
+            "type": "string"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "risks": {
+            "items": {
+              "enum": [
+                "absolute_overwrite",
+                "large_change",
+                "beyond_ui_range",
+                "zone_off",
+                "subsensor_off",
+                "subsensor_no_zone",
+                "sensitivity_only",
+                "dnd_on",
+                "learning_skipped"
+              ],
+              "type": "string"
+            },
+            "title": "Risks",
+            "type": "array"
+          }
+        },
+        "required": [
+          "device_id",
+          "config_rev",
+          "error",
+          "before",
+          "after",
+          "changes",
+          "risks"
+        ],
+        "title": "SensorPreview",
         "type": "object"
       },
       "SensorRemoved": {
@@ -1512,6 +2768,10 @@
       },
       "SensorView": {
         "properties": {
+          "config_rev": {
+            "title": "Config Rev",
+            "type": "integer"
+          },
           "device_id": {
             "title": "Device Id",
             "type": "string"
@@ -1562,7 +2822,8 @@
           "registry",
           "live",
           "last_calibration",
-          "last_snapshot"
+          "last_snapshot",
+          "config_rev"
         ],
         "title": "SensorView",
         "type": "object"
@@ -1599,6 +2860,7 @@
       "ServerMessage": {
         "discriminator": {
           "mapping": {
+            "apply": "#/components/schemas/ApplyMessage",
             "batch": "#/components/schemas/BatchMessage",
             "calibration_job": "#/components/schemas/CalibrationJobMessage",
             "countdown": "#/components/schemas/CountdownMessage",
@@ -1646,6 +2908,9 @@
           },
           {
             "$ref": "#/components/schemas/CountdownMessage"
+          },
+          {
+            "$ref": "#/components/schemas/ApplyMessage"
           }
         ],
         "title": "ServerMessage"
@@ -1760,6 +3025,48 @@
         "title": "SitesMessage",
         "type": "object"
       },
+      "SnapshotDetail": {
+        "properties": {
+          "device_id": {
+            "title": "Device Id",
+            "type": "string"
+          },
+          "profile": {
+            "$ref": "#/components/schemas/ProfileView"
+          },
+          "snapshot": {
+            "$ref": "#/components/schemas/SnapshotView"
+          }
+        },
+        "required": [
+          "device_id",
+          "snapshot",
+          "profile"
+        ],
+        "title": "SnapshotDetail",
+        "type": "object"
+      },
+      "SnapshotList": {
+        "properties": {
+          "device_id": {
+            "title": "Device Id",
+            "type": "string"
+          },
+          "snapshots": {
+            "items": {
+              "$ref": "#/components/schemas/SnapshotView"
+            },
+            "title": "Snapshots",
+            "type": "array"
+          }
+        },
+        "required": [
+          "device_id",
+          "snapshots"
+        ],
+        "title": "SnapshotList",
+        "type": "object"
+      },
       "SnapshotMessage": {
         "properties": {
           "data": {
@@ -1812,8 +3119,49 @@
         "title": "SnapshotSummary",
         "type": "object"
       },
+      "SnapshotView": {
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "sections": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sections",
+            "type": "array"
+          },
+          "taken_at": {
+            "title": "Taken At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "taken_at",
+          "reason",
+          "sections"
+        ],
+        "title": "SnapshotView",
+        "type": "object"
+      },
       "StateSnapshot": {
         "properties": {
+          "apply": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ApplyJobView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "batch": {
             "anyOf": [
               {
@@ -1863,9 +3211,139 @@
           "sites",
           "sensors",
           "pending",
-          "batch"
+          "batch",
+          "apply"
         ],
         "title": "StateSnapshot",
+        "type": "object"
+      },
+      "ThresholdEdit": {
+        "additionalProperties": false,
+        "properties": {
+          "maintain": {
+            "items": {
+              "anyOf": [
+                {
+                  "maximum": 65535,
+                  "minimum": -500,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "maxItems": 7,
+            "minItems": 7,
+            "title": "Maintain",
+            "type": "array"
+          },
+          "mode": {
+            "enum": [
+              "relative",
+              "absolute"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "trigger": {
+            "items": {
+              "anyOf": [
+                {
+                  "maximum": 65535,
+                  "minimum": -500,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "maxItems": 7,
+            "minItems": 7,
+            "title": "Trigger",
+            "type": "array"
+          }
+        },
+        "required": [
+          "mode",
+          "trigger",
+          "maintain"
+        ],
+        "title": "ThresholdEdit",
+        "type": "object"
+      },
+      "TimeSyncIn": {
+        "additionalProperties": false,
+        "properties": {
+          "device_ids": {
+            "items": {
+              "pattern": "^[0-9a-f]{2,128}$",
+              "type": "string"
+            },
+            "maxItems": 32,
+            "minItems": 1,
+            "title": "Device Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "device_ids"
+        ],
+        "title": "TimeSyncIn",
+        "type": "object"
+      },
+      "TimeSyncItem": {
+        "properties": {
+          "device_id": {
+            "title": "Device Id",
+            "type": "string"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "written_at": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Written At"
+          }
+        },
+        "required": [
+          "device_id",
+          "written_at",
+          "error"
+        ],
+        "title": "TimeSyncItem",
+        "type": "object"
+      },
+      "TimeSyncResult": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/TimeSyncItem"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "TimeSyncResult",
         "type": "object"
       },
       "ZonePair": {

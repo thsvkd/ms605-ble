@@ -1,8 +1,8 @@
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import { DashboardScreen } from '../screens/Dashboard'
 import { resetStore } from '../store/store'
-import { bleName, pending, richSensors, SITE_A, SITE_B, storeState } from './fixtures'
+import { bleName, jobAllVerified, jobRunning, pending, richSensors, SITE_A, SITE_B, storeState } from './fixtures'
 
 describe('DashboardScreen', () => {
   it('draws sites, sensors, the unregistered and the pending entries', () => {
@@ -55,6 +55,19 @@ describe('DashboardScreen', () => {
     render(<DashboardScreen />)
     fireEvent.click(screen.getByRole('button', { name: '모두 연결 해제' }))
     expect(screen.getByText(/센서 모으기를 멈추고 모든 연결을 해제합니다/)).toBeInTheDocument()
+  })
+
+  it('release-all is disabled with a note while an apply job runs, and enabled once it is done', () => {
+    resetStore(storeState({ sensors: richSensors(), apply: jobRunning() }))
+    render(<DashboardScreen />)
+    const button = screen.getByRole('button', { name: '모두 연결 해제' })
+    expect(button).toBeDisabled()
+    expect(button).toHaveAccessibleDescription('설정 적용이 끝난 뒤 해제할 수 있습니다')
+    cleanup()
+    resetStore(storeState({ sensors: richSensors(), apply: jobAllVerified() }))
+    render(<DashboardScreen />)
+    expect(screen.getByRole('button', { name: '모두 연결 해제' })).toBeEnabled()
+    expect(screen.queryByText('설정 적용이 끝난 뒤 해제할 수 있습니다')).not.toBeInTheDocument()
   })
 
   it('the primary action points at the running gather', () => {

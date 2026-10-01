@@ -38,7 +38,7 @@ from .events import (
     SensorGathered,
 )
 from .models import PROFILE_SECTION_KEYS, PROFILE_ZONE_COUNT, ConfigProfile
-from .protocol import CALIBRATION_TIMEOUT_S
+from .protocol import CALIBRATION_TIMEOUT_S, DetectMode
 from .registry import MatchResult, Registry
 from .session import KEEPALIVE_INTERVAL_S, DeviceInfo, DeviceSession
 from .storage import Storage
@@ -48,6 +48,7 @@ _log = logging.getLogger(__name__)
 # A tag51 write reads back as the old value at once and as the new one ~1 s later.
 VERIFY_TIMEOUT_S = 3.0
 VERIFY_INTERVAL_S = 0.4
+DND_SECTION = "dnd"  # a draft section outside ConfigProfile (tag32; docs/CORE_API.md 2.3)
 GATHER_PAUSE_S = 1.0  # rest between gather scans, as in the old --collect loop
 _FIRE_CHECK_S = 1.0  # a waiting batch re-reads the wall clock at least this often
 
@@ -336,7 +337,7 @@ class Fleet:
         """Re-apply a snapshot's sections. StorageError if it is missing or broken."""
         session = self._sessions[device_id]
         snap = self.storage.load_snapshot(device_id, snapshot)
-        changes = SensorChanges.from_profile(snap.profile, snap.sections)
+        changes = SensorChanges.from_profile(snap.profile, snap.sections, dnd=snap.dnd)
         return await apply_changes(session, changes, self.storage, reason="rollback")
 
 
@@ -485,12 +486,15 @@ class SensorChanges:
     subsensor_zones: list[list[int]] | None = None
     subsensor_timing: list[tuple[int, int]] | None = None
     subsensor_enable: list[bool] | None = None
+    dnd: bool | None = None  # tag32, read and written only when set (not part of ConfigProfile)
 
     def _plain_profile(self) -> ConfigProfile:
         return ConfigProfile(**{k: copy.deepcopy(getattr(self, k)) for k in _PLAIN_SECTIONS})
 
     def validate(self) -> None:
         """Every check that needs no current values. ProfileError."""
+        if self.dnd is not None and not isinstance(self.dnd, bool):
+            raise ProfileError(f"dnd: expected true/false, got {self.dnd!r}")
         if self.zone_thresholds is not None:
             _check_threshold_change(self.zone_thresholds)
         self._plain_profile().validate()
@@ -520,13 +524,21 @@ class SensorChanges:
         return target
 
     @classmethod
-    def from_profile(cls, profile: ConfigProfile, sections: Sequence[str]) -> SensorChanges:
-        """For clone and rollback: `sections` of `profile`, thresholds absolute."""
-        unknown = set(sections) - set(PROFILE_SECTION_KEYS)
+    def from_profile(
+        cls, profile: ConfigProfile, sections: Sequence[str], *, dnd: bool | None = None
+    ) -> SensorChanges:
+        """For clone and rollback: `sections` of `profile`, thresholds absolute.
+        The "dnd" section takes its value from `dnd` (ConfigProfile has none)."""
+        unknown = set(sections) - set(PROFILE_SECTION_KEYS + (DND_SECTION,))
         if unknown:
             raise ProfileError(f"unknown profile section(s): {sorted(unknown)}")
         changes = cls()
         for key in sections:
+            if key == DND_SECTION:
+                if dnd is None:
+                    raise ProfileError("dnd: value unknown")
+                changes.dnd = dnd
+                continue
             value = copy.deepcopy(getattr(profile, key))
             if key == "zone_thresholds" and value is not None:
                 value = ThresholdChange(relative=False, trigger=[t for t, _ in value], maintain=[m for _, m in value])
@@ -569,15 +581,18 @@ async def poll_verify(
     *,
     timeout: float = VERIFY_TIMEOUT_S,
     interval: float = VERIFY_INTERVAL_S,
+    dnd: bool | None = None,
 ) -> tuple[ConfigProfile, list[str]]:
-    """Re-read until `sections` match `target` or `timeout` passes (the last
-    read is at the deadline, never past it). Returns (profile read back,
-    sections that still differ)."""
+    """Re-read until `sections` match `target` (and DND equals `dnd`, when given)
+    or `timeout` passes (the last read is at the deadline, never past it).
+    Returns (profile read back, sections that still differ)."""
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout
     while True:
         actual = ConfigProfile.from_config(await ms.read_config())
         mismatched = target.diff_sections(actual, sections)
+        if dnd is not None and await ms.read_dnd() != dnd:
+            mismatched.append(DND_SECTION)
         remaining = deadline - loop.time()
         if not mismatched or remaining <= 0:
             return actual, mismatched
@@ -620,29 +635,39 @@ async def _apply_locked(
     verify_timeout: float,
     out: dict,
 ) -> ApplyStatus:
+    dnd = changes.dnd
     try:
         current = ConfigProfile.from_config(await ms.read_config())
+        dnd_before = await ms.read_dnd() if dnd is not None else None
         target = changes.resolve(current)
-        sections = target.sections_present()
-        out["snapshot"] = storage.save_snapshot(session.device_id, current, sections, reason).name
+        profile_sections = target.sections_present()
+        sections = profile_sections + ((DND_SECTION,) if dnd is not None else ())
+        learning = target.detect_mode is not None and int(target.detect_mode) == int(DetectMode.SPACE_LEARNING)
+        written = tuple(s for s in sections if not (learning and s == "detect_mode"))  # apply_profile skips mode 4
+        out["snapshot"] = storage.save_snapshot(session.device_id, current, written, reason, dnd=dnd_before).name
     except Exception as exc:  # noqa: BLE001 - nothing written yet
         out["error"] = str(exc)
         return ApplyStatus.FAILED
     try:
-        applied = await ms.apply_profile(target, sections)
+        applied = await ms.apply_profile(target, profile_sections)
+        if dnd is not None:  # after the profile sections: a refused DND write does not block them
+            await ms.set_dnd(dnd)
     except Exception as exc:  # noqa: BLE001 - what was written is unknown: re-read once (SPEC 6.2)
         out["error"] = str(exc) if isinstance(exc, MS605Error) else f"{type(exc).__name__}: {exc}"
         if ms.is_connected:
             try:
                 actual = ConfigProfile.from_config(await ms.read_config())
-                out["mismatched"] = tuple(target.diff_sections(actual, sections))
+                mismatched = target.diff_sections(actual, profile_sections)
+                if dnd is not None and await ms.read_dnd() != dnd:
+                    mismatched.append(DND_SECTION)
+                out["mismatched"] = tuple(mismatched)
             except Exception as read_exc:  # noqa: BLE001 - leave mismatched empty
                 _log.warning("re-read after a failed apply on %s failed: %s", session.address, read_exc)
         return ApplyStatus.FAILED
-    out["applied"] = tuple(applied)
-    out["skipped"] = tuple(s for s in sections if s not in applied)
+    out["applied"] = tuple(applied) + ((DND_SECTION,) if dnd is not None else ())
+    out["skipped"] = tuple(s for s in sections if s not in out["applied"])
     try:
-        _, mismatched = await poll_verify(ms, target, applied, timeout=verify_timeout)
+        _, mismatched = await poll_verify(ms, target, applied, timeout=verify_timeout, dnd=dnd)
     except Exception as exc:  # noqa: BLE001 - written but not confirmed
         out["error"] = str(exc)
         return ApplyStatus.UNVERIFIED

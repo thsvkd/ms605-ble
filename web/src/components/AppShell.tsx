@@ -1,8 +1,10 @@
 import { Activity, Bluetooth, Crosshair, LayoutGrid, Radar } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { Link, useRoute } from 'wouter'
+import { useBeforeUnloadGuard } from '../navGuard'
 import { selectBatchActive, useStore } from '../store/store'
 import { t } from '../strings'
+import { ApplyPill } from './ApplyPill'
 import { CalibrationPill } from './CalibrationPill'
 import { ConnectionBanner } from './ConnectionBanner'
 import { GatherPill } from './GatherPill'
@@ -10,6 +12,7 @@ import { LanBadge } from './LanBadge'
 import { LiveRegion } from './LiveRegion'
 import { Notices } from './Notices'
 import { ThemeToggle } from './ThemeToggle'
+import { UnsavedChangesDialog } from './UnsavedChangesDialog'
 import styles from './shell.module.css'
 
 function NavLink({ href, className, children }: { href: string; className?: string; children: ReactNode }) {
@@ -25,6 +28,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const open = useStore((s) => s.conn === 'open')
   const gathering = useStore((s) => s.gather.gathering)
   const batchActive = useStore(selectBatchActive)
+  useBeforeUnloadGuard()
   return (
     <div className={styles.app}>
       <header className={styles.header}>
@@ -54,6 +58,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             </NavLink>
           </nav>
           <div className={styles.headerEnd}>
+            <ApplyPill />
             <CalibrationPill />
             <GatherPill />
             <LanBadge />
@@ -85,6 +90,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       </nav>
       <Notices />
       <LiveRegion />
+      <UnsavedChangesDialog />
     </div>
   )
 }

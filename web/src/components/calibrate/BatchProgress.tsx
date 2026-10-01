@@ -1,8 +1,8 @@
 import { AlertTriangle, CircleStop, Info, PauseCircle, XCircle } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { ApiRequestError, cancelBatch } from '../../api/client'
 import type { BatchView, SensorView } from '../../api/types'
-import { batchHeadline, formatCountdown, formatElapsed } from '../../calibration'
+import { batchHeadline, formatCountdown, formatElapsed, needsCancelConfirm } from '../../calibration'
 import { useCountdown } from '../../hooks/useCountdown'
 import { errorText, t } from '../../strings'
 import { Button } from '../Button'
@@ -25,7 +25,16 @@ export function BatchProgress({ batch, sensors, gathering }: Props) {
   const waiting = batch.state === 'waiting'
   const headline = batchHeadline(batch, remaining, new Date())
 
-  // Waiting: stop at once, nothing has touched a sensor yet. Running: it drops links, so confirm (10.1-5).
+  // Waiting with time left: stop at once, nothing has touched a sensor yet. Running, or about to fire
+  // (G38: the cancel may land once the round runs): it drops links, so confirm (10.1-5).
+  const confirmFirst = needsCancelConfirm(batch, remaining)
+
+  // the round ended (or a new one replaced it) while the dialog was open: nothing left to confirm
+  const ended = batch.state !== 'waiting' && batch.state !== 'running'
+  useEffect(() => {
+    if (ended) setConfirm(false)
+  }, [ended])
+
   const cancelNow = async () => {
     setBusy(true)
     setError(null)
@@ -92,7 +101,7 @@ export function BatchProgress({ batch, sensors, gathering }: Props) {
               block
               icon={waiting ? XCircle : CircleStop}
               disabled={busy}
-              onClick={waiting ? cancelNow : () => setConfirm(true)}
+              onClick={confirmFirst ? () => setConfirm(true) : cancelNow}
             >
               {cancelLabel}
             </Button>
@@ -108,9 +117,9 @@ export function BatchProgress({ batch, sensors, gathering }: Props) {
       </div>
       <ConfirmDialog
         open={confirm}
-        title={t.batch.cancelRunning}
-        body={t.batch.cancelConfirm}
-        confirmLabel={t.batch.cancelRunning}
+        title={cancelLabel}
+        body={waiting ? t.batch.cancelConfirmSoon : t.batch.cancelConfirm}
+        confirmLabel={cancelLabel}
         danger
         onConfirm={() => cancelBatch(batch.batch_id)}
         onClose={() => setConfirm(false)}

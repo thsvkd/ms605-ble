@@ -19,7 +19,7 @@ from conftest import recv_until
 
 import ms605.fleet as fleet_mod
 from ms605.calibration import CalibrationJob
-from ms605.events import LinkState
+from ms605.events import BusyChanged, LinkState
 from ms605.protocol import TAG_DETECT_MODE
 from ms605.sim import DEFAULT_LEARNED_THRESHOLDS
 
@@ -435,14 +435,17 @@ def test_preflight_reports_presence_in_request_order(rig):
 
 
 def test_a_transient_identify_lock_does_not_fail_the_batch(rig):
-    """M3 item 3, the route side: "identify" is not a lock for the checks, and the job waits for it."""
+    """M3 item 3, the route side: "identify" is not a lock for the checks, and the job waits for it.
+    The lock is held for the whole request and released only after it (15.10.1)."""
     gui = rig(1)
     (device_id,) = _gather(gui, 1)
     session = gui.fleet.sessions[device_id]
+    dev = gui.sim.devices[0]
+    release = asyncio.Event()
 
     async def hold_identify() -> None:
         async with session.operation("identify"):
-            await asyncio.sleep(0.3)
+            await release.wait()
 
     with gui.ws() as ws:
         ws.receive_json()
@@ -450,26 +453,45 @@ def test_a_transient_identify_lock_does_not_fail_the_batch(rig):
         _wait(lambda: session.busy == "identify")
         created = gui.post("/api/batches", {"device_ids": [device_id]})
         assert created.status_code == 202
+        assert session.busy == "identify"  # held through the whole request
+        job = gui.get(f"/api/batches/{created.json()['batch_id']}").json()["jobs"][0]
+        assert job["state"] == "idle" and _tag52_writes(dev) == 0
+        released_at = len(dev.frames_in)
+        gui.client.portal.call(release.set)  # well inside IDENTIFY_WAIT_S
         final = _until(ws, _batch(lambda d: d["state"] == "done"))[-1]["data"]
         assert final["jobs"][0]["state"] == "succeeded" and final["jobs"][0]["error"] is None
+    first_tag52 = next(n for n, f in enumerate(dev.frames_in) if any(t == TAG_DETECT_MODE for t, _ in f.attributes))
+    assert first_tag52 >= released_at
 
 
 def test_a_batch_fired_while_a_regather_identifies_the_sensor_succeeds(rig):
     """The gather stop on fire (G20) lets an in-flight re-gather finish: cancelling it would
-    close the link the waiting job is about to calibrate."""
+    close the link the waiting job is about to calibrate. The re-gather's "identify" lock is
+    taken before the request and given back only after its response (15.10.1)."""
     gui = rig(1)
     (device_id,) = _gather(gui, 1)
     session = gui.fleet.sessions[device_id]
     dev = gui.sim.devices[0]
     gui.post("/api/sim/drop/1")
     _wait(lambda: session.state is LinkState.LOST)
-    dev.response_delay = 10.0  # 0.1 s of wall time: the identify read holds its lock that long
+    locks: list[tuple[str | None, float]] = []
+    gui.fleet.bus.subscribe(
+        lambda ev: locks.append((ev.busy, time.monotonic())) if isinstance(ev, BusyChanged) else None
+    )
+    dev.response_delay = 100.0  # 1 s of wall time (< IDENTIFY_WAIT_S): the identify read holds its lock that long
+    dev.idle_timeout = None  # requests queue behind that read: no write for longer than the 0.3 s idle drop
     gui.post("/api/gather/start")
     with gui.ws() as ws:
         ws.receive_json()
         gui.post("/api/sim/press/1")
         _wait(lambda: session.busy == "identify")
+        before = time.monotonic()
         assert gui.post("/api/batches", {"device_ids": [device_id]}).status_code == 202
+        after = time.monotonic()
+        taken = max(n for n, (busy, at) in enumerate(locks) if busy == "identify" and at < before)
+        _wait(lambda: len(locks) > taken + 1)
+        assert locks[taken + 1][0] is None and locks[taken + 1][1] > after
+        dev.response_delay = 0.0
         final = _until(ws, _batch(lambda d: d["state"] == "done"))[-1]["data"]
         assert final["jobs"][0]["state"] == "succeeded", final["jobs"][0]
     assert not gui.fleet.gathering

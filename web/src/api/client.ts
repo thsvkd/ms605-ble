@@ -1,16 +1,32 @@
 import { useStore } from '../store/store'
+import { errorText, t } from '../strings'
 import type {
+  ApplyIn,
+  ApplyJobView,
   BatchView,
+  CalibrationHistory,
+  CloneApplyIn,
+  CloneIn,
+  ConfigView,
+  DeviceHistory,
+  DeviceHistoryKind,
+  DraftIn,
+  DraftPreview,
   ErrorCode,
   GatherStatus,
   ImportResult,
   PreflightResult,
+  RollbackApplyIn,
+  RollbackIn,
   SensorCreate,
   SensorInfoImport,
   SensorUpdate,
   SensorView,
   SiteView,
+  SnapshotDetail,
+  SnapshotList,
   StartMode,
+  TimeSyncResult,
 } from './types'
 
 export class ApiRequestError extends Error {
@@ -111,3 +127,30 @@ export const cancelBatch = (batchId: string) => request<BatchView>('POST', `/api
 
 export const retryBatch = (batchId: string, body: StartBody & { device_ids?: string[] }) =>
   request<BatchView>('POST', `/api/batches/${enc(batchId)}/retry`, body)
+
+// -- M4 (docs/GUI_API.md 15.9.15): previews, config, history and time sync are drawn as returned;
+// an apply job's state arrives over WS `apply` (G10), the 202 only names "my" job.
+
+export const getConfig = (deviceId: string) => request<ConfigView>('GET', `/api/sensors/${enc(deviceId)}/config`)
+export const previewDraft = (body: DraftIn) => request<DraftPreview>('POST', '/api/drafts/preview', body)
+export const applyDraft = (body: ApplyIn) => request<ApplyJobView>('POST', '/api/apply', body)
+export const getApply = (applyId: string) => request<ApplyJobView>('GET', `/api/apply/${enc(applyId)}`)
+export const listSnapshots = (deviceId: string) =>
+  request<SnapshotList>('GET', `/api/sensors/${enc(deviceId)}/snapshots`)
+export const getSnapshot = (deviceId: string, name: string) =>
+  request<SnapshotDetail>('GET', `/api/sensors/${enc(deviceId)}/snapshots/${enc(name)}`)
+export const previewRollback = (body: RollbackIn) => request<DraftPreview>('POST', '/api/rollback/preview', body)
+export const rollback = (body: RollbackApplyIn) => request<ApplyJobView>('POST', '/api/rollback', body)
+export const previewClone = (body: CloneIn) => request<DraftPreview>('POST', '/api/clone/preview', body)
+export const clone = (body: CloneApplyIn) => request<ApplyJobView>('POST', '/api/clone', body)
+export const timeSync = (deviceIds: string[]) =>
+  request<TimeSyncResult>('POST', '/api/time-sync', { device_ids: deviceIds })
+export const calibrationHistory = (deviceId: string) =>
+  request<CalibrationHistory>('GET', `/api/sensors/${enc(deviceId)}/history`)
+export const deviceHistory = (deviceId: string, kind: DeviceHistoryKind, detail = false) =>
+  request<DeviceHistory>('GET', `/api/sensors/${enc(deviceId)}/device-history?kind=${kind}&detail=${detail}`)
+
+/** The words for a failed request (any thrown value). */
+export function failureText(e: unknown): string {
+  return e instanceof ApiRequestError ? errorText(e.code, e.message) : t.error.internal
+}

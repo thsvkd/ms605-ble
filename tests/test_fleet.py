@@ -8,6 +8,7 @@ is synthetic."""
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from datetime import datetime, timedelta
 from types import SimpleNamespace
@@ -34,6 +35,8 @@ from ms605.protocol import (
     SENSITIVITY_PRESETS,
     TAG_DETECT_MODE,
     TAG_DEVICE_ID,
+    TAG_DND,
+    TAG_READ_REQUEST,
     TAG_ZONE_ENABLE,
     TAG_ZONE_THRESHOLDS,
     DetectMode,
@@ -899,6 +902,9 @@ def test_clone_is_an_absolute_draft(tmp_path):
                 assert "zone_thresholds" in result.applied and "zone_enable" in result.applied
                 assert dev.thresholds == custom and dev.tags[TAG_ZONE_ENABLE] == bytes([0x3F])
                 assert dev.detect_mode == DetectMode.RADAR_WITH_PIR and not dev.calibrating
+                # the snapshot lists only what was written: a rollback must not restore a mode it never changed
+                snap = fleet.storage.load_snapshot(device_id, result.snapshot)
+                assert "detect_mode" not in snap.sections and "zone_thresholds" in snap.sections
 
     asyncio.run(main())
 
@@ -996,5 +1002,79 @@ def test_batch_fired_inside_the_regather_identify_lock_waits_for_it(tmp_path):
             assert results[device_id].state is S.SUCCEEDED, results[device_id]  # was FAILED("busy: identify")
             assert results[device_id].started and results[device_id].after == tuple(DEFAULT_LEARNED_THRESHOLDS)
             assert fleet.sessions[device_id] is session
+
+    asyncio.run(main())
+
+
+# -- DND as a draft section (docs/CORE_API.md 2.3) -------------------------------------
+
+
+def _dnd_frames(dev) -> int:
+    reads = sum(1 for f in dev.frames_in for t, v in f.attributes if t == TAG_READ_REQUEST and v == bytes([TAG_DND]))
+    return reads + len(_writes(dev, TAG_DND))
+
+
+def test_dnd_must_be_a_bool_and_needs_a_value_to_clone():
+    with pytest.raises(ProfileError):
+        SensorChanges(dnd=1).validate()
+    SensorChanges(dnd=False).validate()
+    with pytest.raises(ProfileError, match="dnd"):
+        SensorChanges.from_profile(ConfigProfile(sensitivity=2), ["dnd"])
+    changes = SensorChanges.from_profile(ConfigProfile(sensitivity=2), ["sensitivity", "dnd"], dnd=True)
+    assert (changes.sensitivity, changes.dnd) == (2, True)
+
+
+def test_dnd_is_applied_verified_snapshotted_and_rolled_back(tmp_path):
+    async def main():
+        sim, fleet, _ = _make(tmp_path, 1)
+        dev = sim.devices[0]
+        async with fleet:
+            (device_id,) = await _gather_all(sim, fleet)
+            session = fleet.sessions[device_id]
+            result = await apply_changes(session, SensorChanges(dnd=True), fleet.storage)
+            assert (result.status, result.applied, result.mismatched) == (ApplyStatus.OK, ("dnd",), ())
+            assert dev.tags[TAG_DND] == b"\x01"
+            path = fleet.storage.snapshots_dir / device_id / f"{result.snapshot}.json"
+            data = json.loads(path.read_text("utf-8"))
+            assert data["dnd"] is False and data["sections"] == ["dnd"]
+
+            undo = await fleet.rollback(device_id, result.snapshot)
+            assert (undo.status, undo.applied) == (ApplyStatus.OK, ("dnd",)) and dev.tags[TAG_DND] == b"\x00"
+
+            both = SensorChanges(zone_thresholds=ThresholdChange(True, [5] * 7, [None] * 7), dnd=True)
+            result = await apply_changes(session, both, fleet.storage)
+            assert result.status is ApplyStatus.OK and result.applied == ("zone_thresholds", "dnd")
+            assert dev.tags[TAG_DND] == b"\x01" and dev.thresholds[0][0] == MEDIUM[0][0] + 5
+
+    asyncio.run(main())
+
+
+def test_a_draft_without_dnd_never_touches_tag32(tmp_path):
+    async def main():
+        sim, fleet, _ = _make(tmp_path, 1)
+        dev = sim.devices[0]
+        async with fleet:
+            (device_id,) = await _gather_all(sim, fleet)
+            result = await apply_changes(fleet.sessions[device_id], SensorChanges(sensitivity=3), fleet.storage)
+            assert result.status is ApplyStatus.OK
+            assert _dnd_frames(dev) == 0
+            assert "dnd" not in json.loads(
+                (fleet.storage.snapshots_dir / device_id / f"{result.snapshot}.json").read_text("utf-8")
+            )
+
+    asyncio.run(main())
+
+
+def test_a_refused_dnd_write_fails_after_the_snapshot(tmp_path):
+    async def main():
+        sim, fleet, _ = _make(tmp_path, 1)
+        dev = sim.devices[0]
+        async with fleet:
+            (device_id,) = await _gather_all(sim, fleet)
+            dev.inject_status(5)  # the next writing frame is the tag32 one: nothing else is written
+            result = await apply_changes(fleet.sessions[device_id], SensorChanges(dnd=True), fleet.storage)
+            assert result.status is ApplyStatus.FAILED and "status 5" in result.error
+            assert result.snapshot is not None and result.applied == () and result.mismatched == ("dnd",)
+            assert dev.tags[TAG_DND] == b"\x00"
 
     asyncio.run(main())

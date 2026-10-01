@@ -1,7 +1,7 @@
 import { Unplug } from 'lucide-react'
 import { useState } from 'react'
 import { release } from '../api/client'
-import { selectBatchActive, useStore } from '../store/store'
+import { selectApplyActive, selectBatchActive, useStore } from '../store/store'
 import { t } from '../strings'
 import { Button } from './Button'
 import { ConfirmDialog } from './ConfirmDialog'
@@ -11,7 +11,10 @@ import styles from './ui.module.css'
 export function ReleaseAllButton({ className }: { className?: string }) {
   const hasSession = useStore((s) => Object.values(s.sensors).some((x) => x.live !== null))
   const gathering = useStore((s) => s.gather.gathering)
-  const locked = useStore(selectBatchActive) // a calibrating link must not drop (G22)
+  const batchLocked = useStore(selectBatchActive) // a calibrating link must not drop (G22)
+  const applyLocked = useStore(selectApplyActive) // nor one being written (G27)
+  const locked = batchLocked || applyLocked
+  const note = applyLocked ? t.apply.lockedRelease : t.release.blockedByBatch
   const [open, setOpen] = useState(false)
   if (!hasSession) return null
   return (
@@ -20,7 +23,7 @@ export function ReleaseAllButton({ className }: { className?: string }) {
         icon={Unplug}
         className={className}
         disabled={locked}
-        title={locked ? t.release.blockedByBatch : undefined}
+        title={locked ? note : undefined}
         aria-describedby={locked ? 'release-all-locked' : undefined}
         onClick={() => setOpen(true)}
       >
@@ -28,7 +31,7 @@ export function ReleaseAllButton({ className }: { className?: string }) {
       </Button>
       {locked && (
         <span id="release-all-locked" className={styles.note}>
-          {t.release.blockedByBatch}
+          {note}
         </span>
       )}
       <ConfirmDialog
