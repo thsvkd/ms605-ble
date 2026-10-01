@@ -10,8 +10,10 @@ import pytest
 
 import ms605.session as session_mod
 from ms605 import MS605ConnectionError, MS605DeviceError, MS605Error, MS605TimeoutError, SessionBusyError
+from ms605.calibration import CalibrationJob
 from ms605.events import (
     BusyChanged,
+    CalibrationState,
     EventBus,
     FrameDropped,
     KeepAliveMissed,
@@ -164,6 +166,65 @@ def test_close_while_connecting_drops_the_link_that_lands_afterwards():
             (LinkState.DISCONNECTED, LinkState.CONNECTING),
             (LinkState.CONNECTING, LinkState.DISCONNECTED),
         ]
+
+    asyncio.run(main())
+
+
+def test_a_late_connect_after_close_never_tears_down_the_next_connect():
+    async def main():
+        dev, session, events = _setup(idle_timeout=None)
+        gate = asyncio.Event()
+        clients: list = []
+
+        def factory(*args, **kwargs):
+            client = dev.client_factory(*args, **kwargs)
+            clients.append(client)
+            if len(clients) == 1:  # only the first attempt's BLE connect is held back
+                real_connect = client.connect
+
+                async def gated_connect(**kw):
+                    await gate.wait()
+                    return await real_connect(**kw)
+
+                client.connect = gated_connect
+            return client
+
+        session = DeviceSession(dev.ble_device, session.bus, client_factory=factory, keepalive_interval=KEEPALIVE)
+        first = asyncio.ensure_future(session.connect())
+        await _until(lambda: len(clients) == 1)
+        await session.close()
+        second = asyncio.ensure_future(session.connect())
+        await asyncio.sleep(0.05)  # an ungated connect needs only a few loop turns
+        gate.set()  # the first attempt lands late, after the close
+        with pytest.raises(MS605ConnectionError):
+            await first
+        await asyncio.wait_for(second, 1.0)
+        assert session.state is LinkState.CONNECTED and session.ms.is_connected and dev.connected
+        await asyncio.sleep(2 * KEEPALIVE)
+        assert session.state is LinkState.CONNECTED and dev.connected
+        await session.close()
+        assert not dev.connected and asyncio.all_tasks() == {asyncio.current_task()}
+
+    asyncio.run(main())
+
+
+def test_last_lost_reason_is_cleared_on_reconnect_and_on_close():
+    async def main():
+        dev, session, events = _setup(idle_timeout=None, connectable_window=None)
+        await session.connect()
+        assert session.last_lost_reason == ""
+        dev.drop_link()
+        await _until(lambda: session.state is LinkState.LOST)
+        assert session.last_lost_reason == "BLE link lost"
+        await session.connect()
+        assert session.last_lost_reason == ""
+        dev.drop_link()
+        await _until(lambda: session.state is LinkState.LOST)
+        await session.close()
+        assert session.last_lost_reason == ""
+        # a closed session is reported as such, not with the old drop reason
+        result = await CalibrationJob(session).run()
+        assert (result.state, result.detail) == (CalibrationState.LOST, "not connected")
 
     asyncio.run(main())
 
@@ -375,6 +436,7 @@ def test_unanswered_ping_with_link_up_is_a_miss_not_a_loss():
         await session.connect()
         dev.drop_responses(1)  # the session waits at most one interval for the ACK
         await _until(lambda: _of(events, KeepAliveMissed))
+        assert _of(events, KeepAliveMissed)[0].kind == "no_response"
         assert session.state is LinkState.CONNECTED
         pings = _bare_pings(dev)
         await _until(lambda: _bare_pings(dev) > pings)  # keeps pinging
@@ -399,7 +461,33 @@ def test_ping_answered_with_error_status_is_a_miss():
         await session.connect()
         await _until(lambda: _of(events, KeepAliveMissed))
         assert "status 5" in _of(events, KeepAliveMissed)[0].error
+        assert _of(events, KeepAliveMissed)[0].kind == "error"
         assert session.state is LinkState.CONNECTED
+        await session.close()
+
+    asyncio.run(main())
+
+
+def test_a_slow_ping_write_keeps_the_full_write_deadline_with_a_short_interval():
+    async def main():
+        dev, session, events = _setup(idle_timeout=None)
+
+        def factory(*args, **kwargs):
+            client = dev.client_factory(*args, **kwargs)
+            real_write = client.write_gatt_char
+
+            async def slow_write(*a, **kw):
+                await asyncio.sleep(0.15)  # three keep-alive intervals, far below WRITE_TIMEOUT_S
+                return await real_write(*a, **kw)
+
+            client.write_gatt_char = slow_write
+            return client
+
+        session = DeviceSession(dev.ble_device, session.bus, client_factory=factory, keepalive_interval=0.05)
+        await session.connect()
+        await _until(lambda: _bare_pings(dev) >= 3)
+        assert session.state is LinkState.CONNECTED and dev.connected
+        assert (LinkState.CONNECTED, LinkState.LOST) not in _links(events)
         await session.close()
 
     asyncio.run(main())

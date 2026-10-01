@@ -40,7 +40,7 @@ from .events import (
 from .models import PROFILE_SECTION_KEYS, PROFILE_ZONE_COUNT, ConfigProfile
 from .protocol import CALIBRATION_TIMEOUT_S
 from .registry import MatchResult, Registry
-from .session import KEEPALIVE_INTERVAL_S, DeviceSession
+from .session import KEEPALIVE_INTERVAL_S, DeviceInfo, DeviceSession
 from .storage import Storage
 
 _log = logging.getLogger(__name__)
@@ -87,6 +87,7 @@ class Fleet:
         self._gather_task: asyncio.Task | None = None
         self._connecting: dict[str, asyncio.Task] = {}  # lowercase address -> gather connect task
         self._unidentified: set[DeviceSession] = set()  # inside connect(), not yet in _sessions
+        self._releasing: set[DeviceSession] = set()  # being closed by release(); never re-gathered
         self._batches: set[BatchCalibration] = set()  # not yet ended; aclose() cancels them
 
     @property
@@ -131,18 +132,25 @@ class Fleet:
             raise
         finally:
             self._unidentified.discard(session)
-        try:
-            match = self.registry.match(info.device_id, session.address, battery_pct=info.battery_pct)
-        except StorageError as exc:  # only a cache refresh failed: keep the link
-            _log.warning("registry update for %s failed: %s", info.device_id, exc)
-            match = MatchResult(self.registry.sensors.get(info.device_id), False)
+        match = self._match(session, info)
         if existing is not None:  # LOST/DISCONNECTED: the sensor came back under a new address
             await existing.close()
+        self._emit_gathered(session, match)
+        return session
+
+    def _match(self, session: DeviceSession, info: DeviceInfo) -> MatchResult:
+        try:
+            return self.registry.match(info.device_id, session.address, battery_pct=info.battery_pct)
+        except StorageError as exc:  # only a cache refresh failed: keep the link
+            _log.warning("registry update for %s failed: %s", info.device_id, exc)
+            return MatchResult(self.registry.sensors.get(info.device_id), False)
+
+    def _emit_gathered(self, session: DeviceSession, match: MatchResult) -> None:
         sensor = match.sensor
         self.bus.emit(
             SensorGathered(
                 address=session.address,
-                device_id=info.device_id,
+                device_id=session.device_id,
                 name=session.name,
                 known=sensor is not None,
                 site_id=sensor.site_id if sensor else None,
@@ -150,7 +158,25 @@ class Fleet:
                 resolved_pending=match.resolved_pending,
             )
         )
-        return session
+
+    async def _regather(self, session: DeviceSession, device: BLEDevice) -> None:
+        """Bring a LOST/DISCONNECTED session back on `device`, re-identify it as
+        connect() does and emit SensorGathered. The link is closed only when another
+        device id answers (or on cancellation): a failed read leaves it up, since a
+        caller that reacted to CONNECTED may already hold the operation lock
+        (SessionBusyError) and the identity was verified on the first gather."""
+        device_id, info = session.device_id, session.info
+        await session.connect(device)
+        try:
+            new = await session.read_info()
+        except asyncio.CancelledError:
+            await session.close()
+            raise
+        if new.device_id != device_id:  # another sensor at this address: keep the session's identity
+            session.device_id, session.info = device_id, info
+            await session.close()
+            raise MS605Error(f"device id changed at {session.address}: expected {device_id}, got {new.device_id}")
+        self._emit_gathered(session, self._match(session, new))
 
     def _session_at(self, address: str) -> DeviceSession | None:
         return next((s for s in self._sessions.values() if s.address.lower() == address.lower()), None)
@@ -172,6 +198,8 @@ class Fleet:
                 key = device.address.lower()
                 if (accept is not None and not accept(device)) or key in self._connecting:
                     continue
+                if any(s.address.lower() == key for s in self._releasing):  # release() is closing it
+                    continue
                 session = self._session_at(device.address)
                 if session is not None and session.state in _LIVE:
                     continue
@@ -181,7 +209,7 @@ class Fleet:
     async def _gather_one(self, device: BLEDevice, session: DeviceSession | None) -> None:
         try:
             if session is not None:
-                await session.connect(device)
+                await self._regather(session, device)
             else:
                 await self.connect(device)
         except Exception as exc:  # noqa: BLE001 - reported; the next scan retries
@@ -221,13 +249,20 @@ class Fleet:
         and forget them."""
         ids = list(self._sessions) if device_ids is None else list(device_ids)
         sessions = [self._sessions[i] for i in ids]  # KeyError before anything is closed
-        keys = self._connecting if device_ids is None else [s.address.lower() for s in sessions]
-        await self._cancel_connects(keys)
-        closing = sessions + (list(self._unidentified) if device_ids is None else [])
-        await asyncio.gather(*(s.close() for s in closing))
-        for device_id, session in zip(ids, sessions, strict=True):
-            if self._sessions.get(device_id) is session:
-                del self._sessions[device_id]
+        # marked before the first await: the gather loop must not reconnect a session
+        # (or connect its address afresh) while it is being closed here
+        marked = [s for s in sessions if s not in self._releasing]
+        self._releasing.update(marked)
+        try:
+            keys = self._connecting if device_ids is None else [s.address.lower() for s in sessions]
+            await self._cancel_connects(keys)
+            closing = sessions + (list(self._unidentified) if device_ids is None else [])
+            await asyncio.gather(*(s.close() for s in closing))
+            for device_id, session in zip(ids, sessions, strict=True):
+                if self._sessions.get(device_id) is session:
+                    del self._sessions[device_id]
+        finally:
+            self._releasing.difference_update(marked)
 
     async def aclose(self) -> None:
         """Cancel unfinished batches, stop gathering and release everything."""

@@ -613,6 +613,118 @@ def test_batch_release_is_bounded_with_a_keepalive_ping_stuck_mid_write(monkeypa
     assert _run(run()) == (False, True)
 
 
+def test_keepalive_misses_log_the_pre_m1_message_for_each_kind(monkeypatch):
+    fleet = _fleet(1, speed=1)
+    _patch_fleet(monkeypatch, fleet)
+    dev = fleet.devices[0]
+
+    async def run():
+        core = _core(keepalive_interval=0.05)
+        session = await core.connect(dev.ble_device)
+        real_ping = session.ms.ping
+        refusals = [MS605DeviceError(5, 1)]
+
+        async def refused_once(**kw):
+            if refusals:
+                raise refusals.pop()  # answered, but with an error status
+            await real_ping(**kw)
+
+        session.ms.ping = refused_once
+        logs: list[str] = []
+        core.bus.subscribe(cli._batch_event_log(core, logs.append))
+        await _until(lambda: any("keep-alive" in line for line in logs))
+        dev.drop_responses(1)  # the one after that is never answered
+        await _until(lambda: sum("keep-alive" in line for line in logs) >= 2)
+        await cli._batch_release(core, lambda _m: None)
+        return [line for line in logs if "keep-alive" in line]
+
+    first, second = _run(run())[:2]
+    assert f"{dev.name} {dev.address} keep-alive 응답 오류 (연결 유지): " in first
+    assert f"{dev.name} {dev.address} keep-alive 응답 없음 (연결 유지, 재시도): " in second
+
+
+def test_clone_announces_every_target_including_one_that_is_not_connected(monkeypatch):
+    fleet = _fleet(2)
+    _patch_fleet(monkeypatch, fleet)
+    gone, kept = fleet.devices
+
+    async def run():
+        core = _core()
+        first = await core.connect(gone.ble_device)
+        await core.connect(kept.ble_device)
+        gone.drop_link()
+        await _until(lambda: first.state is LinkState.LOST)
+        logs: list[str] = []
+        await cli._clone_apply_all(core, ConfigProfile(sensitivity=3), ["sensitivity"], logs.append)
+        await core.aclose()
+        return logs
+
+    logs = _run(run())
+    starts = [line for line in logs if "설정 적용 중..." in line]
+    assert len(starts) == 2
+    assert f"🔧 {gone.name} {gone.address} 설정 적용 중..." in starts[0]
+    assert f"🔧 {kept.name} {kept.address} 설정 적용 중..." in starts[1]
+    # each announcement comes right before that target's own result line
+    assert f"{gone.name} {gone.address} 적용 오류" in logs[logs.index(starts[0]) + 1]
+
+
+def test_interrupt_mid_fire_keeps_the_results_already_in(monkeypatch, capsys):
+    fleet = _fleet(2)
+    quick, slow = fleet.devices
+    quick.calibration_secs = 10  # 0.1 s of wall time
+    slow.calibration_secs = 10_000  # still learning when the operator hits Ctrl-C
+    _patch_fleet(monkeypatch, fleet)
+    monkeypatch.setattr(cli._ui, "checkbox", _pick_all)
+    monkeypatch.setattr(cli, "ainput", _enter)  # fire at once
+
+    async def run():
+        task = asyncio.create_task(cli.run_batch_calibration(scan_secs=0.01, connect_timeout=1.0))
+        # the history line is written in the same step that reports the quick sensor's result
+        await _until(lambda: len(_history()) == 1)
+        assert slow.calibrating
+        task.cancel()  # Ctrl-C mid-fire
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        return _no_stray_tasks()
+
+    assert _run(run())
+    out = capsys.readouterr().out
+    rows = [ln for ln in out.splitlines() if ln.startswith("  - ") and "->" in ln]
+    assert len(rows) == 2
+    assert quick.address in rows[0] and "-> 보정 성공" in rows[0]
+    assert slow.address in rows[1] and "미보정 (연결 유지된 채 종료)" in rows[1]
+    assert "1/2대 보정 성공" in out
+
+
+def test_auto_calibration_flow_renders_the_jobs_read_back_without_reading_again(monkeypatch, capsys):
+    fleet = _fleet(1, calibration_secs=10)
+    _patch_fleet(monkeypatch, fleet)
+    monkeypatch.setattr(cli, "_await_calibration_trigger", _no_gate)
+
+    async def no_second_read(_session):
+        raise cli.MS605Error("synthetic: the flow read the config a second time")
+
+    async def run():
+        session = await _session(fleet.devices[0])
+        monkeypatch.setattr(cli, "_read_config", no_second_read)
+        await cli.flow_auto_calibration(session)
+        await session.close()
+
+    _run(run())
+    out = capsys.readouterr().out
+    assert "반영값 재조회 실패" not in out
+    assert "반영된 존별 임계값 (tag51 재조회):" in out
+    assert "자동 보정 완료 — 성공적으로 학습되었습니다." in out
+
+
+async def _until(pred, timeout: float = 3.0) -> None:
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while not pred():
+        assert loop.time() < deadline, "condition not reached in time"
+        await asyncio.sleep(0.005)
+
+
 # -- 5. data dir -----------------------------------------------------------------
 
 

@@ -189,7 +189,7 @@ def test_events_serialise_to_json():
             after=((3, 4),) * 7,
             error=None,
         ),
-        KeepAliveMissed(address=ADDR, device_id=None, error="synthetic"),
+        KeepAliveMissed(address=ADDR, device_id=None, error="synthetic", kind="error"),
         _busy(1),
         PirChanged(address=ADDR, device_id=None, detected=True),
         FrameDropped(address=ADDR, device_id=None, tag=55, reason="synthetic"),

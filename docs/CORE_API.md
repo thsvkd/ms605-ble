@@ -114,12 +114,12 @@ class DeviceEvent(Event):
 | 이벤트 | 추가 필드 | 보내는 곳 | 언제 |
 |--------|-----------|-----------|------|
 | `LinkStateChanged(DeviceEvent)` | `state: LinkState`, `previous: LinkState`, `reason: str = ""` | session | 링크 상태가 바뀔 때마다(4.2절 표) |
-| `KeepAliveMissed(DeviceEvent)` | `error: str` | session | keep-alive가 실패했지만 링크는 살아 있다고 판단할 때(4.4절) |
+| `KeepAliveMissed(DeviceEvent)` | `error: str`, `kind: str`(`"error"`: 기기가 오류 상태로 응답, `"no_response"`: ACK 없음) | session | keep-alive가 실패했지만 링크는 살아 있다고 판단할 때(4.4절) |
 | `BusyChanged(DeviceEvent)` | `busy: str \| None` | session | 작업 잠금을 잡을 때(이유)와 놓을 때(`None`) |
 | `LiveRadar(DeviceEvent)` | `snapshot: RadarOutputSnapshot` | session | 디코딩에 성공한 tag55 push마다 |
 | `PirChanged(DeviceEvent)` | `detected: bool` | session | tag56 값이 직전과 다를 때. 새 스트림의 첫 값은 항상(4.5절) |
 | `FrameDropped(DeviceEvent)` | `tag: int`, `reason: str` | session | push를 디코딩하지 못해 버렸을 때(예: 짧은 tag55) |
-| `SensorGathered(DeviceEvent)` | `name: str \| None`, `known: bool`, `site_id: str \| None`, `alias: str \| None`, `resolved_pending: bool` | fleet | 새 링크를 연결하고 tag30을 읽어 레지스트리와 맞춘 뒤. `device_id`는 항상 있다 |
+| `SensorGathered(DeviceEvent)` | `name: str \| None`, `known: bool`, `site_id: str \| None`, `alias: str \| None`, `resolved_pending: bool` | fleet | 새 링크를 연결하고(수집 루프가 LOST/DISCONNECTED 세션을 다시 붙인 경우도) tag30을 읽어 레지스트리와 맞춘 뒤. `device_id`는 항상 있다 |
 | `GatherFailed(DeviceEvent)` | `name: str \| None`, `error: str` | fleet | 수집 중 연결 또는 식별이 실패했을 때 |
 | `CalibrationStateChanged(DeviceEvent)` | `state`, `previous: CalibrationState`, `detail: str = ""` | calibration | 상태 전이마다(5.2절 표) |
 | `CalibrationProgress(DeviceEvent)` | `elapsed_s: float`, `expected_s: float` | calibration | LEARNING 동안 `progress_interval`마다. 기기가 보낸 진행률이 아니다(D6) |
@@ -199,6 +199,7 @@ class DeviceSession:
     info: DeviceInfo | None
     last_radar: RadarOutputSnapshot | None
     last_pir: bool | None              # 지금 스트림에서 본 마지막 값(4.5절)
+    last_lost_reason: str              # 마지막으로 LOST가 된 이유. 연결에 성공하거나 close()하면 ""
     keepalive_interval: float
 
     async def connect(self, device: BLEDevice | None = None) -> None: ...
@@ -227,6 +228,8 @@ class DeviceSession:
   ping 타임아웃(최대 10초)만큼 늦어진다. 여러 번 불러도 된다. 작업 잠금이 잡혀 있어도 부를 수 있고, 진행 중인 요청은 드라이버
   계약대로 `MS605ConnectionError`로 끝난다. CONNECTING 중에도 부를 수 있다. 그 연결은 끝난 뒤 링크를 바로 끊고
   `MS605ConnectionError("session closed while connecting")`로 끝나며, 상태는 DISCONNECTED로 남는다.
+  드라이버를 건드리는 연결 시도는 한 번에 하나다. `close()` 뒤에 시작한 연결은 늦게 끝나는 이전 시도가 자기 링크를
+  끊을 때까지 기다린다. 그래서 이전 시도의 정리가 새 링크를 끊지 않는다.
 - `read_info()`: 작업 잠금(`"identify"`)을 잡고 tag30/23/21/36을 `read_raw()` 한 번으로 읽는다. tag30이
   없거나 비어 있으면 `MS605Error`를 낸다. 성공하면 `device_id`와 `info`를 채운다.
 - `acquire_live()` / `release_live()`: 실시간 출력(tag54)의 참조 카운트다. 여러 화면이 같은 센서를 볼 수 있기 때문에
@@ -283,9 +286,12 @@ async with session.operation("apply") as ms:
 | ping 결과 | 처리 |
 |-----------|------|
 | 성공 | 없음 |
-| `MS605DeviceError` | 기기가 응답했으므로 링크는 살아 있다. `KeepAliveMissed` 후 계속 |
-| `MS605TimeoutError`이고 `ms.is_connected` | ACK 유실 또는 CRC 불량. `KeepAliveMissed` 후 계속 |
+| `MS605DeviceError` | 기기가 응답했으므로 링크는 살아 있다. `KeepAliveMissed(kind="error")` 후 계속 |
+| `MS605TimeoutError`이고 `ms.is_connected` | ACK 유실 또는 CRC 불량. `KeepAliveMissed(kind="no_response")` 후 계속 |
 | 그 밖의 예외 | LOST로 전이(`reason=str(exc)`), keep-alive 종료 |
+
+ACK는 `min(WRITE_TIMEOUT_S, keepalive_interval)`까지 기다린다. 쓰기가 멈췄다고 보고 링크를 포기하는 기한은
+간격과 관계없이 `WRITE_TIMEOUT_S`다(`ping(write_timeout=WRITE_TIMEOUT_S)`). 간격이 짧아도 느린 쓰기 하나로 링크를 버리지 않는다.
 
 `operation(..., suspend_keepalive=True)`가 잡혀 있는 동안에는 ping을 건너뛴다. 이 옵션은 `CalibrationJob`만 쓴다.
 `start_auto_calibration()`이 자기 keep-alive를 15초마다 보내므로, 세션 ping까지 겹치면 보정 중 트래픽이 두 배가 된다.
@@ -343,6 +349,7 @@ class CalibrationJob:
     session: DeviceSession
     state: CalibrationState          # 처음에는 IDLE
     result: CalibrationResult | None
+    config_after: MS605Config | None  # SUCCEEDED 후 재조회한 설정(`result.after`의 원본). 재조회 실패면 None
     async def run(self) -> CalibrationResult: ...
     async def cancel(self) -> None: ...
 ```
@@ -453,15 +460,21 @@ class Fleet:
   `scan(scan_secs)` → 장치마다 아래 규칙 → `gather_pause` 쉬기를 반복한다. `accept`가 있으면 `False`인 장치는
   무시한다(CLI `--address` 수집에 쓴다).
   - 주소가 CONNECTED/CONNECTING 세션이거나, 그 주소의 연결 태스크가 진행 중이면 건너뛴다.
+  - 주소가 `release()`가 닫고 있는 세션이면 건너뛴다.
   - 주소가 LOST/DISCONNECTED 세션이면 그 세션의 `connect(device)`를 태스크로 돌린다. 버튼을 다시 누른 센서가
-    이렇게 돌아온다. 세션 객체를 그대로 쓰므로 실시간 카운트와 기존 참조가 유지된다.
+    이렇게 돌아온다. 세션 객체를 그대로 쓰므로 실시간 카운트와 기존 참조가 유지된다. 연결되면 `connect()`처럼
+    tag30을 다시 읽고, `device_id`가 같으면 `registry.match()` 후 `SensorGathered`를 보낸다. 다르면 세션의 식별 정보는
+    그대로 두고 링크를 닫은 뒤 `MS605Error("device id changed ...")`로 실패한다(`GatherFailed`). tag30 읽기 자체가
+    실패하면(예: CONNECTED를 보고 다른 호출자가 먼저 잠금을 잡아 `SessionBusyError`) 링크는 닫지 않고 `GatherFailed`만
+    보낸다. 식별은 처음 수집할 때 이미 확인됐다.
   - 그 밖에는 `self.connect(device)`를 태스크로 돌린다.
   - 태스크가 실패하면 `GatherFailed`를 보낸다. 그 주소는 다음 스캔에서 다시 시도된다(지금 `--collect`와 같다).
 - `stop_gather(*, finish_pending: bool = False)`: 스캔 루프를 취소하고, 진행 중인 연결 태스크를 모두 취소하고 기다린다.
   `finish_pending=True`이면 진행 중인 연결 태스크가 끝나기를 먼저 기다린다(CLI `--collect`에서 Enter 직전에 버튼을 누른
   센서도 배치에 들어가게 한다). 이미 연결된 세션은 그대로 둔다. 돌아온 뒤에는 어떤 링크도 새로 생기지 않는다.
 - `connecting: int`(읽기 전용): 수집 루프가 진행 중인 연결 시도 수. CLI의 "마무리 대기" 줄이 쓴다.
-- `release(ids)`: 해당 세션의 진행 중 연결 태스크를 먼저 취소하고, 세션들을 동시에 `close()`한 뒤 `sessions`에서 뺀다.
+- `release(ids)`: 첫 `await` 전에 세션들을 "닫는 중"으로 표시해 수집 루프가 다시 붙이지 않게 하고, 해당 세션의
+  진행 중 연결 태스크를 먼저 취소하고, 세션들을 동시에 `close()`한 뒤 `sessions`에서 뺀다.
   `None`이면 전부이고, 아직 식별 중이라 `sessions`에 없는 `connect()`의 세션도 닫는다(그 `connect()`는
   `MS605ConnectionError`로 끝난다). 작업 세션형(D5)이므로 놓은 센서는 레지스트리의 마지막 값으로만 보인다.
 - `aclose()`: 끝나지 않은 배치(`calibrate()`로 만든 것)를 모두 `cancel()`하고, `stop_gather()` 후 `release()`. 예외가 나도 끝까지 정리한다.
@@ -848,7 +861,7 @@ M1 완료 기준은 "기존 CLI 명령의 동작과 출력이 같다"이다. CLI
 | `FALLBACK_DISTANCES_M`, `zone_distances` | `models.py` |
 | `LiveLink` (`_shared.py`) | `DeviceSession`. `LiveLink.ensure()`의 안내 문구와 무한 재시도는 CLI 도우미 `ensure(session)`로 남긴다. 이 도우미는 경고를 출력하고 `session.reconnect_once()`를 2초 간격으로 반복한다 |
 | `connect_with_retry` | 같은 출력, 내부는 `session.connect(device)` 반복 |
-| `ManagedDevice`, `_start_keepalive`, `_cancel_keepalives`, `_stop_keepalives` | 삭제. 세션이 keep-alive를 맡는다. 기존 로그 줄은 버스 구독으로 출력한다(`LinkStateChanged(LOST)` → "연결 끊김 (발사 전 대기 중)", `KeepAliveMissed` → "keep-alive 응답 오류/응답 없음") |
+| `ManagedDevice`, `_start_keepalive`, `_cancel_keepalives`, `_stop_keepalives` | 삭제. 세션이 keep-alive를 맡는다. 기존 로그 줄은 버스 구독으로 출력한다(`LinkStateChanged(LOST)` → "연결 끊김 (발사 전 대기 중)", `KeepAliveMissed` → `kind`별로 "keep-alive 응답 오류 (연결 유지)" / "keep-alive 응답 없음 (연결 유지, 재시도)") |
 | `_batch_gather_collect` | `fleet.start_gather()` + Enter + `fleet.stop_gather(finish_pending=True)`(기존 "진행 중인 연결 시도 N건 마무리 대기" 줄 유지). 중단 경로는 `fleet.stop_gather()`. `SensorGathered`/`GatherFailed`를 기존 문구로 출력 |
 | `_batch_gather_menu` | `fleet.scan()` → 체크박스 → 고른 장치마다 `fleet.connect(dev)` |
 | `_batch_gather_address` | `fleet.scan()`에서 주소나 이름이 맞는 장치를 찾아 `fleet.connect()`. 없으면 지금처럼 다시 검색할지 묻는다 |
@@ -859,7 +872,7 @@ M1 완료 기준은 "기존 CLI 명령의 동작과 출력이 같다"이다. CLI
 | `confirm_profile_applied` | `fleet.poll_verify` |
 | `_clone_apply_all` | `fleet.apply(Draft(targets, bulk=SensorChanges.from_profile(profile, sections)))` |
 | `confirm_zone_thresholds`와 단일 센서 쓰기 흐름(`flow_set_zone`, `flow_detailed_adjustment`, `flow_set_sensitivity`, `flow_zone_enable`, `flow_subsensor_zones`, `flow_subsensor_timing`) | `apply_changes(session, SensorChanges(...), storage)`. 출력 문구는 같고, 이제 스냅샷이 남고 쓰기 후 검증이 폴링된다. 스냅샷을 저장하지 못하면(데이터 디렉터리에 쓸 수 없음) 6.4절 3단계대로 쓰지 않고 "작업 실패"로 끝난다(M1 이전에는 디스크를 쓰지 않았다) |
-| `flow_auto_calibration` | `CalibrationJob(session, storage=..., progress_interval=5.0)`. 실시간 줄은 `LiveRadar`/`PirChanged`, "경과 Ns"는 `CalibrationProgress`, 결과 줄은 `CalibrationResult`로 출력. `_await_calibration_trigger`의 자체 keep-alive는 지운다(세션이 유지한다) |
+| `flow_auto_calibration` | `CalibrationJob(session, storage=..., progress_interval=5.0)`. 실시간 줄은 `LiveRadar`/`PirChanged`, "경과 Ns"는 `CalibrationProgress`, 결과 줄은 `CalibrationResult`로 출력. 반영값 표는 다시 읽지 않고 `job.config_after`로 그린다. `_await_calibration_trigger`의 자체 keep-alive는 지운다(세션이 유지한다) |
 | `flow_live_monitor`, `_flow_live_monitor_plain` | 버스 구독 + `acquire_live()`/`release_live()` |
 | `read_device_info` | `session.read_info()`. 지금처럼 `MS605Error`를 삼키고 "?"를 출력한다 |
 | 그 밖의 읽기 흐름(`read-dnd`, `read-pir`, `read-history`, `sync-time` …) | `async with session.operation("read") as ms:` 안에서 기존 드라이버 호출 |

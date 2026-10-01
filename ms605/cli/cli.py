@@ -348,13 +348,8 @@ async def flow_auto_calibration(session: DeviceSession) -> None:
             reason = result.detail.removeprefix("반영값 재조회 실패: ")
             print(f"(반영값 재조회 실패 — 메뉴 [3] 설정읽기로 확인하세요: {reason})")
         else:
-            try:
-                cfg = await _read_config(session)
-            except MS605Error as exc:
-                print(f"(반영값 재조회 실패 — 메뉴 [3] 설정읽기로 확인하세요: {exc})")
-            else:
-                print("\n반영된 존별 임계값 (tag51 재조회):")
-                print(format_config_table(cfg, summary=False))
+            print("\n반영된 존별 임계값 (tag51 재조회):")
+            print(format_config_table(job.config_after, summary=False))
             if result.history_saved:
                 print(f"💾 보정 결과 저장됨: {storage.history_path}")
             else:
@@ -490,7 +485,11 @@ def _batch_event_log(fleet: Fleet, log: Callable[[str], None]) -> Callable[[Even
         nonlocal fired
         ts = time.strftime("%H:%M:%S")
         if isinstance(ev, KeepAliveMissed):  # the device answered or the ACK was lost: the link is up
-            log(f"\n[{ts}] ⚠️  {who(ev)} keep-alive 응답 오류/응답 없음 (연결 유지): {ev.error}")
+            if ev.kind == "error":
+                what = "keep-alive 응답 오류 (연결 유지)"
+            else:
+                what = "keep-alive 응답 없음 (연결 유지, 재시도)"
+            log(f"\n[{ts}] ⚠️  {who(ev)} {what}: {ev.error}")
         elif isinstance(ev, LinkStateChanged) and ev.state is LinkState.LOST and not fired:
             log(f"\n[{ts}] ⚠️  {who(ev)} 연결 끊김 (발사 전 대기 중): {ev.reason}")
         elif isinstance(ev, BatchChanged) and ev.state is BatchState.RUNNING:
@@ -746,7 +745,14 @@ async def run_batch_calibration(
                 lost[ev.device_id] = ev.reason
 
         fleet.bus.subscribe(note_loss)
+        # filled as each sensor finishes, so an interrupted fire still reports the ones already done
         results: dict[str, CalibrationResult] = {}
+
+        def note_result(ev: Event) -> None:
+            if isinstance(ev, CalibrationResult) and ev.device_id:
+                results[ev.device_id] = ev
+
+        fleet.bus.subscribe(note_result)
         rows: list[SummaryRow] = []
 
         def summary_row(session: DeviceSession) -> SummaryRow:
@@ -781,7 +787,7 @@ async def run_batch_calibration(
                     batch = fleet.calibrate(ids, timeout=calibration_timeout)
                 hb = asyncio.create_task(_hold_heartbeat(fleet, ids, target, keepalive_interval, log))
                 try:
-                    results = await batch.wait()
+                    await batch.wait()
                 finally:
                     hb.cancel()
                     await asyncio.gather(hb, return_exceptions=True)
@@ -789,7 +795,7 @@ async def run_batch_calibration(
                 log("\n" + "-" * 60)
                 log("보정은 감지 공간에 사람이 없는 상태에서 시작해야 합니다.")
                 await ainput("공간을 비운 뒤 준비되면 Enter를 눌러 전체 센서 일괄 보정을 시작하세요: ")
-                results = await fleet.calibrate(ids, timeout=calibration_timeout).wait()
+                await fleet.calibrate(ids, timeout=calibration_timeout).wait()
         finally:
             # whatever ended the run (incl. Ctrl-C mid-gather), every link is
             # released and the operator still sees every sensor's outcome
@@ -955,15 +961,21 @@ async def _clone_apply_all(
     stops the rest; targets queued behind others stay connected through their
     sessions' keep-alive."""
 
+    announced: set[str] = set()
+
     def on_event(ev: Event) -> None:
         session = fleet.sessions.get(ev.device_id) if isinstance(ev, (BusyChanged, ApplyResult)) else None
         if session is None:
             return
         who = f"{_name(session)} {session.address}"
         ts = time.strftime("%H:%M:%S")
-        if isinstance(ev, BusyChanged) and ev.busy == "apply":
+        # a target that is not connected never takes the lock: announce it with its result
+        if (isinstance(ev, BusyChanged) and ev.busy == "apply") or (
+            isinstance(ev, ApplyResult) and ev.device_id not in announced
+        ):
+            announced.add(ev.device_id)
             log(f"\n[{ts}] 🔧 {who} 설정 적용 중...")
-        elif isinstance(ev, ApplyResult):
+        if isinstance(ev, ApplyResult):
             status, detail = _clone_status(ev)
             if status == "clone_error":
                 log(f"[{ts}] ❌ {who} 적용 오류: {detail}")

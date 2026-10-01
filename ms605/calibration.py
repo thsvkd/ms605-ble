@@ -135,6 +135,7 @@ class CalibrationJob:
         self.session = session
         self.state = CalibrationState.IDLE
         self.result: CalibrationResult | None = None
+        self.config_after: MS605Config | None = None  # the post-success read-back behind `result.after`
         self._storage = storage
         self._timeout = timeout
         self._expected_s = expected_s
@@ -142,6 +143,8 @@ class CalibrationJob:
         self._running = False
         self._cancel_requested = False
         self._waiter: asyncio.Future[bool] | None = None
+        # set by cancel(): tells it apart from an external cancel of the run() task
+        self._cancel_signal: asyncio.Future[None] | None = None
         self._progress_task: asyncio.Task | None = None
         self._done = asyncio.Event()
         self._started = False
@@ -218,7 +221,7 @@ class CalibrationJob:
         if s.busy is not None:
             return self._finish(CalibrationState.FAILED, error=f"busy: {s.busy}")
         if s.state is not LinkState.CONNECTED:
-            return self._finish(CalibrationState.LOST, detail=s._last_reason or "not connected")
+            return self._finish(CalibrationState.LOST, detail=s.last_lost_reason or "not connected")
         # the result is emitted inside the lock, which is released afterwards
         async with s.operation("calibration", suspend_keepalive=True) as ms:
             try:
@@ -244,25 +247,24 @@ class CalibrationJob:
             return self._finish(CalibrationState.CANCELLED)
         self._set_state(CalibrationState.STARTING)
         self._started = True
+        self._cancel_signal = asyncio.get_running_loop().create_future()
         self._waiter = asyncio.ensure_future(
             ms.start_auto_calibration(
                 timeout=self._timeout, keepalive_interval=s.keepalive_interval, on_started=self._on_started
             )
         )
         try:
-            ok = await self._waiter
+            # asyncio.wait() never cancels what it waits on, so a CancelledError here is
+            # always an external cancel of this task -- even if cancel() came at the same time
+            await asyncio.wait({self._waiter, self._cancel_signal}, return_when=asyncio.FIRST_COMPLETED)
         except asyncio.CancelledError:
-            # 5.3: the only predictable way to stop learning is to drop the link
-            self._waiter.cancel()
-            try:
-                await asyncio.gather(self._waiter, return_exceptions=True)
-                await self._stop_progress()
-                await s.close()
-            finally:
-                self._finish(CalibrationState.CANCELLED, detail=_CANCEL_DETAIL)
-            if self._cancel_requested:
-                return self.result  # type: ignore[return-value]
+            await self._drop_learning()
             raise
+        if not self._waiter.done():  # cancel()
+            await self._drop_learning()
+            return self.result  # type: ignore[return-value]
+        try:
+            ok = self._waiter.result()
         except Exception as exc:  # noqa: BLE001 - every device-side failure becomes a state
             await self._stop_progress()
             if isinstance(exc, MS605ConnectionError):
@@ -277,6 +279,17 @@ class CalibrationJob:
             return self._finish(CalibrationState.FAILED, detail="device reported failure")
         return await self._succeeded(ms)
 
+    async def _drop_learning(self) -> None:
+        """5.3: the only predictable way to stop learning is to drop the link."""
+        assert self._waiter is not None
+        self._waiter.cancel()
+        try:
+            await asyncio.gather(self._waiter, return_exceptions=True)
+            await self._stop_progress()
+            await self.session.close()
+        finally:
+            self._finish(CalibrationState.CANCELLED, detail=_CANCEL_DETAIL)
+
     async def _succeeded(self, ms: MS605) -> CalibrationResult:
         s = self.session
         try:
@@ -288,6 +301,7 @@ class CalibrationJob:
         except MS605Error as exc:
             return self._finish(CalibrationState.SUCCEEDED, detail=f"반영값 재조회 실패: {exc}")
         self._after = _pairs(cfg)
+        self.config_after = cfg
         detail = ""
         if self._storage is not None:
             try:
@@ -313,6 +327,6 @@ class CalibrationJob:
             self._finish(CalibrationState.CANCELLED)
             return
         self._cancel_requested = True
-        if self._waiter is not None:
-            self._waiter.cancel()
+        if self._cancel_signal is not None and not self._cancel_signal.done():
+            self._cancel_signal.set_result(None)
         await self._done.wait()

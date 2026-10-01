@@ -93,9 +93,13 @@ class DeviceSession:
         self._scan = scan or MS605.scan
         self._connect_timeout = connect_timeout
         self._scan_secs = scan_secs
-        self._last_reason = ""  # why the link last went LOST (CalibrationJob reports it)
+        self._last_reason = ""  # why the link last went LOST; cleared on connect and close
         self._live = 0
         self._closes = 0  # bumped by close(): a connect that outlives a close() is undone
+        # One connect attempt drives self.ms at a time: a connect started after a
+        # close() waits until a late one has undone its own link, so that undo
+        # never tears down the newer link on the shared driver.
+        self._connect_lock = asyncio.Lock()
         self._suspended = False
         self._keepalive_task: asyncio.Task | None = None
         self._kick = asyncio.Event()  # set: ping now and restart the interval
@@ -103,6 +107,11 @@ class DeviceSession:
         self.ms.on_disconnect = lambda: self._lose("BLE link lost")
 
     # -- state ----------------------------------------------------------------
+
+    @property
+    def last_lost_reason(self) -> str:
+        """Why the link last went LOST; "" once it connects again or is closed."""
+        return self._last_reason
 
     def _set_state(self, state: LinkState, reason: str = "") -> None:
         previous, self.state = self.state, state
@@ -154,17 +163,24 @@ class DeviceSession:
                 device = next((d for d in found if d.address.lower() == self.address.lower()), None)
             if device is not None:
                 self.name = getattr(device, "name", None) or self.name
-            await self.ms.reconnect(device=device, timeout=self._connect_timeout)
-            if closes != self._closes:
-                raise MS605ConnectionError("session closed while connecting")
-            if not self.ms.is_connected:
-                raise MS605ConnectionError("BLE link lost while connecting")
+            async with self._connect_lock:
+                if closes != self._closes:
+                    raise MS605ConnectionError("session closed while connecting")
+                try:
+                    await self.ms.reconnect(device=device, timeout=self._connect_timeout)
+                    if closes != self._closes:
+                        raise MS605ConnectionError("session closed while connecting")
+                    if not self.ms.is_connected:
+                        raise MS605ConnectionError("BLE link lost while connecting")
+                except BaseException:
+                    if closes != self._closes:  # close() ran meanwhile: drop a link that landed late
+                        await self._disconnect()
+                    raise
         except BaseException as exc:
-            if closes == self._closes:
+            if closes == self._closes:  # else close() already went DISCONNECTED
                 self._set_state(previous, "" if isinstance(exc, asyncio.CancelledError) else str(exc))
-            else:  # close() ran meanwhile and already went DISCONNECTED: drop a link that landed late
-                await self._disconnect()
             raise
+        self._last_reason = ""
         self._set_state(LinkState.CONNECTED)
         self._keepalive_task = asyncio.create_task(self._keepalive_loop())
         if self._live > 0 and self.busy != "calibration":
@@ -206,6 +222,7 @@ class DeviceSession:
         if task is not None:
             task.cancel()
         self._closes += 1  # also stops a reconnect() loop that is between attempts
+        self._last_reason = ""
         try:
             if self.state is not LinkState.DISCONNECTED:
                 self._set_state(LinkState.DISCONNECTED)
@@ -292,21 +309,22 @@ class DeviceSession:
             if self._suspended:
                 continue
             try:
-                # a ping still unanswered when the next one is due counts as missed
-                await self.ms.ping(timeout=min(WRITE_TIMEOUT_S, self.keepalive_interval))
+                # an ACK still missing when the next ping is due counts as missed; a slow
+                # write still gets the driver's full stall deadline before the link is given up
+                await self.ms.ping(timeout=min(WRITE_TIMEOUT_S, self.keepalive_interval), write_timeout=WRITE_TIMEOUT_S)
             except MS605DeviceError as exc:  # the device answered: the link is alive
-                self._missed(exc)
+                self._missed(exc, "error")
             except Exception as exc:  # noqa: BLE001 - classify, never crash the loop
                 if isinstance(exc, MS605TimeoutError) and self.ms.is_connected:
-                    self._missed(exc)  # a lost or bad-CRC ACK; real loss is a ConnectionError
+                    self._missed(exc, "no_response")  # a lost or bad-CRC ACK; real loss is a ConnectionError
                     continue
                 self._keepalive_task = None
                 self._lose(str(exc))
                 return
 
-    def _missed(self, exc: Exception) -> None:
+    def _missed(self, exc: Exception, kind: str) -> None:
         _log.warning("keep-alive on %s missed: %s", self.address, exc)
-        self.bus.emit(KeepAliveMissed(address=self.address, device_id=self.device_id, error=str(exc)))
+        self.bus.emit(KeepAliveMissed(address=self.address, device_id=self.device_id, error=str(exc), kind=kind))
 
     # -- live output -----------------------------------------------------------------
 

@@ -297,6 +297,30 @@ def test_external_task_cancel_does_the_same_and_reraises():
     asyncio.run(main())
 
 
+@pytest.mark.parametrize("job_cancel_first", [True, False])
+def test_job_cancel_together_with_an_external_task_cancel_still_reraises(job_cancel_first):
+    async def main():
+        dev, session, events = _setup(calibration_secs=10_000)
+        await _connected(session)
+        job = CalibrationJob(session, timeout=TIMEOUT)
+        task = asyncio.ensure_future(job.run())
+        await _until(lambda: job.state is S.LEARNING)
+        if job_cancel_first:
+            canceller = asyncio.ensure_future(job.cancel())
+            await asyncio.sleep(0)  # cancel() has asked the job to stop
+            task.cancel()
+        else:
+            task.cancel()
+            canceller = asyncio.ensure_future(job.cancel())
+        with pytest.raises(asyncio.CancelledError):  # the external cancel is never swallowed
+            await task
+        await asyncio.wait_for(canceller, 1.0)
+        assert job.state is S.CANCELLED and len(_results(events)) == 1
+        assert session.state is LinkState.DISCONNECTED and not dev.calibrating
+
+    asyncio.run(main())
+
+
 def test_cancel_before_run_needs_no_io():
     async def main():
         dev, session, events = _setup()

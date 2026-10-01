@@ -24,6 +24,7 @@ from ms605.events import (
     CalibrationState,
     GatherFailed,
     LinkState,
+    LinkStateChanged,
     SensorGathered,
 )
 from ms605.fleet import Draft, Fleet, SensorChanges, ThresholdChange, apply_changes, poll_verify
@@ -39,7 +40,7 @@ from ms605.protocol import (
 )
 from ms605.registry import Registry
 from ms605.session import DeviceSession
-from ms605.sim import DEFAULT_LEARNED_THRESHOLDS, SimFleet
+from ms605.sim import DEFAULT_LEARNED_THRESHOLDS, SimFleet, SimMS605
 from ms605.storage import Storage
 
 pytestmark = pytest.mark.usefixtures("no_chunk_pacing")
@@ -51,8 +52,9 @@ MEDIUM = list(zip(*SENSITIVITY_PRESETS[Sensitivity.MEDIUM], strict=True))
 S = CalibrationState
 
 
-def _make(tmp_path, count: int, *, connect_delay: float = 0.0, **sim_kw):
-    """`connect_delay`: wall seconds every BLE connect takes (an in-flight connect to race)."""
+def _make(tmp_path, count: int, *, connect_delay: float = 0.0, disconnect_delay: float = 0.0, **sim_kw):
+    """`connect_delay`: wall seconds every BLE connect takes (an in-flight connect to race).
+    `disconnect_delay`: wall seconds a BLE disconnect takes to return after the device is free."""
     sim_kw.setdefault("speed", SPEED)
     sim_kw.setdefault("calibration_secs", 20)  # 0.2 s of wall time
     # tag51 read-back lag off by default, so a write's verify needs no 0.4 s re-poll;
@@ -71,6 +73,15 @@ def _make(tmp_path, count: int, *, connect_delay: float = 0.0, **sim_kw):
                 return await real_connect(**kw)
 
             client.connect = slow_connect
+        if disconnect_delay:
+            real_disconnect = client.disconnect
+
+            async def slow_disconnect():
+                result = await real_disconnect()
+                await asyncio.sleep(disconnect_delay)
+                return result
+
+            client.disconnect = slow_disconnect
         return client
 
     fleet = Fleet(
@@ -168,6 +179,26 @@ def test_gather_connects_sensors_as_their_buttons_are_pressed(tmp_path):
     asyncio.run(main())
 
 
+def test_a_pending_import_matches_an_address_that_differs_only_in_case(tmp_path):
+    async def main():
+        sim, fleet, events = _make(tmp_path, 0)
+        dev = SimMS605(3, address="02:AA:BB:00:00:03", speed=SPEED, apply_delay=None)  # synthetic, has letters
+        sim.devices.append(dev)
+        fleet.registry.add_site("lab-a", "Lab A")
+        info = tmp_path / "sensor_info_example.yaml"
+        info.write_text(f"Sensor 3: {dev.address.lower()}\n", encoding="utf-8")  # 02:aa:bb:00:00:03
+        fleet.registry.import_sensor_info(info, "lab-a")
+        dev.press_button()
+        async with fleet:
+            await fleet.connect(dev.ble_device)
+            (gathered,) = _of(events, SensorGathered)
+            assert (gathered.known, gathered.alias, gathered.resolved_pending) == (True, "Sensor 3", True)
+            assert not fleet.registry.pending
+            assert fleet.registry.address_for(_id(dev)) == "02:AA:BB:00:00:03"  # the address the link used
+
+    asyncio.run(main())
+
+
 def test_gather_accept_filter_skips_other_sensors(tmp_path):
     async def main():
         sim, fleet, _ = _make(tmp_path, 2)
@@ -222,9 +253,85 @@ def test_lost_sensor_comes_back_into_its_own_session_when_pressed_again(tmp_path
             assert session.state is LinkState.LOST  # no advertising without a press
 
             dev.press_button()
-            await _until(lambda: session.state is LinkState.CONNECTED)
-            assert fleet.sessions[_id(dev)] is session and dev.connected
-            assert len(_of(events, SensorGathered)) == 1  # a return, not a new sensor
+            # re-identified and reported like a first gather, so the UI shows it connected again
+            await _until(lambda: len(_of(events, SensorGathered)) == 2)
+            assert fleet.sessions[_id(dev)] is session and dev.connected  # a return, not a new session
+            assert session.state is LinkState.CONNECTED
+            back = _of(events, SensorGathered)[1]
+            assert (back.device_id, back.address, back.name) == (_id(dev), dev.address, dev.name)
+
+    asyncio.run(main())
+
+
+def test_a_regathered_address_answering_with_another_device_id_is_refused(tmp_path):
+    async def main():
+        sim, fleet, events = _make(tmp_path, 1, connectable_window=20)  # a 0.2 s window
+        dev = sim.devices[0]
+        device_id = _id(dev)
+        async with fleet:
+            fleet.start_gather()
+            dev.press_button()
+            await _until(lambda: device_id in fleet.sessions)
+            session = fleet.sessions[device_id]
+            await asyncio.sleep(0.3)  # the window closes, so nothing reconnects before the id changes
+            dev.drop_link()
+            await _until(lambda: session.state is LinkState.LOST)
+
+            dev.tags[TAG_DEVICE_ID] = b"SIM605XX"  # synthetic: a different sensor now answers at this address
+            dev.press_button()
+            await _until(lambda: _of(events, GatherFailed))
+            failed = _of(events, GatherFailed)[0]
+            assert failed.device_id == device_id and "device id changed" in failed.error
+            assert session.device_id == device_id and session.info.device_id == device_id
+            assert fleet.sessions[device_id] is session and session.state is not LinkState.CONNECTED
+            assert len(_of(events, SensorGathered)) == 1
+            await fleet.stop_gather()
+            assert not dev.connected
+
+    asyncio.run(main())
+
+
+def test_a_regather_that_finds_the_lock_taken_keeps_the_link_for_its_holder(tmp_path):
+    async def main():
+        sim, fleet, events = _make(tmp_path, 1, connectable_window=20)  # a 0.2 s window
+        dev = sim.devices[0]
+        device_id = _id(dev)
+        async with fleet:
+            fleet.start_gather()
+            dev.press_button()
+            await _until(lambda: device_id in fleet.sessions)
+            session = fleet.sessions[device_id]
+            await session.acquire_live()  # a live view is open: the reconnect re-enables tag54 after CONNECTED
+            await asyncio.sleep(0.3)  # the window closes, so nothing reconnects before the press below
+            dev.drop_link()
+            await _until(lambda: session.state is LinkState.LOST)
+
+            # a GUI-style subscriber starts a read as soon as the sensor shows CONNECTED again
+            free = asyncio.Event()
+            reads: list = []
+
+            async def operator_read():
+                async with session.operation("read") as ms:
+                    await free.wait()
+                    reads.append(await ms.read_raw([TAG_DEVICE_ID]))
+
+            def on_event(event):
+                if isinstance(event, LinkStateChanged) and event.state is LinkState.CONNECTED and not reads:
+                    reads.append(asyncio.create_task(operator_read()))
+
+            fleet.bus.subscribe(on_event)
+            dev.press_button()
+            await _until(lambda: _of(events, GatherFailed))
+            failed = _of(events, GatherFailed)[0]
+            assert failed.device_id == device_id and "busy" in failed.error
+            # the healthy link stays up for the operation that holds it
+            assert session.state is LinkState.CONNECTED and dev.connected and session.busy == "read"
+            free.set()
+            await reads[0]
+            assert reads[1].get(TAG_DEVICE_ID) == bytes.fromhex(device_id)
+            assert session.state is LinkState.CONNECTED and dev.connected
+            assert len(_of(events, GatherFailed)) == 1  # a live session is not regathered again
+            await session.release_live()
 
     asyncio.run(main())
 
@@ -261,6 +368,26 @@ def test_release_closes_only_the_given_sessions(tmp_path):
         assert not sim.devices[0].connected and sim.devices[1].connected
         await fleet.aclose()
         assert not fleet.sessions and not sim.devices[1].connected
+
+    asyncio.run(main())
+
+
+def test_release_while_gathering_never_leaves_a_reconnected_session_behind(tmp_path):
+    async def main():
+        # the device is free (and still advertising) while release() waits for the disconnect
+        sim, fleet, _ = _make(tmp_path, 1, disconnect_delay=0.2)
+        dev = sim.devices[0]
+        dev.press_button()
+        async with fleet:
+            fleet.start_gather()
+            await _until(lambda: _id(dev) in fleet.sessions)
+            session = fleet.sessions[_id(dev)]
+            await fleet.release([_id(dev)])
+            await fleet.stop_gather()
+            assert session.state is LinkState.DISCONNECTED and not session.ms.is_connected
+            # whatever holds the device now is a session the fleet still owns
+            owned = any(s.ms.is_connected for s in fleet.sessions.values())
+            assert dev.connected == owned
 
     asyncio.run(main())
 

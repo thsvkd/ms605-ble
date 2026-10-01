@@ -429,8 +429,11 @@ class MS605:
         *,
         timeout: float = WRITE_TIMEOUT_S,
         expect_response: bool = True,
+        write_timeout: float | None = None,
     ) -> ParsedFrame | None:
-        received = await self._request(attrs, timeout=timeout, expect_response=expect_response)
+        received = await self._request(
+            attrs, timeout=timeout, expect_response=expect_response, write_timeout=write_timeout
+        )
         return None if received is None else received[1]
 
     async def _request(
@@ -439,8 +442,13 @@ class MS605:
         *,
         timeout: float = WRITE_TIMEOUT_S,
         expect_response: bool = True,
+        write_timeout: float | None = None,
     ) -> tuple[int, ParsedFrame] | None:
-        """_send(), but the response comes with its receive seq (see _dispatch())."""
+        """_send(), but the response comes with its receive seq (see _dispatch()).
+        `timeout` bounds the response wait and, by default, the write too. With
+        `write_timeout`, the write may take up to that long before the link is
+        abandoned, so the exchange can last up to `write_timeout` plus a short
+        ACK grace period (min(1 s, timeout / 4))."""
         msg_id = next(self._msg_ids)
         frame = build_command(attrs, msg_id)
         link_gen = self._link_gen
@@ -454,7 +462,7 @@ class MS605:
         try:
             # guard only the write: two frames must not interleave chunks on the
             # wire, but their response waits (demuxed by msg_id) can overlap freely.
-            await self._write_frame(frame, timeout, link_gen)
+            await self._write_frame(frame, timeout if write_timeout is None else write_timeout, link_gen)
             if fut is None:
                 return None
             # the frame is fully written: even if waiting for the send lock used
@@ -750,14 +758,15 @@ class MS605:
         raw = await self._read_via_push_or_response(TAG_LIGHT_HISTORY_PUSH, timeout=timeout)
         return decode_light_history(raw)
 
-    async def ping(self, *, timeout: float = WRITE_TIMEOUT_S) -> None:
+    async def ping(self, *, timeout: float = WRITE_TIMEOUT_S, write_timeout: float | None = None) -> None:
         """Send a bare keep-alive command and await its ACK.
 
         The frame carries only the mandatory `tag 1 = 0x06` trailer appended by
         build_command(). Long operations use it to keep an otherwise idle GATT
         link active. It awaits the device's status ACK, so a failure also acts
-        as a liveness signal."""
-        await self._send([], timeout=timeout)
+        as a liveness signal. `write_timeout` (default: `timeout`) is how long a
+        stalled write may take before the link is abandoned."""
+        await self._send([], timeout=timeout, write_timeout=write_timeout)
 
     async def start_auto_calibration(
         self,

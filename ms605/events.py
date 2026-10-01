@@ -90,6 +90,7 @@ class LinkStateChanged(DeviceEvent):
 @dataclass(frozen=True, kw_only=True)
 class KeepAliveMissed(DeviceEvent):
     error: str
+    kind: str  # "error": the device answered with an error status; "no_response": no ACK, link still up
 
 
 @dataclass(frozen=True, kw_only=True)
