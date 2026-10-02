@@ -8,7 +8,7 @@ help:
 	@printf '%s\n' \
 	  'make setup          Install Python dependencies (CLI + GUI server)' \
 	  'make cli            Run the interactive CLI (alias: make run)' \
-	  'make gui            Run the web GUI server (LAN + available tailnet URLs)' \
+	  'make gui            Restart the web GUI server (LAN + available tailnet URLs)' \
 	  '                    Pass options with ARGS="--help" or ARGS="--sim 7"' \
 	  'make web-setup      Install frontend dev dependencies (Node 22 + npm)' \
 	  'make web-dev        Run the frontend development server (backend: make gui)' \
@@ -29,7 +29,7 @@ cli:
 	./scripts/run.sh $(ARGS)
 
 gui:
-	./scripts/run.sh gui --lan $(ARGS)
+	uv run python scripts/gui.py $(ARGS)
 
 test: test-python test-web lint typecheck
 

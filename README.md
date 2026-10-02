@@ -120,6 +120,12 @@ uv run ms605 gui                     # allow localhost access only
   must join the same tailnet, and its policy and the host firewall must allow
   the selected port (8605 by default). LAN access still works without Tailscale.
   Discovery is read-only and does not change Tailscale settings.
+- The `make gui` launcher gracefully stops the current user's GUI from this project on
+  the selected port (8605 by default), waits up to 10 seconds for it to exit,
+  then starts a fresh server. It refuses to stop an unrelated program.
+  `ARGS="--port 0"` leaves existing servers running and chooses a free port.
+  Automatic restart uses `lsof` and `ps` on macOS/Linux. Direct
+  `uv run ms605 gui` keeps its existing startup behavior.
 - Open the printed URL once. The token in it is swapped for an HttpOnly cookie
   and a new token is generated on every start. Anyone holding the URL can
   control your sensors, and `--lan` serves plain HTTP, so use it only on a

@@ -752,6 +752,11 @@ ms605 [--scan-secs S] [--connect-timeout T] gui [--lan [--lan-host ADDR]] [--por
 
 `make gui ARGS="..."`는 위 명령에 `--lan`을 기본으로 추가해 LAN·tailnet 접속을 허용한다.
 `uv run ms605 gui`는 기존처럼 localhost 전용이다.
+Make의 `scripts/gui.py`는 인자를 먼저 검증한 뒤 선택한 포트의 리스너를 `lsof`로 찾는다.
+`ps`로 이 프로젝트 Python 환경의 현재 사용자 `ms605 gui` 또는 `python -m ms605.cli.cli gui` 진입점임을 확인한 프로세스에만
+`SIGTERM`을 보내고, 프로세스 종료와 포트 해제를 최대 10초 기다린 뒤 `scripts/run.sh gui --lan ...`을 실행한다.
+다른 프로세스나 확인할 수 없는 소유자는 종료하지 않는다. `--port 0`, 도움말, 잘못된 인자는 기존 서버를 종료하지 않는다.
+재시작 처리는 실행 스크립트에만 있으며 앱 CLI와 서버의 수명주기는 바꾸지 않는다.
 
 - `ms605/gui/cli.py`:
   - `add_parser(sub) -> None`: `gui` 서브커맨드를 등록한다. 다른 서브커맨드가 전역 옵션을 다루는 방식(`_add_target_args` 등)을 그대로 따른다.
