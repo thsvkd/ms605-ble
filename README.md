@@ -36,13 +36,26 @@ captures, real device profiles, or other private research data.
 
 ## Quick start
 
-Python 3.10 or newer and [`uv`](https://docs.astral.sh/uv/) are required.
+Python 3.10 or newer, [`uv`](https://docs.astral.sh/uv/), and GNU Make are required.
 
 ```bash
-./scripts/setup.sh
-./scripts/test.sh
-./scripts/run.sh
+make setup
+make test-python lint
+make cli                            # or: make run
+make gui                            # web GUI: LAN + connected tailnet URLs
 ```
+
+Use `make help` to list all targets. Pass CLI and GUI options through `ARGS`:
+
+```bash
+make cli ARGS="read"
+make cli ARGS="--address <ADDR> calibrate"
+make gui ARGS="--sim 7 --speed 20"
+```
+
+The existing `scripts/setup.sh` and `scripts/run.sh` entrypoints still work.
+`scripts/test.sh` now runs `make test`, checking Python and the frontend together.
+Install frontend development dependencies with `make web-setup` before this combined check.
 
 The MS605 normally accepts a connection only for a short period after its
 physical button is pressed. Close other applications connected to the sensor,
@@ -94,13 +107,19 @@ server plus a React app that ships pre-built inside the package, so Node is not
 needed to use it.
 
 ```bash
-./scripts/setup.sh                   # or: uv sync  (installs the GUI dependencies)
-uv run ms605 gui                     # prints http://127.0.0.1:8605/?t=<token>; open it
-uv run ms605 gui --lan               # also prints a LAN URL and a QR code for a phone
-uv run ms605 gui --lan --lan-host 192.0.2.10  # put this address in the QR (VPN, several interfaces)
-uv run ms605 gui --sim 7 --speed 20  # demo with 7 simulated sensors, no hardware
+make setup                          # or: uv sync  (installs the GUI dependencies)
+make gui                            # prints localhost, LAN, tailnet URLs and a LAN QR code
+make gui ARGS="--lan-host 192.0.2.10" # put this address in the QR (VPN, several interfaces)
+make gui ARGS="--sim 7 --speed 20"   # demo with 7 simulated sensors, no hardware
+uv run ms605 gui                     # allow localhost access only
 ```
 
+- `make gui` enables `--lan` by default. When Tailscale is running, it prints
+  the node's IPv4 URL and, when MagicDNS is enabled, its DNS URL. Both support
+  authenticated API and live WebSocket access with the same token. The client
+  must join the same tailnet, and its policy and the host firewall must allow
+  the selected port (8605 by default). LAN access still works without Tailscale.
+  Discovery is read-only and does not change Tailscale settings.
 - Open the printed URL once. The token in it is swapped for an HttpOnly cookie
   and a new token is generated on every start. Anyone holding the URL can
   control your sensors, and `--lan` serves plain HTTP, so use it only on a
@@ -148,11 +167,13 @@ uv run ms605 gui --sim 7 --speed 20  # demo with 7 simulated sensors, no hardwar
 Rebuilding the frontend (Node 22 and npm; output goes to `ms605/gui/static/`):
 
 ```bash
-cd web
-npm ci
-npm run typegen    # regenerate src/api/schema.ts from the backend's OpenAPI
-npm test && npm run build
+make web-setup
+make web-typegen   # regenerate src/api/schema.ts from the backend's OpenAPI
+make test-web web-build
 ```
+
+Start the frontend development server with `make web-dev`. Run its backend in
+a separate terminal with `make gui`.
 
 ## Main commands
 
@@ -502,8 +523,8 @@ contaminated history back.
 
 ```bash
 uv sync --frozen
-uv run pytest -q
-uv run ruff check .
+make web-setup                       # frontend dev dependencies (Node 22 and npm)
+make test                            # Python + frontend tests, ruff, TypeScript
 
 uv run python tools/scan.py --self-test
 uv run python tools/enumerate.py --self-test
@@ -512,8 +533,9 @@ uv run python tools/replay.py --self-test
 uv run python tools/btsnoop_att.py --self-test
 ```
 
-After dependencies are available, all tests and tool self-tests above are
-network-free and radio-free. `uv sync --frozen` may access the package registry
+Use `make test-python lint` to check Python only. After dependencies are available,
+all tests and tool self-tests above are network-free and radio-free.
+`make web-setup` may access the npm registry. `uv sync --frozen` may access the package registry
 when the local cache is incomplete. Hardware validation is a separate, opt-in
 activity and must follow the isolation and data-handling rules in this README.
 

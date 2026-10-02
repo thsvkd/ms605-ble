@@ -34,13 +34,26 @@ Meross MS605 재실 감지 센서의 로컬 BLE 설정 채널을 제어하는 �
 
 ## 빠른 시작
 
-Python 3.10 이상과 [`uv`](https://docs.astral.sh/uv/)가 필요합니다.
+Python 3.10 이상, [`uv`](https://docs.astral.sh/uv/), GNU Make가 필요합니다.
 
 ```bash
-./scripts/setup.sh
-./scripts/test.sh
-./scripts/run.sh
+make setup
+make test-python lint
+make cli                            # 또는: make run
+make gui                            # 웹 GUI: LAN + 연결된 tailnet 주소 출력
 ```
+
+`make help`로 전체 타깃을 확인하세요. CLI와 GUI 옵션은 `ARGS`로 전달합니다.
+
+```bash
+make cli ARGS="read"
+make cli ARGS="--address <ADDR> calibrate"
+make gui ARGS="--sim 7 --speed 20"
+```
+
+기존 `scripts/setup.sh`, `scripts/run.sh`도 계속 사용할 수 있습니다.
+`scripts/test.sh`는 이제 `make test`를 실행해 Python과 프런트엔드를 함께 검증합니다.
+통합 검증에는 아래의 `make web-setup`이 먼저 필요합니다.
 
 MS605는 보통 물리 버튼을 누른 직후 짧은 시간에만 연결을 허용합니다. 센서에
 연결된 다른 앱을 닫고 버튼을 누른 다음 명령을 실행하세요.
@@ -88,13 +101,17 @@ asyncio.run(main())
 FastAPI 서버와 React 앱으로 이루어져 있고, 앱은 빌드된 채로 패키지에 들어 있어 사용할 때 Node는 필요 없습니다.
 
 ```bash
-./scripts/setup.sh                   # 또는: uv sync  (GUI 의존성 포함 설치)
-uv run ms605 gui                     # http://127.0.0.1:8605/?t=<토큰> 출력, 브라우저로 열기
-uv run ms605 gui --lan               # LAN 주소와 폰용 QR 코드도 출력
-uv run ms605 gui --lan --lan-host 192.0.2.10  # QR에 이 주소를 사용 (VPN, 여러 네트워크)
-uv run ms605 gui --sim 7 --speed 20  # 실기기 없이 가상 센서 7대로 데모
+make setup                          # 또는: uv sync  (GUI 의존성 포함 설치)
+make gui                            # localhost·LAN·tailnet 주소와 LAN QR 출력
+make gui ARGS="--lan-host 192.0.2.10" # QR에 이 주소를 사용 (VPN, 여러 네트워크)
+make gui ARGS="--sim 7 --speed 20"   # 실기기 없이 가상 센서 7대로 데모
+uv run ms605 gui                     # localhost에서만 접속 허용
 ```
 
+- `make gui`는 `--lan`을 기본으로 사용합니다. 실행 중인 Tailscale이 있으면 IPv4 주소를 출력하고,
+  MagicDNS가 켜져 있으면 해당 이름의 주소도 출력합니다. 두 주소 모두 같은 토큰으로 API와 실시간 WebSocket에 접속합니다.
+  접속할 기기도 같은 tailnet에 연결되어 있어야 하고, tailnet 정책과 컴퓨터 방화벽에서 해당 포트(기본 8605)를 허용해야 합니다.
+  Tailscale이 없거나 연결되지 않았으면 LAN으로 계속 사용할 수 있습니다. 검색은 읽기 전용이며 Tailscale 설정을 바꾸지 않습니다.
 - 출력된 주소를 한 번 열면 토큰이 HttpOnly 쿠키로 바뀝니다. 토큰은 실행할 때마다 새로 만들어집니다. 주소를 가진 사람은 누구나
   센서를 조작할 수 있고 `--lan`은 평문 HTTP이므로, 신뢰하는 네트워크에서만 쓰세요.
 - `--sim`에서는 모으기 화면에서 가상 센서의 버튼을 누를 수 있습니다. 데모 데이터는 `cal_results/sim/`에만 저장되어 실제
@@ -123,11 +140,13 @@ uv run ms605 gui --sim 7 --speed 20  # 실기기 없이 가상 센서 7대로 �
 프런트엔드 다시 빌드(Node 22, npm. 결과는 `ms605/gui/static/`에 생성):
 
 ```bash
-cd web
-npm ci
-npm run typegen    # 백엔드 OpenAPI에서 src/api/schema.ts 재생성
-npm test && npm run build
+make web-setup
+make web-typegen   # 백엔드 OpenAPI에서 src/api/schema.ts 재생성
+make test-web web-build
 ```
+
+프런트엔드 개발 서버는 `make web-dev`로 시작합니다. 백엔드는 별도 터미널에서
+`make gui`로 실행하세요.
 
 ## 주요 명령
 
@@ -447,8 +466,8 @@ HCI ACL 레코드
 
 ```bash
 uv sync --frozen
-uv run pytest -q
-uv run ruff check .
+make web-setup                       # 프런트엔드 개발 의존성 설치 (Node 22, npm)
+make test                            # Python + 프런트엔드 테스트, ruff, TypeScript
 
 uv run python tools/scan.py --self-test
 uv run python tools/enumerate.py --self-test
@@ -457,8 +476,9 @@ uv run python tools/replay.py --self-test
 uv run python tools/btsnoop_att.py --self-test
 ```
 
-의존성을 사용할 수 있게 된 뒤에는 위 테스트와 도구 self-test가 네트워크와 라디오를
-사용하지 않습니다. 로컬 캐시가 불완전하면 `uv sync --frozen`은 패키지 레지스트리에
+`make test-python lint`로 Python만 검증할 수도 있습니다. 의존성을 사용할 수 있게 된 뒤에는
+위 테스트와 도구 self-test가 네트워크와 라디오를 사용하지 않습니다. `make web-setup`은 npm
+레지스트리에 접속할 수 있고, 로컬 캐시가 불완전하면 `uv sync --frozen`은 패키지 레지스트리에
 접속할 수 있습니다. 하드웨어 검증은 별도의 명시적 활동이며 이 README의 격리·데이터
 처리 규칙을 따라야 합니다.
 

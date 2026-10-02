@@ -5,9 +5,15 @@ not pay for them at start-up."""
 from __future__ import annotations
 
 import argparse
+import json
+import os
 import secrets
+import shutil
 import socket
+import subprocess
 import sys
+from ipaddress import IPv4Address
+from pathlib import Path
 
 LAN_PROBE = ("192.0.2.1", 9)  # TEST-NET-1: connect() on UDP only picks a route, nothing is sent
 LOCAL_HOSTS = ("127.0.0.1", "localhost")
@@ -42,7 +48,7 @@ def add_parser(sub: argparse._SubParsersAction) -> None:
         help="웹 GUI 서버 실행 (브라우저·폰에서 접속)",
         description="센서 대시보드와 센서 모으기 화면을 웹으로 엽니다. 출력된 주소(토큰 포함)를 브라우저에서 여세요.",
     )
-    p.add_argument("--lan", action="store_true", help="같은 네트워크의 다른 기기(폰)에서도 접속 허용, QR 출력")
+    p.add_argument("--lan", action="store_true", help="LAN·연결된 tailnet 접속 허용, 주소와 LAN QR 출력")
     p.add_argument(
         "--lan-host",
         default=None,
@@ -83,6 +89,52 @@ def lan_ip() -> str | None:
 def host_name() -> str:
     """socket.gethostname() lowercased (browsers send a lowercase Host) without a trailing ".local"."""
     return socket.gethostname().lower().removesuffix(".local")
+
+
+def tailnet_hosts() -> list[str]:
+    """Discover this node's reachable IPv4 hosts without changing Tailscale state."""
+    command = shutil.which("tailscale")
+    if command is None and sys.platform == "darwin":
+        app = Path("/Applications/Tailscale.app/Contents/MacOS/Tailscale")
+        if app.is_file():
+            command = str(app)
+    if command is None:
+        return []
+    try:
+        result = subprocess.run(
+            [command, "status", "--json", "--peers=false"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            env={**os.environ, "TAILSCALE_BE_CLI": "1"},
+        )
+        if result.returncode != 0:
+            return []
+        status = json.loads(result.stdout)
+    except (OSError, subprocess.SubprocessError, json.JSONDecodeError):
+        return []
+    if not isinstance(status, dict) or status.get("BackendState") != "Running":
+        return []
+    addresses = status.get("TailscaleIPs", [])
+    if not isinstance(addresses, list):
+        return []
+    hosts = []
+    for address in addresses:
+        if not isinstance(address, str):
+            continue
+        try:
+            host = str(IPv4Address(address))
+        except ValueError:
+            continue  # the listener is IPv4; do not advertise IPv6-only endpoints
+        if host not in hosts:
+            hosts.append(host)
+    node = status.get("Self")
+    tailnet = status.get("CurrentTailnet")
+    if hosts and isinstance(node, dict) and isinstance(tailnet, dict) and tailnet.get("MagicDNSEnabled") is True:
+        name = node.get("DNSName")
+        if isinstance(name, str) and name.rstrip("."):
+            hosts.append(name.lower().rstrip("."))
+    return hosts
 
 
 def allowed_hosts(lan: bool, *ips: str | None) -> list[str]:
@@ -146,9 +198,12 @@ async def run_gui(args: argparse.Namespace, *, scan_secs: float, connect_timeout
     port = sock.getsockname()[1]
 
     auto_ip = lan_ip() if lan else None
+    tailnet = tailnet_hosts() if lan else []
     lan_host = getattr(args, "lan_host", None)
     ip = lan_host.lower() if lan_host else auto_ip  # browsers send a lowercase Host
-    app = create_app(fleet, registry, storage, token, allowed_hosts=allowed_hosts(lan, ip, auto_ip), sim=sim, lan=lan)
+    app = create_app(
+        fleet, registry, storage, token, allowed_hosts=allowed_hosts(lan, ip, auto_ip, *tailnet), sim=sim, lan=lan
+    )
 
     print(f"ms605 gui: http://127.0.0.1:{port}/?t={token}", flush=True)
     if sim is not None:
@@ -163,6 +218,10 @@ async def run_gui(args: argparse.Namespace, *, scan_secs: float, connect_timeout
             segno.make(url, error="m").terminal(out=sys.stdout, compact=True)
             if lan_host is None:
                 print("폰에서 열리지 않으면(VPN 등) --lan-host <이 컴퓨터의 Wi-Fi 주소>로 다시 실행하세요.", flush=True)
+        for host in tailnet:
+            print(f"Tailnet 주소: http://{host}:{port}/?t={token}", flush=True)
+        if not tailnet:
+            print("Tailnet 주소를 찾지 못했습니다. Tailscale 연결 상태를 확인하세요.", flush=True)
         print("주의: 이 주소를 가진 사람은 누구나 센서를 조작할 수 있습니다. 공유하지 마세요.", flush=True)
     print("종료하려면 Ctrl-C를 누르세요.", flush=True)
 

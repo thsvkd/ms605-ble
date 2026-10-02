@@ -4,10 +4,10 @@
 #
 # Uses uv to create a reproducible virtualenv (Python 3.12, pinned in
 # .python-version) and install bleak with the macOS CoreBluetooth backend,
-# plus the dev dependencies (pytest, ruff) used by scripts/test.sh.
+# plus the dev dependencies (pytest, ruff) used by make test-python / make lint.
 #
-# Only sets up the environment — run scripts/test.sh afterward to verify it,
-# or scripts/run.sh to launch the app.
+# Used by make setup. Only installs Python dependencies; make web-setup
+# installs the optional frontend development tools.
 #
 set -euo pipefail
 
@@ -19,7 +19,7 @@ echo "==> MS605 BLE package — setup"
 if ! command -v uv >/dev/null 2>&1; then
     echo "error: 'uv' is not installed." >&2
     echo "       Install it with:  curl -LsSf https://astral.sh/uv/install.sh | sh" >&2
-    echo "       Then re-run:      ./scripts/setup.sh" >&2
+    echo "       Then re-run:      make setup" >&2
     exit 1
 fi
 echo "==> uv $(uv --version | awk '{print $2}') found"
@@ -37,5 +37,7 @@ uv sync
 
 echo
 echo "Setup complete."
-echo "Verify the checkout:      ./scripts/test.sh"
-echo "Run the interactive app:  ./scripts/run.sh"
+echo "Verify Python:            make test-python lint"
+echo "Run the interactive app:  make cli"
+echo "Run the web GUI:          make gui"
+echo "Frontend development:     make web-setup, then make test / make web-build"

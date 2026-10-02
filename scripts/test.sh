@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 #
-# scripts/test.sh — verify the checkout: offline pytest suite + ruff lint.
+# scripts/test.sh — compatibility entrypoint for make test.
 #
-# No BLE hardware needed (the whole suite is offline). Run after
-# scripts/setup.sh, or any time you want to check your working tree:
+# No BLE hardware needed. Run make setup and make web-setup first:
 #   ./scripts/test.sh
 #
 set -euo pipefail
@@ -11,21 +10,13 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 if ! command -v uv >/dev/null 2>&1; then
-    echo "error: 'uv' is not installed. Run ./scripts/setup.sh for instructions." >&2
+    echo "error: 'uv' is not installed. Run make setup for instructions." >&2
     exit 1
 fi
 
 if [ ! -d ".venv" ]; then
     echo "==> .venv not found; running setup first"
-    ./scripts/setup.sh
+    make setup
 fi
 
-echo "==> pytest"
-uv run pytest -q
-
-echo
-echo "==> ruff check"
-uv run ruff check .
-
-echo
-echo "All checks passed."
+exec make test

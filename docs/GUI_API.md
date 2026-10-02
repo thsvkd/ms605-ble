@@ -171,7 +171,8 @@ Host를 `127.0.0.1:8605`로 바꾸므로 쿠키 이름(4.2절)과 Host 검사가
 모든 요청에 아래를 차례로 적용한다.
 
 1. **Host**: Starlette `TrustedHostMiddleware(allowed_hosts=...)`. 기본은 `["127.0.0.1", "localhost"]`, `--lan`이면
-   여기에 LAN IP(`--lan-host`를 주면 그것과 자동으로 찾은 IP 둘 다), 호스트 이름, 호스트 이름 + `.local`을 더한다. 호스트 이름은 `socket.gethostname()`을 소문자로 바꾸고 끝의 `.local`을
+   여기에 LAN IP(`--lan-host`를 주면 그것과 자동으로 찾은 IP 둘 다), 실행 중인 Tailscale의 IPv4 주소와 활성 MagicDNS 이름,
+   호스트 이름, 호스트 이름 + `.local`을 더한다. 호스트 이름은 `socket.gethostname()`을 소문자로 바꾸고 끝의 `.local`을
    뗀 것이다(브라우저는 Host를 소문자로 보내고, 미들웨어는 대소문자를 가린다). 어긋나면 `400` 평문
    `Invalid host header`(미들웨어 기본 동작, JSON 아님). DNS rebinding을 막는다. `/ws` 핸드셰이크는 거절 응답 대신
    accept 전에 `close(1008)`로 막는다(uvicorn은 HTTP 403으로 답한다. 거절 응답은 uvicorn이 매번 ERROR로 기록해 QR이 있는 터미널을 덮는다).
@@ -199,6 +200,8 @@ ms605 gui: http://127.0.0.1:8605/?t=<token>
 LAN 주소: http://192.0.2.10:8605/?t=<token>         (--lan일 때만)
 <QR: LAN 주소 URL 전체>                              (--lan일 때만)
 폰에서 열리지 않으면(VPN 등) --lan-host <이 컴퓨터의 Wi-Fi 주소>로 다시 실행하세요.   (--lan이고 --lan-host가 없을 때만)
+Tailnet 주소: http://100.64.0.10:8605/?t=<token>      (--lan이고 Tailscale이 연결되어 있을 때)
+Tailnet 주소: http://sensor.test-tailnet.ts.net:8605/?t=<token>  (MagicDNS도 켜져 있을 때)
 주의: 이 주소를 가진 사람은 누구나 센서를 조작할 수 있습니다. 공유하지 마세요.   (--lan일 때만)
 종료하려면 Ctrl-C를 누르세요.
 ```
@@ -209,6 +212,13 @@ LAN 주소: http://192.0.2.10:8605/?t=<token>         (--lan일 때만)
   시작하면 `LAN 주소를 찾지 못했습니다. 같은 네트워크의 기기에서 이 주소로 접속해 보세요: http://<호스트 이름>.local:<port>/?t=<token>`을
   출력하고 QR은 생략한다(IP 주소는 Host 검사를 통과하지 못하므로 안내하지 않는다).
 - `--lan` 없이 QR은 출력하지 않는다(폰에서 `127.0.0.1`은 의미가 없다).
+- Tailnet: `tailscale status --json --peers=false`를 최대 2초 동안 실행하고 `BackendState == "Running"`일 때만
+  `TailscaleIPs`의 IPv4 주소를 쓴다. `CurrentTailnet.MagicDNSEnabled == true`이면 `Self.DNSName`의 끝 `.`을
+  떼고 소문자로 바꾼 이름도 쓴다. 감지한 모든 주소를 Host 허용 목록에 추가하고 같은 포트·토큰으로 출력한다.
+  IPv6는 IPv4 소켓에 접속할 수 없으므로 출력하지 않는다. CLI가 없거나 오류·시간 초과·잘못된 JSON·미연결이면
+  `Tailnet 주소를 찾지 못했습니다. Tailscale 연결 상태를 확인하세요.`를 출력하고 LAN 서버는 계속 실행한다.
+  macOS에서는 PATH에 CLI가 없으면 앱 번들의 CLI를 찾고 `TAILSCALE_BE_CLI=1`로 실행한다.
+  Tailscale 상태와 네트워크 정책은 바꾸지 않는다. CLI 옵션은 [공식 Tailscale CLI 문서](https://tailscale.com/docs/reference/tailscale-cli)를 따른다.
 
 ## 5. 스키마 (`ms605/gui/schemas.py`)
 
@@ -739,6 +749,9 @@ e2e 테스트와 데모가 "사람이 버튼을 누르는" 일을 이것으로 �
 ```
 ms605 [--scan-secs S] [--connect-timeout T] gui [--lan [--lan-host ADDR]] [--port 8605] [--sim N [--speed K]]
 ```
+
+`make gui ARGS="..."`는 위 명령에 `--lan`을 기본으로 추가해 LAN·tailnet 접속을 허용한다.
+`uv run ms605 gui`는 기존처럼 localhost 전용이다.
 
 - `ms605/gui/cli.py`:
   - `add_parser(sub) -> None`: `gui` 서브커맨드를 등록한다. 다른 서브커맨드가 전역 옵션을 다루는 방식(`_add_target_args` 등)을 그대로 따른다.

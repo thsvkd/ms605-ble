@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# scripts/run.sh — launch the MS605 interactive BLE app.
+# scripts/run.sh — shared launcher for make cli / make gui.
 #
 # Any arguments are passed straight through to the `ms605` console script, e.g.:
 #   ./scripts/run.sh                       # interactive app (connect + calibrate + adjust)
@@ -18,6 +18,7 @@
 #   ./scripts/run.sh calibrate --schedule 02:00   # fire unattended at 02:00
 # See all commands/options:
 #   ./scripts/run.sh --help
+#   ./scripts/run.sh gui --sim 7          # web GUI with simulated sensors
 #
 # For the low-level driver CLI, call `uv run ms605-driver ...` directly.
 set -euo pipefail
@@ -25,14 +26,14 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 if ! command -v uv >/dev/null 2>&1; then
-    echo "error: 'uv' is not installed. Run ./scripts/setup.sh for instructions." >&2
+    echo "error: 'uv' is not installed. Run make setup for instructions." >&2
     exit 1
 fi
 
 # Auto-bootstrap the environment on first run.
 if [ ! -d ".venv" ]; then
     echo "==> .venv not found; running setup first"
-    ./scripts/setup.sh
+    make setup
 fi
 
 # uv keeps .venv in sync with pyproject.toml, then runs the app.
