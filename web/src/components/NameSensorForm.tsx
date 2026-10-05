@@ -33,7 +33,7 @@ export function NameSensorForm({ deviceId, bleName, autoFocus, onDone }: Props) 
   const [site, setSite] = useState<SiteChoice>(() => initialSite(useStore.getState()))
   const siteId = site.kind === 'existing' ? site.siteId : null
   const [aliasEdit, setAliasEdit] = useState<string | null>(null) // null: follow the default
-  const alias = aliasEdit ?? defaultAlias(sensors, siteId)
+  const alias = aliasEdit ?? defaultAlias(sensors, siteId, sensors[deviceId]?.live)
   const [location, setLocation] = useState('')
   const [saving, setSaving] = useState(false)
   const [aliasError, setAliasError] = useState<string | null>(null)
@@ -60,7 +60,8 @@ export function NameSensorForm({ deviceId, bleName, autoFocus, onDone }: Props) 
         setSite({ kind: 'existing', siteId: target }) // a retry after a failed createSensor reuses it
       }
       if (target === null) return
-      await createSensor({ device_id: deviceId, site_id: target, alias: name, location: location.trim(), notes: '' })
+      const savedAlias = aliasEdit ?? defaultAlias(sensors, target, sensors[deviceId]?.live)
+      await createSensor({ device_id: deviceId, site_id: target, alias: savedAlias.trim(), location: location.trim(), notes: '' })
       writeLastSite(target)
       onDone('saved')
     } catch (e) {

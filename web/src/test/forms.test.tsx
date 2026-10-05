@@ -34,6 +34,33 @@ function mockApi(responses: Record<string, Reply | Reply[]>) {
 const requests = (calls: Call[]) => calls.map((c) => `${c.method} ${c.path}`)
 
 describe('NameSensorForm saving', () => {
+  it('keeps the MAC default across site changes and saves the user override after live updates', async () => {
+    const user = userEvent.setup()
+    const fresh = sensor(3, { live: live(3, { address: '02:00:00:ab:12:cd' }) })
+    resetStore(storeState({
+      sites: [SITE_A, SITE_B],
+      gather: { gathering: true, connecting: [] },
+      sensors: [sensor(1, { registry: registry(SITE_B, '북쪽') }), fresh],
+    }))
+    const calls = mockApi({ 'POST /api/sensors': { status: 201, body: fresh } })
+    render(<GatherScreen />)
+    await user.click(screen.getByRole('button', { name: '이름 붙이기' }))
+    const form = screen.getByRole('form', { name: /이름 붙이기/ })
+    const alias = within(form).getByLabelText('이름')
+    expect(alias).toHaveValue('MS605-AB12CD')
+    await user.selectOptions(within(form).getByLabelText('사이트'), 'lab-b')
+    expect(alias).toHaveValue('MS605-AB12CD')
+    await user.clear(alias)
+    await user.type(alias, '  북쪽 벽 센서  ')
+    act(() => {
+      useStore.getState().applyMessage({ type: 'sensor', seq: 11, ts: NOW_S, data: sensor(3, { live: live(3) }) })
+    })
+    expect(alias).toHaveValue('  북쪽 벽 센서  ')
+    await user.click(within(form).getByRole('button', { name: '저장' }))
+    expect(await screen.findByText(t.form.saved)).toBeInTheDocument()
+    expect(calls[0]?.body).toMatchObject({ device_id: deviceId(3), site_id: 'lab-b', alias: '북쪽 벽 센서' })
+  })
+
   it('a retry after createSensor failed does not create the new site again', async () => {
     const user = userEvent.setup()
     resetStore(storeState({ sites: [], gather: { gathering: true, connecting: [] }, sensors: [sensor(3, { live: live(3) })] }))
@@ -56,7 +83,11 @@ describe('NameSensorForm saving', () => {
   it('a "new" site whose name already exists reuses that site', async () => {
     const user = userEvent.setup()
     resetStore(
-      storeState({ sites: [SITE_A, SITE_B], gather: { gathering: true, connecting: [] }, sensors: [sensor(3, { live: live(3) })] }),
+      storeState({
+        sites: [SITE_A, SITE_B],
+        gather: { gathering: true, connecting: [] },
+        sensors: [sensor(1, { registry: registry(SITE_B, 'MS605-000003') }), sensor(3, { live: live(3) })],
+      }),
     )
     const calls = mockApi({ 'POST /api/sensors': { status: 201, body: sensor(3) } })
     render(<GatherScreen />)
@@ -67,7 +98,7 @@ describe('NameSensorForm saving', () => {
     await user.click(within(form).getByRole('button', { name: '저장' }))
     expect(await screen.findByText(t.form.saved)).toBeInTheDocument()
     expect(requests(calls)).toEqual(['POST /api/sensors'])
-    expect(calls[0]?.body).toMatchObject({ site_id: 'lab-b' })
+    expect(calls[0]?.body).toMatchObject({ site_id: 'lab-b', alias: 'MS605-000003 2' })
   })
 })
 

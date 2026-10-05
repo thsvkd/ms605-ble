@@ -60,6 +60,7 @@ export const t = {
     new: '새 센서',
     nameIt: '이름을 붙여 주세요',
     registered: '등록됨',
+    macAlias: (suffix: string) => `MS605-${suffix}`,
     defaultAlias: (n: number) => `센서 ${n}`,
     announceNew: (name: string) => `새 센서가 연결되었습니다: ${name}`,
     announceConnected: (alias: string) => `${alias} 연결됨`,

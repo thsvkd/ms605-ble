@@ -936,7 +936,10 @@ busy 문구: `identify` 확인 중, `read` 읽는 중, `apply` 설정 적용 중
 폼 규칙:
 
 - `NameSensorForm` 기본값: 사이트는 `ms605.lastSiteId`(아직 있으면) → 사이트가 하나뿐이면 그것 → 없으면 `새 사이트…` 모드.
-  별명은 `센서 {n}`. n은 그 사이트의 등록 센서 수 + 1부터, 그 사이트에 같은 별명이 없을 때까지 올린다. 위치는 빈칸.
+  별명은 `MS605-{MAC 끝 6자리}`(구분자 없이 대문자 16진수, 예: `MS605-ABCDEF`). 이 호스트의 BLE 주소가 MAC이면 그 주소를 쓰고,
+  CoreBluetooth UUID 등으로 MAC을 알 수 없으면 `RFBL_`/`MRBL_` 광고 이름의 6자리 16진수 접미사를 쓴다.
+  같은 사이트에 이미 있는 별명이면 ` 2`, ` 3` 등을 붙인다. MAC 접미사를 알 수 없으면 기존 `센서 {n}` 규칙을 쓴다.
+  n은 그 사이트의 등록 센서 수 + 1부터, 그 사이트에 같은 별명이 없을 때까지 올린다. 위치는 빈칸. 직접 수정한 이름은 유지한다.
   그래서 걸어 다니며 `저장`만 눌러도 된다.
 - 저장: 새 사이트면 `ensureSite(name)`(앞뒤 공백을 빼고 대소문자를 가리지 않아 같은 이름의 사이트가 있으면 그것, 없으면 `createSite({name})`)
   → 받은 `site_id`로 `createSensor(...)`. 사이트를 얻으면 곧바로 폼의 사이트를 그 기존 사이트로 바꾼다. 그래서 `createSensor`가 실패한 뒤
@@ -1002,7 +1005,7 @@ busy 문구: `identify` 확인 중, `read` 읽는 중, `apply` 설정 적용 중
 - `format.test.ts`: 상대 시간(방금 전 / N분 전 / N시간 전 / N일 전 / 7일 넘으면 `YYYY-MM-DD`), ISO 문자열과 epoch 초 둘 다.
 - `ws.test.ts`: 가짜 `WebSocket` 클래스로 4401 → `unauthorized`이고 재접속 안 함, 1013 → 스냅샷 뒤면 즉시 재접속·스냅샷 전이면 백오프, `seq` 없는 메시지가 `lastSeq`를 망가뜨리지 않음, 간극 → 닫고 재접속, 백오프 증가와 스냅샷 후 초기화.
 - `client.test.ts`: `ApiError` 본문 → `ApiRequestError.code`, 401 → `conn = 'unauthorized'`, JSON 아닌 본문.
-- `alias.test.ts`: 기본 별명 `센서 {n}` 규칙.
+- `alias.test.ts`: MAC 끝 6자리 대문자 별명, CoreBluetooth 광고 이름 대체, 사이트별 중복 회피, `센서 {n}` 대체 규칙.
 - 컴포넌트 스모크(@testing-library/react, fixture 스토어): 대시보드가 사이트·센서·미등록·대기 항목을 그림, 빈 상태,
   모으기 화면의 히어로 상태 3가지, 새 센서 폼 저장이 `createSite` → `createSensor`를 순서대로 부름(fetch 모의), 409 문구, `AuthRequired`.
 - fixture는 `test/fixtures.ts` 하나에 합성 값으로 둔다(Device ID `53494d3630350001`…, 주소 `02:00:00:00:00:01`…).

@@ -65,15 +65,16 @@ describe('GatherScreen', () => {
 
   it('saving a new sensor into a new site calls createSite then createSensor', async () => {
     const user = userEvent.setup()
-    resetStore(storeState({ sites: [], gather: { gathering: true, connecting: [] }, sensors: [sensor(3, { live: live(3) })] }))
+    const identity = live(3, { address: '02:00:00:ab:cd:ef' })
+    resetStore(storeState({ sites: [], gather: { gathering: true, connecting: [] }, sensors: [sensor(3, { live: identity })] }))
     const calls = mockApi({
       'POST /api/sites': { status: 201, body: { site_id: 'lab-a', name: 'Lab A' } },
-      'POST /api/sensors': { status: 201, body: sensor(3, { registry: registry(SITE_A, '센서 1'), live: live(3) }) },
+      'POST /api/sensors': { status: 201, body: sensor(3, { registry: registry(SITE_A, 'MS605-ABCDEF'), live: identity }) },
     })
     render(<GatherScreen />)
     await user.click(screen.getByRole('button', { name: '이름 붙이기' }))
     const form = screen.getByRole('form', { name: /이름 붙이기/ })
-    expect(within(form).getByLabelText('이름')).toHaveValue('센서 1')
+    expect(within(form).getByLabelText('이름')).toHaveValue('MS605-ABCDEF')
     await user.type(within(form).getByLabelText('새 사이트 이름'), 'Lab A')
     await user.type(within(form).getByLabelText('위치'), '북쪽 벽')
     await user.click(within(form).getByRole('button', { name: '저장' }))
@@ -83,7 +84,7 @@ describe('GatherScreen', () => {
     expect(calls[1]?.body).toEqual({
       device_id: deviceId(3),
       site_id: 'lab-a',
-      alias: '센서 1',
+      alias: 'MS605-ABCDEF',
       location: '북쪽 벽',
       notes: '',
     })
