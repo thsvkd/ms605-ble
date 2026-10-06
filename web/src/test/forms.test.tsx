@@ -34,6 +34,34 @@ function mockApi(responses: Record<string, Reply | Reply[]>) {
 const requests = (calls: Call[]) => calls.map((c) => `${c.method} ${c.path}`)
 
 describe('NameSensorForm saving', () => {
+  it('uses the device MAC suffix when the browser address is synthetic', async () => {
+    const user = userEvent.setup()
+    const fresh = sensor(3, {
+      live: live(3, { mac: '84:CC:A8:12:34:56', address: 'webbluetooth:synthetic-session', name: 'ms605' }),
+    })
+    resetStore(storeState({ sites: [SITE_A], sensors: [fresh] }))
+    const calls = mockApi({ 'POST /api/sensors': { status: 201, body: fresh } })
+    render(<GatherScreen />)
+    const form = screen.getByRole('form', { name: /센서 등록/ })
+    expect(within(form).getByLabelText('이름')).toHaveValue('MS605-123456')
+    await user.click(within(form).getByRole('button', { name: '저장' }))
+    expect(await screen.findByText(t.form.saved)).toBeInTheDocument()
+    expect(calls[0]?.body).toMatchObject({ alias: 'MS605-123456' })
+  })
+
+  it('uses the site sequence when browser Bluetooth has no MAC', async () => {
+    const user = userEvent.setup()
+    const fresh = sensor(3, { live: live(3, { address: 'webbluetooth:synthetic-session', name: 'ms605' }) })
+    resetStore(storeState({ sites: [SITE_A], sensors: [fresh] }))
+    const calls = mockApi({ 'POST /api/sensors': { status: 201, body: fresh } })
+    render(<GatherScreen />)
+    const form = screen.getByRole('form', { name: /센서 등록/ })
+    expect(within(form).getByLabelText('이름')).toHaveValue('센서 1')
+    await user.click(within(form).getByRole('button', { name: '저장' }))
+    expect(await screen.findByText(t.form.saved)).toBeInTheDocument()
+    expect(calls[0]?.body).toMatchObject({ alias: '센서 1' })
+  })
+
   it('keeps the MAC default across site changes and saves the user override after live updates', async () => {
     const user = userEvent.setup()
     const fresh = sensor(3, { live: live(3, { address: '02:00:00:ab:12:cd' }) })
@@ -44,8 +72,7 @@ describe('NameSensorForm saving', () => {
     }))
     const calls = mockApi({ 'POST /api/sensors': { status: 201, body: fresh } })
     render(<GatherScreen />)
-    await user.click(screen.getByRole('button', { name: '이름 붙이기' }))
-    const form = screen.getByRole('form', { name: /이름 붙이기/ })
+    const form = screen.getByRole('form', { name: /센서 등록/ })
     const alias = within(form).getByLabelText('이름')
     expect(alias).toHaveValue('MS605-AB12CD')
     await user.selectOptions(within(form).getByLabelText('사이트'), 'lab-b')
@@ -69,8 +96,7 @@ describe('NameSensorForm saving', () => {
       'POST /api/sensors': [FAIL, { status: 201, body: sensor(3, { registry: registry(SITE_A, '센서 1') }) }],
     })
     render(<GatherScreen />)
-    await user.click(screen.getByRole('button', { name: '이름 붙이기' })) // items start folded
-    const form = screen.getByRole('form', { name: /이름 붙이기/ })
+    const form = screen.getByRole('form', { name: /센서 등록/ })
     await user.type(within(form).getByLabelText('새 사이트 이름'), 'Lab A')
     await user.click(within(form).getByRole('button', { name: '저장' }))
     expect(await within(form).findByRole('alert')).toBeInTheDocument()
@@ -91,14 +117,45 @@ describe('NameSensorForm saving', () => {
     )
     const calls = mockApi({ 'POST /api/sensors': { status: 201, body: sensor(3) } })
     render(<GatherScreen />)
-    await user.click(screen.getByRole('button', { name: '이름 붙이기' })) // items start folded
-    const form = screen.getByRole('form', { name: /이름 붙이기/ })
+    const form = screen.getByRole('form', { name: /센서 등록/ })
     await user.selectOptions(within(form).getByLabelText('사이트'), '__new__')
     await user.type(within(form).getByLabelText('새 사이트 이름'), '  lab b ')
     await user.click(within(form).getByRole('button', { name: '저장' }))
     expect(await screen.findByText(t.form.saved)).toBeInTheDocument()
     expect(requests(calls)).toEqual(['POST /api/sensors'])
     expect(calls[0]?.body).toMatchObject({ site_id: 'lab-b', alias: 'MS605-000003 2' })
+  })
+
+  it('moves only untouched sibling forms to the first created site', async () => {
+    const user = userEvent.setup()
+    resetStore(storeState({
+      sites: [],
+      gather: { gathering: true, connecting: [] },
+      sensors: [sensor(1, { live: live(1) }), sensor(2, { live: live(2) }), sensor(3, { live: live(3) })],
+    }))
+    mockApi({
+      'POST /api/sites': { status: 201, body: SITE_A },
+      'POST /api/sensors': { status: 201, body: sensor(1, { registry: registry(SITE_A, '센서 1') }) },
+    })
+    render(<GatherScreen />)
+    const first = screen.getByRole('form', { name: new RegExp(bleName(1)) })
+    const untouched = screen.getByRole('form', { name: new RegExp(bleName(2)) })
+    const edited = screen.getByRole('form', { name: new RegExp(bleName(3)) })
+    await user.type(within(first).getByLabelText('새 사이트 이름'), 'Lab A')
+    await user.clear(within(edited).getByLabelText('이름'))
+    await user.type(within(edited).getByLabelText('이름'), '내 센서')
+    await user.type(within(edited).getByLabelText('새 사이트 이름'), '별도 사이트')
+    await user.click(within(first).getByRole('button', { name: '저장' }))
+
+    act(() => {
+      useStore.getState().applyMessage({ type: 'sites', seq: 11, ts: NOW_S, data: { sites: [SITE_A] } })
+    })
+
+    expect(within(untouched).getByLabelText('사이트')).toHaveValue('lab-a')
+    expect(within(untouched).queryByLabelText('새 사이트 이름')).not.toBeInTheDocument()
+    expect(within(edited).getByLabelText('사이트')).toHaveValue('__new__')
+    expect(within(edited).getByLabelText('새 사이트 이름')).toHaveValue('별도 사이트')
+    expect(within(edited).getByLabelText('이름')).toHaveValue('내 센서')
   })
 })
 

@@ -101,6 +101,32 @@ PUSH_TRIGGER_SRC = 0x00  # triggerSrc on unsolicited device->app pushes
 ADV_COMPANY_ID = 0xFFFF
 NAME_PREFIXES = ("RFBL_", "MRBL_")
 
+
+def decode_device_mac(value: bytes | None) -> str | None:
+    """Decode the observed ten-byte manufacturer identity record.
+
+    Experimental MS605 layout: two prefix bytes, six MAC bytes, two opaque
+    bytes. Accept only the observed format and Meross OUI; unknown firmware
+    formats remain unavailable rather than being guessed as MAC addresses.
+    """
+    if value is None or len(value) != 10 or value[:5] != bytes.fromhex("1c00c4e7ae"):
+        return None
+    return value[2:8].hex(":").upper()
+
+
+def advertised_mac(manufacturer_data: dict[int, bytes]) -> str | None:
+    """Read a MAC from the observed MS605 manufacturer advertisement layout."""
+    value = manufacturer_data.get(ADV_COMPANY_ID, b"")
+    if (
+        len(value) != 23
+        or value[:3] != bytes.fromhex("c01801")
+        or value[4:6] != bytes.fromhex("1a04")
+        or value[10:12] != bytes.fromhex("190a")
+    ):
+        return None
+    return decode_device_mac(value[12:22])
+
+
 MAGIC_HEAD = b"\x55\xaa"
 MAGIC_TAIL = b"\xaa\x55"
 

@@ -1,5 +1,6 @@
 import { useStore } from '../store/store'
 import { errorText, t } from '../strings'
+import { BluetoothError, requestBrowserSensor } from './bluetooth'
 import type {
   ApplyIn,
   ApplyJobView,
@@ -86,7 +87,20 @@ export const updateSensor = (deviceId: string, body: Partial<SensorUpdate>) =>
 
 export const deleteSensor = (deviceId: string) => request<void>('DELETE', `/api/sensors/${enc(deviceId)}`)
 
-export const startGather = () => request<GatherStatus>('POST', '/api/gather/start')
+export async function startGather(): Promise<GatherStatus> {
+  const server = useStore.getState().server
+  if (!server) throw new BluetoothError(t.bluetooth.serverLost)
+  const transport = (server as typeof server & { ble_transport?: 'browser' | 'server' }).ble_transport ?? 'browser'
+  if (server.sim || transport === 'server') return request<GatherStatus>('POST', '/api/gather/start')
+  const session = await requestBrowserSensor()
+  if (!session) return useStore.getState().gather
+  try {
+    return await request<GatherStatus>('POST', '/api/gather/start')
+  } catch (error) {
+    session.close()
+    throw error
+  }
+}
 
 export const stopGather = () => request<GatherStatus>('POST', '/api/gather/stop')
 
@@ -152,5 +166,6 @@ export const deviceHistory = (deviceId: string, kind: DeviceHistoryKind, detail 
 
 /** The words for a failed request (any thrown value). */
 export function failureText(e: unknown): string {
+  if (e instanceof BluetoothError) return e.message
   return e instanceof ApiRequestError ? errorText(e.code, e.message) : t.error.internal
 }

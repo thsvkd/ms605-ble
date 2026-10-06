@@ -34,6 +34,7 @@ ms605/gui/
   server.py        create_app(), 인증·Host·Origin 검사, REST 라우트, 오류 처리, 정적 파일
   ws.py            Hub(이벤트 → 메시지, 클라이언트 큐, seq), /ws 핸들러
   cli.py           add_parser(sub), run_gui(args, ...) — `ms605 gui`
+  tls.py           기본 HTTPS용 로컬 CA·SAN 서버 인증서 생성/재사용
   static/          빌드된 SPA (커밋한다. 직접 고치지 않는다)
 web/
   package.json, package-lock.json, tsconfig.json, vite.config.ts, index.html
@@ -126,17 +127,22 @@ export default defineConfig({
   build: { outDir: '../ms605/gui/static', emptyOutDir: true, assetsDir: 'assets' },
   server: {
     port: 5173,
+    https: { cert, key }, // gui_tls/cert.pem, key.pem을 읽은 Buffer
     proxy: {
-      '/api': { target: 'http://127.0.0.1:8605', changeOrigin: true, configure: dropOrigin },
-      '/ws': { target: 'ws://127.0.0.1:8605', ws: true, changeOrigin: true, configure: dropOrigin },
+      '/api': { target: 'https://127.0.0.1:8605', agent, changeOrigin: true, configure: dropOrigin },
+      '/ws': { target: 'wss://127.0.0.1:8605', agent, ws: true, changeOrigin: true, configure: dropOrigin },
     },
   },
   test: { environment: 'jsdom', setupFiles: ['src/test/setup.ts'] },
 })
 ```
 
-개발 흐름: `uv run ms605 gui --sim 3`을 띄우고, 출력된 `http://127.0.0.1:8605/?t=…`를 한 번 열어 쿠키를 받은 뒤
-`npm run dev`의 `http://127.0.0.1:5173/`을 연다. 쿠키는 포트를 가리지 않으므로 5173에도 실리고, `changeOrigin`이
+개발 흐름: 먼저 `uv run ms605 gui --sim 3`을 띄워 인증서를 생성하고 출력된 `ca.pem`을 접속 기기에 신뢰 등록한다.
+출력된 `https://127.0.0.1:8605/?t=…`를 한 번 열어 쿠키를 받은 뒤
+`npm run dev`의 `https://127.0.0.1:5173/`을 연다. Vite는 `<data_root>/cal_results/gui_tls/`의 인증서/키를
+읽고, `agent = new https.Agent({ ca })`로 백엔드 인증서를 검증한다. 인증서가 없으면 백엔드를 먼저 실행하라는 오류를 낸다.
+`MS605_DATA_DIR`을 지정했다면 두 터미널에서 같은 값을 사용한다. 테스트/빌드는 인증서 없이 실행된다.
+쿠키는 포트를 가리지 않으므로 5173에도 실리고, `changeOrigin`이
 Host를 `127.0.0.1:8605`로 바꾸므로 쿠키 이름(4.2절)과 Host 검사가 맞는다. 프록시는 `Origin`을 지운다(없는 Origin은 허용, 4.3절).
 
 ### 3.3 정적 파일 배포
@@ -149,8 +155,9 @@ Host를 `127.0.0.1:8605`로 바꾸므로 쿠키 이름(4.2절)과 Host 검사가
 
 ### 4.1 토큰
 
-- `run_gui()`가 실행할 때마다 `secrets.token_urlsafe(32)`로 만든다. 메모리에만 있고 파일·로그에 남기지 않는다(터미널 출력 제외).
-- 수명은 프로세스 수명이다. 서버를 다시 띄우면 이전 토큰과 쿠키는 모두 무효가 된다.
+- `run_gui()`는 저장소의 `gui_access_token` 파일을 재사용한다. 없으면 `secrets.token_urlsafe(32)`로 생성하고 권한 0600으로 저장한다.
+  실기기는 `cal_results/`, 시뮬레이터는 `cal_results/sim/` 아래다. 손상·잘못된 권한·심볼릭 링크는 시작 오류로 처리한다.
+- 서버 재시작에도 같은 QR·토큰·기존 쿠키를 사용할 수 있다. 토큰을 교체하려면 서버 종료 후 파일을 삭제하고 다시 시작한다.
 - 비교는 `secrets.compare_digest`.
 
 ### 4.2 전달
@@ -158,7 +165,7 @@ Host를 `127.0.0.1:8605`로 바꾸므로 쿠키 이름(4.2절)과 Host 검사가
 | 경로 | 받는 방법 |
 |------|-----------|
 | 브라우저 첫 접속 | `GET <아무 비API 경로>?t=<token>`. 서버가 검사한 뒤 쿠키를 심고 `t`를 뺀 같은 경로로 `303` 리다이렉트한다(다른 쿼리는 유지. 경로 앞의 `/`는 하나로 줄인다. `//host/x`는 다른 사이트로 가는 주소이기 때문이다). `t`가 틀리면 쿠키 없이 같은 리다이렉트만 한다. SPA가 401을 받아 안내 화면을 띄운다 |
-| 브라우저 이후 요청 | 쿠키 `ms605_token_<port>`. `HttpOnly; SameSite=Lax; Path=/`, 만료 없음(브라우저 세션 쿠키). `<port>`는 요청 Host 헤더의 포트(없으면 80) |
+| 브라우저 이후 요청 | 쿠키 `ms605_token_<port>`. `HttpOnly; SameSite=Lax; Path=/`, HTTPS 요청에서는 `Secure`, 만료 없음(브라우저 세션 쿠키). `<port>`는 요청 Host 헤더의 포트(없으면 80) |
 | 스크립트·테스트 | `Authorization: Bearer <token>` (REST와 WS 핸드셰이크 모두) |
 
 - 쿠키 이름에 포트를 넣는 이유: 쿠키는 포트를 가리지 않으므로, 같은 컴퓨터에서 두 서버를 띄우면 서로의 쿠키를 덮어쓴다.
@@ -176,8 +183,8 @@ Host를 `127.0.0.1:8605`로 바꾸므로 쿠키 이름(4.2절)과 Host 검사가
    뗀 것이다(브라우저는 Host를 소문자로 보내고, 미들웨어는 대소문자를 가린다). 어긋나면 `400` 평문
    `Invalid host header`(미들웨어 기본 동작, JSON 아님). DNS rebinding을 막는다. `/ws` 핸드셰이크는 거절 응답 대신
    accept 전에 `close(1008)`로 막는다(uvicorn은 HTTP 403으로 답한다. 거절 응답은 uvicorn이 매번 ERROR로 기록해 QR이 있는 터미널을 덮는다).
-2. **Origin**: `/api/*`의 `GET/HEAD/OPTIONS`가 아닌 요청과 `/ws`에서, `Origin` 헤더가 **있으면**
-   `f"http://{request.headers['host']}"`와 정확히 같아야 한다(`Origin: null` 포함 다르면 거절). REST는
+2. **Origin**: `/api/*`의 `GET/HEAD/OPTIONS`가 아닌 요청과 `/ws`, `/ws/ble`에서, `Origin` 헤더가 **있으면**
+   요청의 스킴과 Host(`http://...` 또는 TLS의 `https://...`, WS도 대응하는 HTTP 스킴)와 정확히 같아야 한다(`Origin: null` 포함 다르면 거절). REST는
    `403 forbidden_origin`, WS는 accept 후 즉시 `close(4403)`. `Origin`이 없는 요청(테스트, curl, Vite 프록시)은 통과한다.
 3. **토큰**: `/api/health`, 정적 파일, SPA 셸(`/`와 비API 경로)은 토큰 없이 연다. 그 밖의 `/api/*`는 쿠키 또는 Bearer가
    맞아야 하고, 아니면 `401` + `ApiError{code:"unauthorized"}`. 토큰이 맞아도 `Content-Length`가 512 KiB(`MAX_BODY_BYTES`)를 넘으면
@@ -188,29 +195,39 @@ Host를 `127.0.0.1:8605`로 바꾸므로 쿠키 이름(4.2절)과 Host 검사가
 CORS 미들웨어는 두지 않는다(같은 출처만 쓴다). FastAPI의 `/docs`, `/redoc`, `/openapi.json`은 끈다
 (`docs_url=None, redoc_url=None, openapi_url=None`). 타입의 기준은 `openapi_document()`다.
 
-알려진 한계: `--lan`은 HTTP이므로 같은 네트워크에서 토큰을 엿볼 수 있다. v1은 신뢰하는 LAN에서만 쓴다고 보고, HTTPS는 범위 밖이다.
+`gui`의 주 리스너는 HTTPS다. 자동 인증서를 사용할 때 HTTPS로 접속하는 각 기기에 출력된 `ca.pem`을 최초 한 번 신뢰 등록한다.
+`--lan`에서는 같은 앱·토큰·센서 세션을 공유하는 HTTP 리스너를 추가한다(기본 주 포트 + 1, `--share-port`로 변경).
+LAN QR은 이 HTTP 주소를 담으므로 같은 네트워크의 손님은 인증서 설치나 tailnet 가입 없이 접속한다.
+서버 컴퓨터의 HTTP `localhost`는 Web Bluetooth를 사용할 수 있다. 원격 HTTP 클라이언트는 새 BLE 기기를
+선택할 수 없지만, 다른 브라우저가 유지하는 연결 센서의 모니터·설정·보정 API와 WebSocket은 사용할 수 있다.
+HTTPS와 HTTP는 각 포트의 인증 쿠키를 사용하며 두 주소 모두 토큰 교환 및 동일 출처 검사를 유지한다.
+시스템 신뢰 저장소는 앱이 변경하지 않는다. `ca-key.pem`과 `key.pem`은 공유하지 않는다.
 
 ### 4.4 터미널 출력과 QR
 
 `run_gui()`는 서버가 listen을 시작한 뒤(8.2절 5단계) 아래를 `print(..., flush=True)`로 출력한다. **첫 줄의 형식은 고정**이다(e2e 테스트가 파싱한다).
 
 ```
-ms605 gui: http://127.0.0.1:8605/?t=<token>
+ms605 gui: https://127.0.0.1:8605/?t=<token>
+HTTPS 신뢰 인증서: <data_root>/cal_results/gui_tls/ca.pem   (자동 인증서일 때)
+최초 한 번, 접속할 각 기기에 이 CA 인증서를 신뢰 등록하세요. 개인 키 파일은 공유하지 마세요.
 시뮬레이터: 센서 3대, 속도 x20                      (--sim일 때만)
-LAN 주소: http://192.0.2.10:8605/?t=<token>         (--lan일 때만)
-<QR: LAN 주소 URL 전체>                              (--lan일 때만)
+LAN 주소: https://192.0.2.10:8605/?t=<token>        (--lan일 때만)
+로컬 HTTP 주소: http://127.0.0.1:8606/?t=<token>   (--lan일 때만)
+LAN 공유 주소: http://192.0.2.10:8606/?t=<token>   (--lan일 때만)
+<QR: LAN 공유 주소 URL 전체>                         (--lan일 때만)
 폰에서 열리지 않으면(VPN 등) --lan-host <이 컴퓨터의 Wi-Fi 주소>로 다시 실행하세요.   (--lan이고 --lan-host가 없을 때만)
-Tailnet 주소: http://100.64.0.10:8605/?t=<token>      (--lan이고 Tailscale이 연결되어 있을 때)
-Tailnet 주소: http://sensor.test-tailnet.ts.net:8605/?t=<token>  (MagicDNS도 켜져 있을 때)
+Tailnet 주소: https://100.64.0.10:8605/?t=<token>     (--lan이고 Tailscale이 연결되어 있을 때)
+Tailnet 주소: https://sensor.test-tailnet.ts.net:8605/?t=<token> (MagicDNS도 켜져 있을 때)
 주의: 이 주소를 가진 사람은 누구나 센서를 조작할 수 있습니다. 공유하지 마세요.   (--lan일 때만)
 종료하려면 Ctrl-C를 누르세요.
 ```
 
-- QR 내용은 LAN URL 문자열 그대로(`http://<lan-ip>:<port>/?t=<token>`)다. `segno.make(url, error="m").terminal(out=sys.stdout, compact=True)`.
+- QR 내용은 HTTP 공유 URL 그대로(`http://<lan-host>:<share-port>/?t=<token>`)다. `segno.make(share_url, error="m").terminal(out=sys.stdout, compact=True)`. HTTPS LAN 주소는 별도로 출력한다.
 - LAN IP: `--lan-host ADDR`가 있으면 그것(소문자로). 없으면 UDP 소켓을 `("192.0.2.1", 9)`에 `connect()`한 뒤 `getsockname()[0]`(패킷은 나가지 않는다).
   기본 경로의 주소이므로 VPN이나 유선·무선이 함께 켜진 노트북에서는 폰이 닿지 않는 주소일 수 있다. 그래서 `--lan-host`를 둔다. 실패하거나 `127.`로
-  시작하면 `LAN 주소를 찾지 못했습니다. 같은 네트워크의 기기에서 이 주소로 접속해 보세요: http://<호스트 이름>.local:<port>/?t=<token>`을
-  출력하고 QR은 생략한다(IP 주소는 Host 검사를 통과하지 못하므로 안내하지 않는다).
+  시작하면 `LAN 주소를 찾지 못했습니다. 같은 네트워크의 기기에서 이 주소로 접속해 보세요: https://<호스트 이름>.local:<port>/?t=<token>`을
+  출력하고 공유 QR에는 `http://<호스트 이름>.local:<share-port>/?t=<token>`을 넣는다.
 - `--lan` 없이 QR은 출력하지 않는다(폰에서 `127.0.0.1`은 의미가 없다).
 - Tailnet: `tailscale status --json --peers=false`를 최대 2초 동안 실행하고 `BackendState == "Running"`일 때만
   `TailscaleIPs`의 IPv4 주소를 쓴다. `CurrentTailnet.MagicDNSEnabled == true`이면 `Self.DNSName`의 끝 `.`을
@@ -318,6 +335,7 @@ class LiveInfo(Out):
     address: str  # this host's BLE address
     name: str | None  # BLE advertised name
     link: LinkState
+    auto_reconnect: bool  # server remembers this session and retries automatically
     busy: str | None  # "identify" | "read" | "apply" | "calibration" | None
     lost_reason: str
     battery_pct: int | None  # read when identified in this run
@@ -341,7 +359,7 @@ class SnapshotSummary(Out):
 class SensorView(Out):
     device_id: str
     registry: RegistryInfo | None  # None: not registered
-    live: LiveInfo | None  # None: no session in this run (never gathered, or released)
+    live: LiveInfo | None  # None: no remembered/gathered session, or explicitly released
     last_calibration: CalibrationSummary | None
     last_snapshot: SnapshotSummary | None
 
@@ -372,6 +390,7 @@ class ServerInfo(Out):
     version: str
     lan: bool
     sim: SimInfo | None
+    ble_transport: Literal["browser", "server"] = "browser"
 
 
 class StateSnapshot(Out):
@@ -742,26 +761,90 @@ e2e 테스트와 데모가 "사람이 버튼을 누르는" 일을 이것으로 �
 - 끊긴 동안 화면은 마지막 상태를 흐리게(투명도 0.6) 보여 주고 상단 배너를 띄운다. 두 번 연속 실패하면 배너 문구를 "서버에 연결할 수 없습니다"로 바꾼다.
 - 서버를 다시 띄우면 토큰이 바뀌므로 재접속은 4401로 끝나고 "접속 권한 없음" 화면이 된다. 이 화면은 "서버가 다시 시작되었을 수 있습니다"를 함께 안내한다.
 
+### 7.7 클라이언트 Bluetooth 전송 (`/ws/ble`)
+
+기본 실기기 GUI는 접속한 브라우저 기기의 Web Bluetooth를 사용한다.
+`--ble-transport server`에서는 서버 어댑터를 스캔하고 연결하며, 클라이언트에는 Web Bluetooth가 필요 없다.
+Python 코어의 프레임 파서·식별·keep-alive·보정·설정 적용은 유지하고, GATT I/O만 브라우저에 위임한다.
+시뮬레이터와 다른 CLI 명령은 기존 전송을 사용한다.
+
+- `api/client.ts.startGather()`는 클릭에서 즉시 `navigator.bluetooth.requestDevice()`를 호출한다.
+  서비스 UUID 또는 `RFBL_`/`MRBL_` 이름으로 선택하고 서비스 접근을 허용받는다. 선택 취소는 요청 없이 끝난다.
+  이후 `/ws/ble`에 연결하고 `ready`를 받은 뒤 기존 `POST /api/gather/start`를 호출한다.
+- `/ws/ble`은 기존 Host·Origin·토큰 검사를 적용한다. 센서마다 별도 소켓이다. 브라우저는
+  `{"type":"hello","name":"RFBL_ABCDEF"}`(이름이 없으면 null)를 보낸다. 서버는
+  `{"type":"ready"}`로 응답하고 `webbluetooth:<서버 생성 UUID>` 주소의 BLEDevice를 만든다.
+  주소는 MAC이 아니다. MAC을 얻으면 소문자 MAC hex를 device_id로 쓰며,
+  MAC이 없을 때만 기존 tag30 응답으로 fallback한다(영구 식별 보장 없음).
+- 서버 요청: `{"type":"request","id":1,"op":"connect"}`. op는 `connect`, `start_notify`, `write`, `disconnect`.
+  `write`에는 `data:[85,170,...]` 바이트 목록이 붙는다. 브라우저는 고정된 MS605 서비스·특성만 사용하며
+  `writeValueWithoutResponse()`로 보낸다. 응답은 `{"type":"result","id":1}` 또는 `error` 문자열을 추가한다.
+- 알림은 `{"type":"notify","data":[85,170,...]}`, GATT 끊김은 `{"type":"disconnected"}`.
+  DataView의 실제 offset/length만 전달한다. 서버의 기존 FrameReassembler/CRC 검사·명령 응답 매칭을 사용한다.
+  JSON 메시지는 8192바이트, 바이트 목록은 512개, 이름은 128자까지다. 잘못된 메시지는 1008로 닫고,
+  RPC에는 제한 시간이 있다. 브라우저 GATT 작업도 10초를 넘으면 bridge를 닫아 재선택할 수 있게 한다.
+  소켓 유실은 기다리는 명령을 실패시키고 세션을 LOST로 바꾼다.
+- `BrowserBluetooth.scan()`은 연결된 브라우저 peer 목록만 반환한다. `client_factory`가 기존 Fleet/DeviceSession에
+  Bleak 호환 어댑터를 제공한다. GATT 끊김 후 소켓은 유지되어 모으는 중이면 기존 regather/reconnect 흐름이
+  같은 브라우저에 connect RPC를 보낸다. 명시적 세션 해제는 해당 peer 소켓까지 닫는다.
+- 모으기를 끝내도 연결된 센서는 유지된다. 다른 화면으로 이동해도 같은 탭의 연결은 유지되지만,
+  탭 닫기·새로고침·서버 재시작에는 끊기므로 다시 선택해야 한다. 클라이언트와 탭을 작업 동안 열어 두고 절전하지 않는다.
+- Web Bluetooth는 HTTPS(클라이언트가 신뢰하는 인증서) 또는 같은 기기의 localhost 보안 컨텍스트가 필요하다.
+  원격 LAN/tailnet의 일반 HTTP는 사용할 수 없다. 미지원 브라우저/비보안 접속은 안내하고 실기기 모으기를 막는다.
+  Chrome/Edge 등 Web Bluetooth 지원 브라우저를 사용한다. Safari/Firefox 및 기본 iPhone/iPad 브라우저는 지원하지 않는다.
+  참고: [Chrome Web Bluetooth 문서](https://developer.chrome.com/docs/capabilities/bluetooth),
+  [Web Bluetooth 명세](https://webbluetoothcg.github.io/web-bluetooth/).
+- `live.mac`은 확인된 제조사 MAC이며 호스트 연결 주소 `live.address`와 별개다.
+  기본 별명과 미등록 센서 표시명은 MAC 끝 6자리를 쓴 `MS605-XXXXXX`를 우선한다.
+  서버 전송은 제조사 광고를 직접 읽는다. 브라우저 전송은 지원되는 경우에만
+  `watchAdvertisements`로 최대 3초 동안 광고를 기다려 `hello.manufacturer_data`에 전달한다.
+  이 필드는 회사 코드 0xFFFF의 31바이트 이하 목록이며, 구형 hello 메시지도 허용한다.
+  광고 API 미지원·거부·시간 초과는 연결을 막지 않으며 MAC은 null일 수 있다.
+  tag30은 실측에서 바뀌었으므로 기본 이름에 사용하지 않는다.
+  등록 센서는 device_id로 매칭한다. 이전 tag30 키에서 MAC 키로 자동 이전하지는 않는다. MAC만 가진 pending 가져오기 항목은 실제 MAC을 노출하는 전송에서만 자동 해결한다.
+
 ## 8. 서버 수명주기와 CLI
 
 ### 8.1 `ms605 gui`
 
 ```
-ms605 [--scan-secs S] [--connect-timeout T] gui [--lan [--lan-host ADDR]] [--port 8605] [--sim N [--speed K]]
+ms605 [--scan-secs S] [--connect-timeout T] gui [--lan [--lan-host ADDR]] [--port 8605] [--share-port PORT] [--ble-transport browser|server] [--sim N [--speed K]] [--ssl-certfile PATH --ssl-keyfile PATH]
 ```
 
-`make gui ARGS="..."`는 위 명령에 `--lan`을 기본으로 추가해 LAN·tailnet 접속을 허용한다.
+`make gui ARGS="..."`는 위 명령에 `--lan --ble-transport server`를 기본으로 추가해 서버 Bluetooth와 LAN·tailnet 접속을 허용한다.
 `uv run ms605 gui`는 기존처럼 localhost 전용이다.
 Make의 `scripts/gui.py`는 인자를 먼저 검증한 뒤 선택한 포트의 리스너를 `lsof`로 찾는다.
 `ps`로 이 프로젝트 Python 환경의 현재 사용자 `ms605 gui` 또는 `python -m ms605.cli.cli gui` 진입점임을 확인한 프로세스에만
 `SIGTERM`을 보내고, 프로세스 종료와 포트 해제를 최대 10초 기다린 뒤 `scripts/run.sh gui --lan ...`을 실행한다.
 다른 프로세스나 확인할 수 없는 소유자는 종료하지 않는다. `--port 0`, 도움말, 잘못된 인자는 기존 서버를 종료하지 않는다.
-재시작 처리는 실행 스크립트에만 있으며 앱 CLI와 서버의 수명주기는 바꾸지 않는다.
+기본 포트에서는 기존 서버 프로세스를 교체한다. HTTPS와 HTTP 리스너 두 개는 같은 프로세스·앱을 공유한다.
+서버 Bluetooth 모드는 저장소의 `gui_server.lock` 배타 잠금을 프로세스 수명 동안 유지한다.
+같은 데이터 디렉터리의 다른 서버 Bluetooth 인스턴스는 포트가 달라도 종료 코드 2로 거절한다.
+브라우저 전송 또는 서로 다른 데이터 디렉터리는 별도로 실행할 수 있다.
+잠금 파일이 남아 있어도 OS 잠금은 종료 시 해제되므로 정상 재실행을 막지 않는다.
+
+서버 Bluetooth 모드의 lifespan은 `fleet.start_recovery(interval=1.0)`를 한 번 시작한다.
+`connections.json`에 호스트별 device_id·주소·이름·MAC을 저장하며 미등록 센서도 복원한다.
+파일에 현재 호스트가 없는 최초 실행은 레지스트리의 같은 호스트 주소를 가져온다.
+연결이 없는 기억된 센서만 1초 주기로 스캔하고 재연결하며, 진행 중인 연결·작업과 겹치지 않는다.
+명시적 센서 추가 중에는 그 스캔이 복구도 담당한다. 스캔/연결 자체 지연은 1초보다 길 수 있다.
+센서 버튼 창이 닫혀 광고하지 않으면 버튼 조작이 필요하다. 새 센서는 명시적 센서 추가로만 연결한다.
+탭 닫기는 서버 BLE 연결을 끊지 않는다. 정상 종료는 연결 목록을 보존하고 명시적 `release`는 해당 목록에서 제거한다.
+`live.auto_reconnect`가 true인 LOST/DISCONNECTED 세션은 화면에서 자동 복구 안내를 표시한다.
+브라우저 Bluetooth 모드는 탭의 BLE 소유권 제약을 그대로 따른다.
 
 - `ms605/gui/cli.py`:
   - `add_parser(sub) -> None`: `gui` 서브커맨드를 등록한다. 다른 서브커맨드가 전역 옵션을 다루는 방식(`_add_target_args` 등)을 그대로 따른다.
     `--port`: int 0~65535(0 = 빈 포트). `--sim`: int 1~32. `--speed`: float > 0, 기본 1.0, `--sim` 없이 주면 argparse 오류(종료 코드 2). `--lan-host`: 문자열(4.4절), `--lan` 없이 주면 argparse 오류(종료 코드 2).
+    `--share-port`: `--lan`에서만 사용, 0~65535(0 = 빈 포트). 기본은 HTTPS 실제 포트+1이며,
+    `--port 0` 또는 HTTPS 포트 65535이면 빈 포트를 선택한다.
+    `--ble-transport`: `browser`(CLI 기본) 또는 `server`(Make 기본).
     `--address`는 쓰지 않는다.
+    기본 HTTPS이며 `--ssl-certfile`/`--ssl-keyfile`을 함께 지정하면 자동 인증서 대신 사용한다.
+    미지정 시 OpenSSL로 `<data_root>/cal_results/gui_tls/`에 로컬 CA(10년)와 서버 인증서(90일)를 생성한다.
+    SAN에 Host 허용 목록 전체를 넣는다. 유효한 CA를 재사용하고 서버 인증서가 만료 7일 이내이거나 새 호스트를
+    포함하지 못하면 서버 인증서만 재발급한다. 키는 0600, 디렉터리는 0700이며 임시 디렉터리에서 생성한 뒤 교체한다.
+    원격 Web Bluetooth에는 이 CA의 클라이언트 신뢰 등록이 필요하다. 생성 실패는 stderr 안내·종료 코드 2이고 HTTP로 폴백하지 않는다.
   - `async def run_gui(args, *, scan_secs: float, connect_timeout: float) -> int`.
   - 모듈 최상위에서 fastapi/uvicorn/segno를 import하지 않는다(다른 CLI 명령의 시작 시간을 늘리지 않게). `run_gui` 안에서 import한다.
 - `ms605/cli/cli.py`에서 바꾸는 곳은 두 곳뿐이다: `build_parser()`에서 `add_parser(sub)`, `main()`에서
@@ -769,26 +852,31 @@ Make의 `scripts/gui.py`는 인자를 먼저 검증한 뒤 선택한 포트의 �
 
 ### 8.2 `run_gui()` 순서
 
-1. `token = secrets.token_urlsafe(32)`.
+1. 인자를 검증한다. 토큰은 아래 리스너·인증서 준비 후 저장 파일에서 읽거나 처음 생성한다.
 2. 저장소: `--sim`이면 `Storage(root=data_root() / "cal_results" / "sim")`(G8), 아니면 `Storage()`.
 3. `registry = Registry(storage)`. `StorageError`면 stderr에 `레지스트리 파일 오류: <메시지>`, 종료 코드 2(기존 CLI와 같다).
 4. Fleet:
-   - 실기기: `Fleet(registry, storage, scan_secs=scan_secs, connect_timeout=connect_timeout)`.
+   - 실기기 `browser` 모드: `BrowserBluetooth()`를 만들고 `Fleet(..., scan=browser_ble.scan, client_factory=browser_ble.client_factory)`.
+     같은 객체를 `create_app(browser_ble=...)`에 전달한다. 서버 radio에 접근하지 않는다.
+   - 실기기 `server` 모드: 기본 `Fleet`의 `MS605.scan`과 Bleak 클라이언트를 사용한다. 서버 Bluetooth 권한이 필요하다.
    - `--sim N --speed K`: `sim = SimFleet(N, speed=K)`, `Fleet(registry, storage, scan=sim.discover, client_factory=sim.client_factory,
      keepalive_interval=KEEPALIVE_INTERVAL_S / K, scan_secs=scan_secs, connect_timeout=connect_timeout)`.
      시뮬레이터의 유휴 끊김(30초)이 K배 빨라지므로 keep-alive도 같은 비율로 줄인다(코어 14장). 버튼 창(120초)도 120/K초가 된다.
 5. 소켓(G9): `socket.socket(AF_INET, SOCK_STREAM)`, `SO_REUSEADDR`, `bind(("0.0.0.0" if lan else "127.0.0.1", port))`, `listen(128)`.
    `OSError`면 `포트 <port>을(를) 열 수 없습니다: <오류>. --port로 다른 포트를 지정하세요.`, 종료 코드 2. 실제 포트는 `getsockname()[1]`.
-   listen을 먼저 하므로, 출력 직후의 접속은 uvicorn이 받을 때까지 백로그에서 기다린다.
-6. `allowed_hosts`(4.3절), `app = create_app(fleet, registry, storage, token, allowed_hosts=..., sim=sim, lan=lan)`.
+   `--lan`이면 HTTP 공유 소켓도 미리 bind/listen한다. 공유 포트 실패 시 첫 소켓을 닫고 종료한다.
+   두 소켓 모두 listen한 뒤 URL을 출력하므로 접속은 uvicorn이 받을 때까지 백로그에서 기다린다.
+6. `allowed_hosts`(4.3절), HTTPS 인증서 준비, `app = create_app(fleet, registry, storage, token, allowed_hosts=..., sim=sim, lan=lan, browser_ble=browser_ble, ble_transport=ble_transport)`.
 7. 4.4절 출력.
-8. `server = uvicorn.Server(uvicorn.Config(app, lifespan="on", log_level="warning", access_log=False, timeout_graceful_shutdown=5))`,
-   `try: await server.serve(sockets=[sock]) finally: await fleet.aclose()`(이미 닫혔으면 바로 끝난다). 정상 종료는 0이다. Ctrl-C는 uvicorn이 받아 정리한 뒤
-   신호를 다시 올릴 수 있으므로 종료 코드는 0 또는 130이다(둘 다 정상).
+8. 같은 `app`을 사용하는 HTTPS uvicorn 서버(`lifespan="on"`)와 선택적 HTTP 공유 서버
+   (`lifespan="off"`)를 `_serve_all()`에서 함께 실행한다. lifespan 시작/정리는 한 번만 수행한다.
+   한 서버가 종료되면 나머지에도 `should_exit`를 설정하고 기다린다. 마지막으로 `fleet.aclose()`와
+   리스너 소켓 close를 수행한다. 정상 반환은 0이며, Ctrl-C 신호 재전달 시 130도 정상 종료다.
 
 ### 8.3 이벤트 루프 하나
 
-- bleak, 코어, uvicorn, FastAPI 핸들러가 모두 `asyncio.run()`이 만든 **메인 스레드의 루프 하나**에서 돈다(코어 10장, bleak의 CoreBluetooth 백엔드도 이 루프를 쓴다).
+- 코어, 브라우저 전송 어댑터, uvicorn, FastAPI 핸들러가 모두 `asyncio.run()`이 만든 **메인 스레드의 루프 하나**에서 돈다.
+  `browser` 모드의 Bluetooth는 클라이언트에서, `server` 모드는 서버에서 동작한다.
 - 금지: `uvicorn.run()`(자기 루프를 만든다), uvloop, `workers`/`reload`, 스레드, `run_in_executor`, `asyncio.to_thread`,
   **`def`(동기) 라우트·의존성**. FastAPI는 동기 핸들러를 스레드 풀에서 돌리므로 코어 객체를 다른 스레드에서 건드리게 된다. 모든 핸들러는 `async def`다.
 - 레지스트리·저장소의 동기 파일 I/O는 루프에서 그대로 한다(코어 규칙과 같다, 파일이 작다).
@@ -809,6 +897,8 @@ def create_app(
     lan: bool = False,
     static_dir: Path | None = None,     # None: 패키지의 static/
     ws_queue_size: int = 512,
+    browser_ble: BrowserBluetooth | None = None,
+    ble_transport: Literal["browser", "server"] = "browser",
 ) -> FastAPI: ...
 ```
 
@@ -925,6 +1015,8 @@ busy 문구: `identify` 확인 중, `read` 읽는 중, `apply` 설정 적용 중
 - `NameSensorForm`: 이름(별명), `SitePicker`, 위치. 버튼 `나중에`(접기) / `저장`(주). 대시보드의 `NameSensorDialog`도 이 폼을 쓴다.
 - `SitePicker`: 기존 사이트 `<select>` + 마지막 항목 `새 사이트…`(고르면 이름 입력칸이 나온다).
 - `GatherToggle`: 이 화면의 유일한 주 동작. 폰에서는 하단 탭 바 위에 고정, 높이 64px, 전체 폭. `센서 모으기 시작` / `모으기 끝내기`.
+  실기기는 브라우저 센서 선택 창을 열고, 모으는 중에는 `센서 추가`를 제공한다. 서버 권한 대신 클라이언트 브라우저의
+  Bluetooth 권한과 HTTPS/지원 환경을 안내한다.
 - `ImportSensorInfo`: 접힌 보조 영역 `목록 파일 가져오기 (yaml)`. 파일 선택(`accept=".yaml,.yml,.txt"`), 사이트(`SitePicker`, 비워 두면 파일 이름에서),
   `가져오기` 버튼, 결과 문구.
 - `SimPanel`: `server.sim`일 때만. 접힌 영역 `시뮬레이터`: 센서마다 `버튼 누르기 N`, `끊기 N`, 그리고 `모두 누르기`.

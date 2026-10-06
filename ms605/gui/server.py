@@ -16,6 +16,7 @@ from collections.abc import Collection, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Literal
 from urllib.parse import urlencode
 
 from fastapi import FastAPI, Request, WebSocket
@@ -37,6 +38,7 @@ from ms605.storage import Storage
 
 from .apply import DND_READ_TIMEOUT_S, SECTIONS, edit_sections, edit_to_changes, is_absolute, profile_view
 from .batch import MAX_SCHEDULE_AHEAD_S
+from .browser_ble import BrowserBluetooth
 from .schemas import (
     NEW_SITE_ID_PATTERN,
     ApiError,
@@ -167,7 +169,8 @@ def _token_ok(conn: HTTPConnection, token: str) -> bool:
 
 def _origin_ok(conn: HTTPConnection) -> bool:
     origin = conn.headers.get("origin")
-    return origin is None or origin == f"http://{conn.headers.get('host', '')}"
+    scheme = "https" if conn.scope.get("scheme") in ("https", "wss") else "http"
+    return origin is None or origin == f"{scheme}://{conn.headers.get('host', '')}"
 
 
 def _length_ok(conn: HTTPConnection) -> bool:
@@ -235,6 +238,8 @@ def create_app(
     lan: bool = False,
     static_dir: Path | None = None,
     ws_queue_size: int = 512,
+    browser_ble: BrowserBluetooth | None = None,
+    ble_transport: Literal["browser", "server"] = "browser",
 ) -> FastAPI:
     if registry is not fleet.registry or storage is not fleet.storage:
         raise ValueError("registry and storage must be the fleet's own")
@@ -243,13 +248,15 @@ def create_app(
     static_root = static_dir.resolve()
     sim_info = SimInfo(count=len(sim.devices), speed=sim.devices[0].speed) if sim and sim.devices else None
     speed = sim.devices[0].speed if sim and sim.devices else 1.0
-    server_info = ServerInfo(version=server_version(), lan=lan, sim=sim_info)
+    server_info = ServerInfo(version=server_version(), lan=lan, sim=sim_info, ble_transport=ble_transport)
     hub = Hub(fleet, server_info, queue_size=ws_queue_size, speed=speed)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         hub.attach()
         try:
+            if ble_transport == "server":
+                fleet.start_recovery()
             yield
         finally:
             hub.close_clients()
@@ -257,12 +264,15 @@ def create_app(
                 await hub.live.aclose()
                 await hub.batches.aclose()
                 await hub.applies.aclose()
+                if browser_ble is not None:
+                    await browser_ble.aclose()
                 await fleet.aclose()  # cancel an unfinished batch, stop gathering, release every link (D5)
             finally:
                 hub.detach()
 
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
     app.state.hub = hub
+    app.state.browser_ble = browser_ble
     app.add_middleware(_Guard, token=token)
     app.add_middleware(_TrustedHost, allowed_hosts=list(allowed_hosts))  # outermost: runs first
 
@@ -424,7 +434,10 @@ def create_app(
                 raise ApiFailure(409, "apply_active", f"in a settings apply: {', '.join(applying)}")
             if fleet.gathering:  # the button window outlasts the link: keep this gather run off them
                 released.update(fleet.sessions[i].address.lower() for i in ids)
+        addresses = [fleet.sessions[device_id].address for device_id in ids]
         await fleet.release(body.device_ids)
+        if browser_ble is not None:
+            await browser_ble.release(None if body.device_ids is None else addresses)
         hub.live.refresh(ids)  # release() leaves `sessions` only after the close events
         for device_id in ids:
             hub.mark_sensor(device_id)
@@ -812,6 +825,20 @@ def create_app(
 
     # -- WebSocket (7) --
 
+    @app.websocket("/ws/ble")
+    async def browser_ble_endpoint(ws: WebSocket) -> None:
+        await ws.accept()
+        if not _origin_ok(ws):
+            await ws.close(4403)
+            return
+        if not _token_ok(ws, token):
+            await ws.close(4401)
+            return
+        if browser_ble is None:
+            await ws.close(1008, "browser Bluetooth is not enabled")
+            return
+        await browser_ble.serve(ws)
+
     @app.websocket("/ws")
     async def ws_endpoint(ws: WebSocket) -> None:
         await ws.accept()  # then close with a reason code: a browser only sees 1006 for a refused handshake
@@ -888,7 +915,8 @@ def _spa_response(request: Request, token: str, static_root: Path) -> Response:
         response = RedirectResponse(location, status_code=303)
         if secrets.compare_digest(request.query_params["t"].encode(), token.encode()):
             response.set_cookie(
-                cookie_name(request.headers.get("host", "")), token, path="/", httponly=True, samesite="Lax"
+                cookie_name(request.headers.get("host", "")), token, path="/", httponly=True,
+                samesite="Lax", secure=request.url.scheme == "https",
             )
         return response
     relative = request.url.path.lstrip("/")

@@ -94,6 +94,7 @@ from .protocol import (
     FrameReassembler,
     ParsedFrame,
     Sensitivity,
+    advertised_mac,
     build_command,
     chunk_frame,
     msg_id_sequence,
@@ -132,6 +133,7 @@ class MS605:
                 "and still works."
             )
         self._address_or_device = address_or_device
+        self._mac = self.last_mac(address_or_device)
         self._chunk_size = chunk_size
         self._inter_chunk_delay = inter_chunk_delay
         # Seam for ms605.sim (and tests): builds the client instead of BleakClient.
@@ -169,6 +171,7 @@ class MS605:
     # scan(): bleak's BLEDevice does not carry one (it lives in the
     # advertisement data). Readings older than _SCAN_RSSI_MAX_AGE_S are ignored.
     _scan_rssi: dict[str, tuple[int, float]] = {}
+    _scan_mac: dict[str, str] = {}
     _SCAN_RSSI_MAX_AGE_S = 60.0
 
     @classmethod
@@ -188,7 +191,24 @@ class MS605:
             if is_ms605_advertisement(device.name, adv.service_uuids, adv.manufacturer_data):
                 matches.append(device)
                 cls._scan_rssi[device.address] = (adv.rssi, time.monotonic())
+                mac = advertised_mac(adv.manufacturer_data)
+                if mac:
+                    cls._scan_mac[device.address] = mac
+                else:
+                    cls._scan_mac.pop(device.address, None)
         return matches
+
+    @classmethod
+    def last_mac(cls, device: str | BLEDevice) -> str | None:
+        """Manufacturer-advertised MAC from a recent scan, not the host UUID."""
+        address = getattr(device, "address", device)
+        return cls._scan_mac.get(address) if cls.last_rssi(address) is not None else None
+
+    @property
+    def mac(self) -> str | None:
+        """Manufacturer MAC supplied by the browser bridge or native scan."""
+        self._mac = getattr(self._client, "mac", None) or self.last_mac(self._address_or_device) or self._mac
+        return self._mac
 
     @classmethod
     def last_rssi(cls, device: str | BLEDevice) -> int | None:

@@ -107,6 +107,24 @@ def test_origin_check_on_writes(gui):
     assert gui.get("/api/state", headers={"Origin": "http://evil.example"}).status_code == 200
 
 
+def test_https_origin_matches_secure_http_and_websockets(gui):
+    origin = "https://127.0.0.1:8605"
+    assert gui.client.post(f"{origin}/api/gather/stop", headers={**GUI_AUTH, "Origin": origin}).status_code == 200
+    assert gui.client.post(
+        f"{origin}/api/gather/stop", headers={**GUI_AUTH, "Origin": "http://127.0.0.1:8605"}
+    ).status_code == 403
+    with gui.client.websocket_connect("wss://127.0.0.1:8605/ws", headers={**GUI_AUTH, "Origin": origin}) as ws:
+        assert ws.receive_json()["type"] == "snapshot"
+
+
+def test_https_login_sets_a_secure_session_cookie(gui):
+    response = gui.client.get(f"https://127.0.0.1:8605/?t={GUI_TOKEN}", follow_redirects=False)
+    assert response.status_code == 303
+    assert "Secure" in response.headers["set-cookie"]
+    assert gui.client.get("https://127.0.0.1:8605/api/state").status_code == 200
+    assert gui.client.get("http://127.0.0.1:8605/api/state").status_code == 401
+
+
 def test_ws_without_token_closes_4401(gui):
     with gui.ws(auth=False) as ws, pytest.raises(WebSocketDisconnect) as info:
         ws.receive_json()

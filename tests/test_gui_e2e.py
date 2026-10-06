@@ -4,12 +4,14 @@ run). Every value is synthetic."""
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import os
 import queue
 import re
 import signal
+import ssl
 import subprocess
 import sys
 import threading
@@ -18,10 +20,11 @@ from pathlib import Path
 
 import httpx
 import pytest
+from websockets.asyncio.client import connect as async_connect
 from websockets.exceptions import ConnectionClosed
 from websockets.sync.client import connect
 
-FIRST_LINE = re.compile(r"^ms605 gui: (http://127\.0\.0\.1:(\d+)/\?t=([A-Za-z0-9_-]+))$")
+FIRST_LINE = re.compile(r"^ms605 gui: (https://127\.0\.0\.1:(\d+)/\?t=([A-Za-z0-9_-]+))$")
 SIM1 = "53494d3630350001"
 SIM2 = "53494d3630350002"
 SIM3 = "53494d3630350003"
@@ -77,9 +80,18 @@ def _launch(tmp_path, speed: int = 20) -> tuple[subprocess.Popen, str, str]:
     )
     lines: queue.Queue[str] = queue.Queue()
     threading.Thread(target=lambda: [lines.put(line.rstrip("\n")) for line in proc.stdout], daemon=True).start()
-    match = FIRST_LINE.match(lines.get(timeout=10))
+    match = FIRST_LINE.match(lines.get(timeout=20))
     assert match, "first line must be the URL"
     return proc, match.group(2), match.group(3)
+
+
+def _tls_context(tmp_path: Path) -> ssl.SSLContext:
+    context = ssl.create_default_context(cafile=tmp_path / "cal_results" / "gui_tls" / "ca.pem")
+    # The sync client's threaded SSL I/O intermittently stalls TLS 1.3 handshakes
+    # on macOS. Keep these application-flow tests on TLS 1.2; the async-client
+    # test below covers TLS 1.3 against the unchanged production server config.
+    context.maximum_version = ssl.TLSVersion.TLSv1_2
+    return context
 
 
 def _wait_healthy(http: httpx.Client) -> None:
@@ -94,14 +106,44 @@ def _wait_healthy(http: httpx.Client) -> None:
         time.sleep(0.05)
 
 
+@pytest.mark.timeout(30)
+def test_gui_tls13_websocket_with_async_client(tmp_path):
+    proc, port, token = _launch(tmp_path)
+    try:
+        tls = ssl.create_default_context(cafile=tmp_path / "cal_results" / "gui_tls" / "ca.pem")
+        tls.minimum_version = tls.maximum_version = ssl.TLSVersion.TLSv1_3
+        auth = {"Authorization": f"Bearer {token}"}
+        with httpx.Client(base_url=f"https://127.0.0.1:{port}", headers=auth, verify=tls) as http:
+            _wait_healthy(http)
+
+        async def check():
+            async with contextlib.AsyncExitStack() as stack:
+                for _ in range(3):
+                    ws = await stack.enter_async_context(
+                        async_connect(f"wss://127.0.0.1:{port}/ws", additional_headers=auth, ssl=tls)
+                    )
+                    message = json.loads(await asyncio.wait_for(ws.recv(), timeout=5))
+                    assert message["type"] == "snapshot"
+                    assert message["data"]["sensors"] == []
+
+        asyncio.run(check())
+        proc.send_signal(signal.SIGINT)
+        assert proc.wait(timeout=10) in (0, 130)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+
+
 @pytest.mark.timeout(60)
 def test_gui_end_to_end(tmp_path):
     proc, port, token = _launch(tmp_path)
     try:
-        base = f"http://127.0.0.1:{port}"
+        base = f"https://127.0.0.1:{port}"
         auth = {"Authorization": f"Bearer {token}"}
+        tls = _tls_context(tmp_path)
 
-        with httpx.Client(base_url=base, headers=auth, timeout=10) as http:
+        with httpx.Client(base_url=base, headers=auth, timeout=10, verify=tls) as http:
             _wait_healthy(http)
 
             index = http.get("/")
@@ -114,8 +156,10 @@ def test_gui_end_to_end(tmp_path):
             assert http.get("/sensors/anything").text == index.text  # SPA fallback
             assert http.get("/assets/missing.js").status_code == 404
 
-            url = f"ws://127.0.0.1:{port}/ws"
-            with connect(url, additional_headers=auth) as ws_a, connect(url, additional_headers=auth) as ws_b:
+            url = f"wss://127.0.0.1:{port}/ws"
+            with connect(url, additional_headers=auth, ssl=tls) as ws_a, connect(
+                url, additional_headers=auth, ssl=tls
+            ) as ws_b:
                 a, b = Reader(ws_a), Reader(ws_b)
                 for reader in (a, b):
                     snapshot = reader.until(lambda m: True)
@@ -169,9 +213,10 @@ def test_sigint_with_open_websockets_exits_promptly(tmp_path):
     proc, port, token = _launch(tmp_path)
     try:
         auth = {"Authorization": f"Bearer {token}"}
-        with httpx.Client(base_url=f"http://127.0.0.1:{port}", headers=auth, timeout=10) as http:
+        tls = _tls_context(tmp_path)
+        with httpx.Client(base_url=f"https://127.0.0.1:{port}", headers=auth, timeout=10, verify=tls) as http:
             _wait_healthy(http)
-            with connect(f"ws://127.0.0.1:{port}/ws", additional_headers=auth) as ws:
+            with connect(f"wss://127.0.0.1:{port}/ws", additional_headers=auth, ssl=tls) as ws:
                 reader = Reader(ws)
                 reader.until(lambda m: m["type"] == "snapshot")
                 assert http.post("/api/gather/start").status_code == 200
@@ -226,12 +271,13 @@ def test_gui_calibration_end_to_end(tmp_path):
     try:
         auth = {"Authorization": f"Bearer {token}"}
         ids = [SIM1, SIM2, SIM3]
-        with httpx.Client(base_url=f"http://127.0.0.1:{port}", headers=auth, timeout=10) as http:
+        tls = _tls_context(tmp_path)
+        with httpx.Client(base_url=f"https://127.0.0.1:{port}", headers=auth, timeout=10, verify=tls) as http:
             _wait_healthy(http)
-            url = f"ws://127.0.0.1:{port}/ws"
+            url = f"wss://127.0.0.1:{port}/ws"
             with contextlib.ExitStack() as stack:
-                ws_a = stack.enter_context(connect(url, additional_headers=auth))
-                ws_b = stack.enter_context(connect(url, additional_headers=auth))
+                ws_a = stack.enter_context(connect(url, additional_headers=auth, ssl=tls))
+                ws_b = stack.enter_context(connect(url, additional_headers=auth, ssl=tls))
                 a, b = Reader(ws_a), Reader(ws_b)
                 for reader in (a, b):
                     assert reader.until(lambda m: True)["type"] == "snapshot"
@@ -275,7 +321,7 @@ def test_gui_calibration_end_to_end(tmp_path):
                     assert countdown["seq"] is None and countdown["data"]["batch_id"] == batch_id
 
                 # a third screen opens mid-batch: its snapshot already holds the batch
-                ws_c = stack.enter_context(connect(url, additional_headers=auth))
+                ws_c = stack.enter_context(connect(url, additional_headers=auth, ssl=tls))
                 c = Reader(ws_c)
                 snapshot = c.until(lambda m: True)
                 assert snapshot["type"] == "snapshot"
@@ -354,10 +400,13 @@ def test_gui_editing_end_to_end(tmp_path):
     try:
         auth = {"Authorization": f"Bearer {token}"}
         ids = [SIM1, SIM2, SIM3]
-        with httpx.Client(base_url=f"http://127.0.0.1:{port}", headers=auth, timeout=10) as http:
+        tls = _tls_context(tmp_path)
+        with httpx.Client(base_url=f"https://127.0.0.1:{port}", headers=auth, timeout=10, verify=tls) as http:
             _wait_healthy(http)
-            url = f"ws://127.0.0.1:{port}/ws"
-            with connect(url, additional_headers=auth) as ws_a, connect(url, additional_headers=auth) as ws_b:
+            url = f"wss://127.0.0.1:{port}/ws"
+            with connect(url, additional_headers=auth, ssl=tls) as ws_a, connect(
+                url, additional_headers=auth, ssl=tls
+            ) as ws_b:
                 a, b = Reader(ws_a), Reader(ws_b)
                 for reader in (a, b):
                     assert reader.until(lambda m: True)["type"] == "snapshot"
@@ -432,9 +481,10 @@ def test_gui_editing_flows_end_to_end(tmp_path):
     try:
         auth = {"Authorization": f"Bearer {token}"}
         ids = [SIM1, SIM2, SIM3]
-        with httpx.Client(base_url=f"http://127.0.0.1:{port}", headers=auth, timeout=10) as http:
+        tls = _tls_context(tmp_path)
+        with httpx.Client(base_url=f"https://127.0.0.1:{port}", headers=auth, timeout=10, verify=tls) as http:
             _wait_healthy(http)
-            with connect(f"ws://127.0.0.1:{port}/ws", additional_headers=auth) as ws:
+            with connect(f"wss://127.0.0.1:{port}/ws", additional_headers=auth, ssl=tls) as ws:
                 reader = Reader(ws)
                 assert reader.until(lambda m: True)["type"] == "snapshot"
 

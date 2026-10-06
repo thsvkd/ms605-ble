@@ -1,9 +1,9 @@
 import { Bluetooth, RotateCcw } from 'lucide-react'
 import { useState } from 'react'
-import { ApiRequestError, retryBatch, startGather } from '../../api/client'
+import { failureText, retryBatch, startGather } from '../../api/client'
 import type { BatchView, SensorView } from '../../api/types'
 import { sensorName } from '../../store/store'
-import { errorText, t } from '../../strings'
+import { t } from '../../strings'
 import { Button } from '../Button'
 import styles from './calibrate.module.css'
 import { type StartChoice, StartOptions, startBody, startLabel } from './StartOptions'
@@ -17,7 +17,6 @@ interface Props {
 }
 
 const RETRY_MODES = ['now', 'delay'] as const
-const failText = (e: unknown) => (e instanceof ApiRequestError ? errorText(e.code, e.message) : t.error.internal)
 
 /** Only the failed or lost sensors, once they are connected again. No new preflight (14.5.4). */
 export function RetryPanel({ batch, sensors, gathering, choice, onChoice }: Props) {
@@ -47,7 +46,7 @@ export function RetryPanel({ batch, sensors, gathering, choice, onChoice }: Prop
     try {
       await fn()
     } catch (e) {
-      setError(failText(e))
+      setError(failureText(e))
     } finally {
       setBusy(false)
     }
@@ -74,13 +73,13 @@ export function RetryPanel({ batch, sensors, gathering, choice, onChoice }: Prop
                   <span className={styles.rowName}>{sensorName(sensors[j.device_id], j.device_id)}</span>
                 </label>
                 <p className={styles.rowHint} data-kind={ok ? undefined : 'warn'}>
-                  {ok ? t.retry.reconnected : gathering ? t.retry.pressAgain : t.retry.pressAgainGather}
+                  {ok ? t.retry.reconnected : gathering ? t.retry.pressAgain : sensors[j.device_id]?.live?.auto_reconnect ? t.link.reconnectHint : t.retry.pressAgainGather}
                 </p>
               </li>
             )
           })}
         </ul>
-        {anyAway && !gathering && (
+        {anyAway && !gathering && candidates.some((j) => !connected(j.device_id) && !sensors[j.device_id]?.live?.auto_reconnect) && (
           <Button icon={Bluetooth} disabled={busy} onClick={() => run(startGather)}>
             {t.retry.startGather}
           </Button>

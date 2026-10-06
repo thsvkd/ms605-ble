@@ -108,13 +108,37 @@ needed to use it.
 
 ```bash
 make setup                          # or: uv sync  (installs the GUI dependencies)
-make gui                            # prints localhost, LAN, tailnet URLs and a LAN QR code
+make gui                            # LAN HTTP sharing QR plus HTTPS; certificates prepared automatically
 make gui ARGS="--lan-host 192.0.2.10" # put this address in the QR (VPN, several interfaces)
 make gui ARGS="--sim 7 --speed 20"   # demo with 7 simulated sensors, no hardware
 uv run ms605 gui                     # allow localhost access only
+make gui ARGS="--ssl-certfile cert.pem --ssl-keyfile key.pem"  # optional custom HTTPS certificate
 ```
 
-- `make gui` enables `--lan` by default. When Tailscale is running, it prints
+- Every `gui` launch keeps an HTTPS listener, including simulator mode. With
+  `--lan` (the `make gui` default), a second HTTP listener serves the same app
+  and sessions. Its LAN URL is printed as the sharing QR: guests on the same
+  reachable network need no tailnet membership or certificate installation.
+  The default sharing port is the HTTPS port plus one (8606 by default);
+  `--share-port` chooses another port, and `0` chooses a free port.
+  In the default `make gui` server transport, LAN guests can add nearby sensors,
+  monitor, configure and calibrate them without keeping a particular tab open.
+  In browser transport, use localhost or trusted HTTPS and keep the owning tab
+  open. Remote HTTP guests cannot pair sensors through their own Bluetooth.
+- Without TLS flags,
+  OpenSSL creates a local CA and server certificate in
+  `<data_root>/cal_results/gui_tls/` and reuses them on later launches.
+  The certificate covers localhost and the accepted LAN/tailnet addresses;
+  changes to those addresses and approaching expiry renew the server certificate.
+  **For the HTTPS URL, trust the printed `ca.pem` on each connecting device.**
+  On macOS, import it in Keychain Access and set its trust to Always Trust.
+  On other devices, use the OS certificate settings to install it as a trusted CA.
+  Transfer only `ca.pem`; `ca-key.pem` and `key.pem` stay on the server.
+  The app does not change system trust settings. An already trusted custom
+  certificate can still be supplied with both TLS flags. OpenSSL is needed
+  only for automatic certificates.
+- `make gui` enables `--lan --ble-transport server` by default. Use
+  `make gui ARGS="--ble-transport browser"` for the client Bluetooth adapter. When Tailscale is running, it prints
   the node's IPv4 URL and, when MagicDNS is enabled, its DNS URL. Both support
   authenticated API and live WebSocket access with the same token. The client
   must join the same tailnet, and its policy and the host firewall must allow
@@ -126,10 +150,56 @@ uv run ms605 gui                     # allow localhost access only
   `ARGS="--port 0"` leaves existing servers running and chooses a free port.
   Automatic restart uses `lsof` and `ps` on macOS/Linux. Direct
   `uv run ms605 gui` keeps its existing startup behavior.
+- In `--ble-transport browser` mode, sensors use **the Bluetooth adapter of
+  the device running the browser**, rather than the server adapter.
+  Open a browser that supports Web Bluetooth (such as Chrome/Edge on macOS,
+  Windows or Android), press the sensor button, then use "센서 추가 시작" and
+  choose it in the browser's device chooser. Use "센서 추가" for each additional
+  sensor. Allow Bluetooth access for the browser in the client device's OS
+  settings; on macOS this is Privacy & Security → Bluetooth. Keep the tab and
+  client awake while monitoring, applying settings or calibrating. Closing or
+  reloading that tab disconnects its sensors; select them again to reconnect.
+- Web Bluetooth requires **localhost or HTTPS with a certificate trusted by that client
+  and valid for the URL's host**. For remote HTTPS, trust the automatically generated CA as
+  described above; bypassing a browser certificate warning does not establish
+  the trusted context needed for Bluetooth. Safari, Firefox and the default iPhone/iPad browsers do
+  not provide this transport. Unsupported or insecure clients show an
+  explanation and cannot start real-sensor gathering.
+- The browser relays GATT bytes over authenticated `/ws/ble`; the existing
+  Python driver still identifies the sensor, parses notifications, handles
+  keep-alives, calibrates and applies settings. Other clients can view and
+  control those sessions while the owning tab remains connected. Web Bluetooth
+  does not expose the radio address directly. When advertisement watching is
+  supported, the browser forwards the authorized manufacturer data and the
+  server decodes the observed MS605 MAC field. Native scanning reads the same
+  field without browser experimental APIs. New sensor names use `MS605-XXXXXX`
+  from the MAC's final six hex digits; existing saved aliases take precedence.
+  Unsupported advertisement layouts leave MAC unavailable, with the advertised
+  name suffix or a site sequence as the naming fallback. The volatile tag30
+  response is no longer used to suggest names.
+- For reliable manufacturer data and LAN clients without Web Bluetooth, run
+  `ms605 gui --lan --ble-transport server` from a terminal with Bluetooth
+  permission. The web app adds sensors near the **server computer**; client
+  browsers do not need Bluetooth or a secure context for this mode. The default
+  `--ble-transport browser` keeps pairing on each client's Bluetooth adapter.
+  In browser mode, advertisement watching may require Chrome's experimental
+  web platform features; ordinary GATT support alone does not guarantee MAC access.
 - Open the printed URL once. The token in it is swapped for an HttpOnly cookie
-  and a new token is generated on every start. Anyone holding the URL can
-  control your sensors, and `--lan` serves plain HTTP, so use it only on a
-  network you trust.
+  and reused after a restart. The private `cal_results/gui_access_token` file
+  stores it with mode 0600; delete it while the server is stopped to rotate access. Anyone holding the URL can
+  control your sensors. The LAN sharing URL uses plain HTTP on a separate
+  listener; use it on a trusted network. It is not an Internet-public link.
+  Remote clients that pair sensors themselves must use the trusted HTTPS URL.
+- Only one server Bluetooth GUI may use a data directory, even on different ports.
+  A second instance exits without taking over its sensors; the normal `make gui`
+  restart replaces the previous process.
+- In server Bluetooth mode (`make gui`), added sensors are remembered, including
+  those without a saved name. Closing a browser leaves their links alive. After a
+  disconnect or server restart, the server checks for remembered sensors every
+  second and reconnects when they advertise. Attempts never overlap for one
+  sensor; a slow Bluetooth operation may take longer than a second. Press the
+  sensor button if its connectable window has closed. Explicit **Disconnect**
+  removes it from automatic recovery; add it again to resume.
 - With `--sim`, press virtual sensor buttons from the gather screen. Demo data
   lives in `cal_results/sim/` and never touches the real registry.
 - Monitor (`/monitor`): per-zone bars for the sensors you pick, with the same
@@ -178,8 +248,11 @@ make web-typegen   # regenerate src/api/schema.ts from the backend's OpenAPI
 make test-web web-build
 ```
 
-Start the frontend development server with `make web-dev`. Run its backend in
-a separate terminal with `make gui`.
+Start the backend first with `make gui` (or its simulator option), trust its CA,
+and open the printed login URL. Then run `make web-dev` in a separate terminal
+and open `https://127.0.0.1:5173/`. Vite uses the same certificate and verifies
+its HTTPS/WSS backend against the generated CA. Use the same `MS605_DATA_DIR`
+in both terminals if overridden.
 
 ## Main commands
 

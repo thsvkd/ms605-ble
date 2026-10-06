@@ -1,5 +1,6 @@
 import { Sparkles, Tag } from 'lucide-react'
 import { useMemo, useState } from 'react'
+import { sensorDisplayName } from '../alias'
 import { useNow } from '../hooks/useNow'
 import { sensorStatus } from '../status'
 import { selectUnregistered, useStore } from '../store/store'
@@ -33,7 +34,7 @@ export function UnregisteredSection() {
                   <Sparkles size={12} aria-hidden />
                   {t.sensor.new}
                 </span>
-                <span className={styles.bleName}>{s.live?.name ?? s.live?.address}</span>
+                <span className={styles.bleName}>{sensorDisplayName(s, s.device_id)}</span>
               </div>
               <div className={styles.cardMeta}>
                 <StatusBadge status={status} />

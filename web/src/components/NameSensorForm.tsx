@@ -30,7 +30,9 @@ export function initialSite(state: Pick<Store, 'sites'>): SiteChoice {
 export function NameSensorForm({ deviceId, bleName, autoFocus, onDone }: Props) {
   const uid = useId()
   const sensors = useStore((s) => s.sensors)
+  const sites = useStore((s) => s.sites)
   const [site, setSite] = useState<SiteChoice>(() => initialSite(useStore.getState()))
+  const siteTouched = useRef(false)
   const siteId = site.kind === 'existing' ? site.siteId : null
   const [aliasEdit, setAliasEdit] = useState<string | null>(null) // null: follow the default
   const alias = aliasEdit ?? defaultAlias(sensors, siteId, sensors[deviceId]?.live)
@@ -40,10 +42,19 @@ export function NameSensorForm({ deviceId, bleName, autoFocus, onDone }: Props) 
   const [siteError, setSiteError] = useState<string | null>(null)
   const [formError, setFormError] = useState<string | null>(null)
   const aliasRef = useRef<HTMLInputElement>(null)
+  const siteNameRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
-    if (autoFocus) aliasRef.current?.focus()
+    if (!autoFocus) return
+    if (site.kind === 'new') siteNameRef.current?.focus()
+    else aliasRef.current?.focus()
   }, [autoFocus])
+
+  useEffect(() => {
+    if (siteTouched.current || site.kind !== 'new' || site.name !== '') return
+    const next = initialSite({ sites })
+    if (next.kind === 'existing') setSite(next)
+  }, [site, sites])
 
   const save = async () => {
     const name = alias.trim()
@@ -98,7 +109,16 @@ export function NameSensorForm({ deviceId, bleName, autoFocus, onDone }: Props) 
             />
           )}
         </Field>
-        <SitePicker id={`${uid}-site`} value={site} onChange={setSite} nameError={siteError} />
+        <SitePicker
+          id={`${uid}-site`}
+          value={site}
+          onChange={(next) => {
+            siteTouched.current = true
+            setSite(next)
+          }}
+          nameError={siteError}
+          nameInputRef={siteNameRef}
+        />
         <Field id={`${uid}-location`} label={t.form.location}>
           {(p) => (
             <input

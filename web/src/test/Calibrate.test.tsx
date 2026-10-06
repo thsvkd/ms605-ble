@@ -164,7 +164,7 @@ describe('CalibrateScreen: a batch from the server', () => {
     expect(
       screen.getByText('막대는 예상 시간(약 3:00) 기준입니다. 센서는 진행률을 알려 주지 않습니다.'),
     ).toBeInTheDocument()
-    expect(screen.getByText('보정하는 동안 센서 모으기를 멈췄습니다')).toBeInTheDocument()
+    expect(screen.getByText('보정하는 동안 센서 추가를 멈췄습니다')).toBeInTheDocument()
     const bar = screen.getByRole('progressbar')
     expect(bar).toHaveAttribute('aria-valuenow', '41')
     expect(bar).toHaveAttribute('aria-valuetext', '약 41% (예상 시간 기준)')
@@ -254,8 +254,8 @@ describe('CalibrateScreen: a batch from the server', () => {
     expect(screen.getAllByText('보정 기록에 저장했습니다')).toHaveLength(2)
     expect(screen.getAllByText('70 → 64 (−6)')).toHaveLength(2)
     expect(screen.getAllByText('62 → 66 (+4)')).toHaveLength(2)
-    expect(screen.getAllByText('센서 모으기를 켜고 버튼을 다시 누르세요').length).toBeGreaterThan(0)
-    expect(screen.getByRole('button', { name: '센서 모으기 시작' })).toBeInTheDocument()
+    expect(screen.getAllByText('센서 추가를 켜고 버튼을 다시 누르세요').length).toBeGreaterThan(0)
+    expect(screen.getByRole('button', { name: '센서 추가 시작' })).toBeInTheDocument()
     expect(screen.getByRole('checkbox', { name: '센서 2' })).toBeDisabled()
     expect(screen.getByRole('button', { name: '다시 시도 (0대)' })).toBeDisabled()
 

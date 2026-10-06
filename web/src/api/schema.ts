@@ -482,6 +482,11 @@ export interface components {
         LiveInfo: {
             /** Address */
             address: string;
+            /**
+             * Auto Reconnect
+             * @default false
+             */
+            auto_reconnect: boolean;
             /** Battery Pct */
             battery_pct: number | null;
             /** Busy */
@@ -495,6 +500,11 @@ export interface components {
             link: components["schemas"]["LinkState"];
             /** Lost Reason */
             lost_reason: string;
+            /**
+             * Mac
+             * @default null
+             */
+            mac: string | null;
             /** Name */
             name: string | null;
         };
@@ -899,6 +909,12 @@ export interface components {
         };
         /** ServerInfo */
         ServerInfo: {
+            /**
+             * Ble Transport
+             * @default browser
+             * @enum {string}
+             */
+            ble_transport: "browser" | "server";
             /** Lan */
             lan: boolean;
             sim: components["schemas"]["SimInfo"] | null;

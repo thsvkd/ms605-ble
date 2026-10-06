@@ -1,3 +1,8 @@
+> Identity update: when manufacturer MAC is available, DeviceInfo.device_id is
+> lowercase MAC hex. Older tag30-only identity statements below describe the
+> legacy fallback, whose permanence was disproved by repeat hardware reads.
+> Existing legacy registry keys are not automatically migrated.
+
 # MS605 코어 API (M1)
 
 `docs/GUI_PLAN.md`의 M1(코어 추출)을 구현하기 위한 계약 문서다. 다음 구현자는 이 문서의
@@ -484,6 +489,10 @@ class Fleet:
     async def connect(self, device: BLEDevice) -> DeviceSession: ...
     def start_gather(self, *, accept: Callable[[BLEDevice], bool] | None = None) -> None: ...
     async def stop_gather(self, *, finish_pending: bool = False) -> None: ...
+    def start_recovery(self, *, interval: float = 1.0) -> None: ...
+    async def stop_recovery(self) -> None: ...
+    @property
+    def recovery_enabled(self) -> bool: ...
     async def release(self, device_ids: Iterable[str] | None = None) -> None: ...
     async def aclose(self) -> None: ...
     async def __aenter__(self) -> Fleet: ...
@@ -512,7 +521,8 @@ class Fleet:
     보낸다. 식별은 처음 수집할 때 이미 확인됐다.
   - 그 밖에는 `self.connect(device)`를 태스크로 돌린다.
   - 태스크가 실패하면 `GatherFailed`를 보낸다. 그 주소는 다음 스캔에서 다시 시도된다(지금 `--collect`와 같다).
-- `stop_gather(*, finish_pending: bool = False)`: 스캔 루프를 취소하고, 진행 중인 연결 태스크를 모두 취소하고 기다린다.
+- `stop_gather(*, finish_pending: bool = False)`: 수집 스캔 루프와 그 루프가 시작한 연결 태스크를 취소하고 기다린다.
+  별도로 켠 자동 복구는 유지된다.
   `finish_pending=True`이면 진행 중인 연결 태스크가 끝나기를 먼저 기다린다(CLI `--collect`에서 Enter 직전에 버튼을 누른
   센서도 배치에 들어가게 한다). 이미 연결된 세션은 그대로 둔다. 돌아온 뒤에는 어떤 링크도 새로 생기지 않는다.
 - `connecting: int`(읽기 전용): 수집 루프가 진행 중인 연결 시도 수. CLI의 "마무리 대기" 줄이 쓴다.
@@ -520,7 +530,13 @@ class Fleet:
   진행 중 연결 태스크를 먼저 취소하고, 세션들을 동시에 `close()`한 뒤 `sessions`에서 뺀다.
   `None`이면 전부이고, 아직 식별 중이라 `sessions`에 없는 `connect()`의 세션도 닫는다(그 `connect()`는
   `MS605ConnectionError`로 끝난다). 작업 세션형(D5)이므로 놓은 센서는 레지스트리의 마지막 값으로만 보인다.
-- `aclose()`: 끝나지 않은 배치(`calibrate()`로 만든 것)를 모두 `cancel()`하고, `stop_gather()` 후 `release()`. 예외가 나도 끝까지 정리한다.
+- `start_recovery(interval=1.0)`: 선택적 서버 연결 복구. `connections.json`의 호스트별 센서 목록을 DISCONNECTED 세션으로 복원하고,
+  이미 추가한 센서만 1초 주기로 스캔해 다시 연결한다. 새 센서는 수동 수집에서만 추가한다. 미등록 센서도 저장한다.
+  최초 실행에서는 레지스트리의 현재 호스트 주소를 가져온다. 저장은 원자적이며 명시적 `release`는 복구 목록에서도 제거한다.
+  수집·복구 스캔은 겹치지 않고, 연결 중이거나 다른 작업을 하는 센서는 건너뛴다. `recovery_enabled`로 실행 여부를 확인한다.
+- `stop_recovery()`: 복구 루프와 그 루프가 시작한 연결 시도만 취소한다. 기억한 목록과 수동 수집은 유지한다.
+- `aclose()`: 끝나지 않은 배치를 모두 취소하고 복구·수집 루프를 정지한 뒤 모든 링크를 닫는다.
+  복구 목록은 보존하므로 다음 서버 실행에서 재연결할 수 있다. 예외가 나도 끝까지 정리한다.
 
 ### 6.2 일괄 보정
 

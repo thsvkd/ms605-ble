@@ -75,7 +75,10 @@ def test_legacy_test_script_stops_on_python_failure(checkout):
     [
         ("cli", '--address "sensor with spaces" read', "uv <run> <ms605> <--address> <sensor with spaces> <read>"),
         ("run", "--help", "uv <run> <ms605> <--help>"),
-        ("gui", "--sim 7 --speed 20", "uv <run> <python> <scripts/gui.py> <--sim> <7> <--speed> <20>"),
+        (
+            "gui", "--sim 7 --speed 20",
+            "uv <run> <python> <scripts/gui.py> <--ble-transport> <server> <--sim> <7> <--speed> <20>",
+        ),
     ],
 )
 def test_make_launches_cli_and_gui_without_node(checkout, target, args, expected):

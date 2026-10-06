@@ -1,5 +1,6 @@
 .screen {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--space-4);
   max-width: 640px;
   margin: 0 auto;
@@ -15,6 +16,7 @@
 
 .listArea {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--space-3);
   align-content: start;
 }
@@ -57,7 +59,7 @@
   max-width: 30ch;
 }
 
-/* Sonar: the Bluetooth glyph sends out rings while the server is listening for button presses. */
+/* Sonar: the Bluetooth glyph sends out rings while gathering is active. */
 .sonar {
   position: relative;
   display: grid;
@@ -183,6 +185,13 @@
   margin: 0 auto;
 }
 
+.toggleActions {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: var(--space-2);
+}
+
 .stopping {
   background: var(--surface);
   color: var(--text);
@@ -198,6 +207,7 @@
 
 .list {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--space-2);
   margin: 0;
   padding: 0;
@@ -206,6 +216,7 @@
 
 .item {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--space-2);
   padding: var(--space-3) var(--space-4);
   border-radius: var(--radius);
@@ -253,6 +264,7 @@
 }
 
 .itemLocation {
+  overflow-wrap: anywhere;
   color: var(--text-muted);
   font-size: var(--font-sm);
 }
@@ -309,6 +321,7 @@
 /* -- name form ----------------------------------------------------------------------------- */
 .nameForm {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--space-3);
   padding-top: var(--space-2);
   border-top: 1px dashed var(--border);
@@ -316,6 +329,7 @@
 
 .formFields {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--space-3);
 }
 
@@ -417,7 +431,7 @@
   }
 
   .formFields {
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .formFields > :last-child {
@@ -432,7 +446,7 @@
 @media (min-width: 1024px) {
   .screen {
     max-width: none;
-    grid-template-columns: minmax(340px, 400px) 1fr;
+    grid-template-columns: minmax(340px, 400px) minmax(0, 1fr);
     align-items: start;
     gap: var(--space-5);
   }

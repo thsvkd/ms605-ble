@@ -57,7 +57,7 @@ export function announcements(prev: Store, next: Store): string[] {
     if (now === was) continue
     if (now === 'connected') {
       if (s.registry) out.push(t.sensor.announceConnected(s.registry.alias))
-      else out.push(t.sensor.announceNew(s.live?.name ?? s.live?.address ?? id))
+      else out.push(t.sensor.announceNew(sensorName(s, id)))
     } else if (now === 'lost') {
       out.push(t.sensor.announceLost(s.registry?.alias ?? s.live?.name ?? id))
     }

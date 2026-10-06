@@ -63,6 +63,24 @@ Operators should validate the expected service/characteristic layout after a
 connection; the driver itself proceeds by subscribing to the configured notify
 characteristic rather than performing a separate identity check.
 
+### 3.3 Manufacturer MAC (experimental)
+
+The observed 23-byte company `0xFFFF` payload has markers `C0 18 01` at
+bytes 0–2, `1A 04` at 4–5 and `19 0A` at 10–11. Bytes 12–21 are an identity
+record beginning `1C 00`; its bytes 2–7 contain the manufacturer MAC. The
+current decoder accepts only this observed shape and Meross OUI `C4:E7:AE`.
+Other shapes return unavailable. This is inferred from six authorized devices,
+including a repeated scan of the same device, not a published vendor grammar.
+The prefix assignment is listed in the [IEEE OUI registry](https://standards-oui.ieee.org/oui/oui.csv).
+Raw captures and unit-specific addresses are not repository fixtures.
+
+The OS connection address remains separate (CoreBluetooth UUID on macOS).
+The observed tag30 response changed on the same physical device; the older
+claim below that it is stable is superseded. MAC-capable sessions now use lowercase MAC hex as the registry key. Legacy
+sessions without MAC still fall back to tag30 and cannot promise stable
+identity. Existing legacy keys are not automatically migrated across transports.
+The tag30 response must not be interpreted as a MAC or a stable sensor name.
+
 ## 4. Application frame
 
 ### 4.1 Envelope
@@ -366,7 +384,7 @@ not reproducible from this repository alone. The simulator defaults in
 | Keep-alive interval | A 25 s interval held the link; 30 s dropped it. The driver's 15 s default is within the margin | 1-2 devices | Experimental |
 | Tag 51 write vs tag 61 | Writing tag 51 did not set tag 61 to `CUSTOM`; writing a preset level (tag 61 = 2, from `CUSTOM`) did not change the tag-51 values; re-writing tag 61 after a tag-51 write kept the user thresholds | 1-2 devices | Experimental |
 | Read-after-write visibility of tag 51 | The write was acked, but an immediate read-back showed the old value; it was visible 1 s later. Verify-after-write must poll (about 3 s is a reasonable bound) rather than read once | 1-2 devices | Experimental, coarse (about 1 s) |
-| Tag 30 device identifier | 20 bytes, unique and stable | 1 device | Experimental, weak evidence |
+| Tag 30 response | 20 bytes; changed on repeat reads of the same device | 2 devices | Not a verified permanent identity |
 | Concurrent links from one central | 2 of 2 available sensors held for 30 s | 1 run | Experimental, lower bound only |
 
 Not measured: whether keep-alive traffic affects an auto-calibration in

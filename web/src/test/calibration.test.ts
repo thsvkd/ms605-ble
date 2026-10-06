@@ -108,7 +108,7 @@ describe('jobStatus (14.8.9 job table)', () => {
     )
     expect(jobStatus(lost, ctx({ link: 'connected' })).hint).toBe('다시 연결됨 · 다시 시도할 수 있습니다')
     expect(jobStatus(lost, ctx({ link: 'lost', gathering: true })).hint).toBe('버튼을 다시 누르세요')
-    expect(jobStatus(lost, ctx({ link: 'lost' })).hint).toBe('센서 모으기를 켜고 버튼을 다시 누르세요')
+    expect(jobStatus(lost, ctx({ link: 'lost' })).hint).toBe('센서 추가를 켜고 버튼을 다시 누르세요')
   })
 })
 

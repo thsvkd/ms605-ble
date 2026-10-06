@@ -90,8 +90,10 @@ class RegistryInfo(Out):
 
 class LiveInfo(Out):
     address: str  # this host's BLE address
+    mac: str | None = None  # manufacturer MAC when available; not the host UUID
     name: str | None  # BLE advertised name
     link: LinkState
+    auto_reconnect: bool = False  # remembered by server Bluetooth recovery
     busy: str | None  # "identify" | "read" | "apply" | "calibration" | None
     lost_reason: str
     battery_pct: int | None  # read when identified in this run
@@ -147,6 +149,7 @@ class ServerInfo(Out):
     version: str
     lan: bool
     sim: SimInfo | None
+    ble_transport: Literal["browser", "server"] = "browser"
 
 
 # -- M3: live monitor ------------------------------------------------------------------

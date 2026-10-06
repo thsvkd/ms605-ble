@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { type Ref, useMemo } from 'react'
 import { selectSites, useStore } from '../store/store'
 import { t } from '../strings'
 import { Field } from './Field'
@@ -15,10 +15,11 @@ interface Props {
   /** Offer "derive from the file name" (yaml import). */
   autoLabel?: string
   nameError?: string | null
+  nameInputRef?: Ref<HTMLInputElement>
 }
 
 /** Existing sites plus a trailing "새 사이트…" that reveals a name field (9.4). */
-export function SitePicker({ id, value, onChange, autoLabel, nameError }: Props) {
+export function SitePicker({ id, value, onChange, autoLabel, nameError, nameInputRef }: Props) {
   const siteMap = useStore((s) => s.sites)
   const sites = useMemo(() => selectSites({ sites: siteMap }), [siteMap])
   const selected = value.kind === 'existing' ? value.siteId : value.kind === 'new' ? NEW : AUTO
@@ -51,6 +52,7 @@ export function SitePicker({ id, value, onChange, autoLabel, nameError }: Props)
           {(p) => (
             <input
               {...p}
+              ref={nameInputRef}
               value={value.name}
               maxLength={64}
               autoComplete="off"

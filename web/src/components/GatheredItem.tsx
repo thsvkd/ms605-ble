@@ -1,6 +1,7 @@
 import { CheckCircle2, ChevronRight, Sparkles, Tag } from 'lucide-react'
 import { memo, useEffect, useRef, useState } from 'react'
 import { Link } from 'wouter'
+import { sensorDisplayName } from '../alias'
 import { useNow } from '../hooks/useNow'
 import { sensorStatus } from '../status'
 import { useStore } from '../store/store'
@@ -48,7 +49,7 @@ export const GatheredItem = memo(function GatheredItem(props: Props) {
 
   const status = sensorStatus(sensor, gathering, now)
   const reg = sensor.registry
-  const bleName = sensor.live.name ?? sensor.live.address
+  const bleName = sensorDisplayName(sensor, deviceId)
   const className = [styles.item, reg ? '' : styles.itemNew, fresh ? styles.fresh : ''].join(' ')
 
   const done = (result?: NameResult) => {

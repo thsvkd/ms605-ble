@@ -222,6 +222,9 @@
 }
 
 .nameLink {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
   color: var(--text);
   text-decoration: none;
 }

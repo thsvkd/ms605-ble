@@ -69,11 +69,12 @@ _RECONNECT_PAUSE_S = 2.0  # pause between reconnect() attempts
 
 @dataclass(frozen=True)
 class DeviceInfo:
-    device_id: str  # tag30 lowercase hex
+    device_id: str  # MAC hex when available; otherwise legacy tag30 hex
     battery_pct: int | None  # tag23 first byte
     version: tuple[int, ...] | None  # tag21, decode_supported_tags()
     light_lux: int | None  # tag36, big-endian integer
     zone_distances_m: tuple[float, ...] | None = None  # tag53, decode_zone_distances(); None if absent
+    mac: str | None = None  # manufacturer identity; distinct from host BLE address
 
 
 class DeviceSession:
@@ -266,18 +267,20 @@ class DeviceSession:
         async with self.operation("identify") as ms:
             frame = await ms.read_raw([TAG_DEVICE_ID, TAG_BATTERY, TAG_VERSION, TAG_AMBIENT_LIGHT, TAG_ZONE_DISTANCES])
         raw_id = frame.get(TAG_DEVICE_ID)
-        if not raw_id:
+        mac = ms.mac
+        if not raw_id and not mac:
             raise MS605Error("device did not return tag 30 (device id)")
         battery = frame.get(TAG_BATTERY)
         version = frame.get(TAG_VERSION)
         light = frame.get(TAG_AMBIENT_LIGHT)
         distances = frame.get(TAG_ZONE_DISTANCES)
         self.info = DeviceInfo(
-            device_id=raw_id.hex(),
+            device_id=mac.replace(":", "").lower() if mac else raw_id.hex(),
             battery_pct=battery[0] if battery else None,
             version=decode_supported_tags(version) if version else None,
             light_lux=int.from_bytes(light, "big") if light else None,
             zone_distances_m=decode_zone_distances(distances) if distances else None,
+            mac=mac,
         )
         self.device_id = self.info.device_id
         return self.info

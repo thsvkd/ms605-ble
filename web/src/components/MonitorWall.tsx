@@ -164,7 +164,7 @@ export const MonitorTile = memo(function MonitorTile({ deviceId }: { deviceId: s
     >
       <div className={styles.head}>
         <h2 id={nameId} className={styles.name}>
-          <Link href={`/sensors/${deviceId}`} className={styles.nameLink}>
+          <Link href={`/sensors/${deviceId}`} className={styles.nameLink} title={sensorName(sensor, deviceId)}>
             {sensorName(sensor, deviceId)}
           </Link>
         </h2>

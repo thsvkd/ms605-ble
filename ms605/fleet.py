@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import logging
+import re
 import time
 import uuid
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
@@ -54,6 +55,14 @@ _FIRE_CHECK_S = 1.0  # a waiting batch re-reads the wall clock at least this oft
 
 _LIVE = (LinkState.CONNECTED, LinkState.CONNECTING)
 _RETRY_STATES = (CalibrationState.FAILED, CalibrationState.LOST, CalibrationState.TIMEOUT)
+_CONNECTIONS_FORMAT = "ms605-connections"
+
+
+@dataclass(frozen=True)
+class _RememberedConnection:
+    address: str
+    name: str | None
+    mac: str | None
 
 
 # -- gathering and connections ---------------------------------------------------
@@ -86,7 +95,14 @@ class Fleet:
         self._gather_pause = gather_pause
         self._sessions: dict[str, DeviceSession] = {}
         self._gather_task: asyncio.Task | None = None
+        self._recovery_task: asyncio.Task | None = None
+        self._recovery_interval = 1.0
+        self._recovery_loaded = False
+        self._connection_hosts: dict[str, dict[str, _RememberedConnection]] = {}
+        self._scan_lock = asyncio.Lock()
         self._connecting: dict[str, asyncio.Task] = {}  # lowercase address -> gather connect task
+        self._connecting_targets: dict[str, DeviceSession | None] = {}
+        self._connecting_sources: dict[str, str] = {}
         self._unidentified: set[DeviceSession] = set()  # inside connect(), not yet in _sessions
         self._releasing: set[DeviceSession] = set()  # being closed by release(); never re-gathered
         self._batches: set[BatchCalibration] = set()  # not yet ended; aclose() cancels them
@@ -100,25 +116,22 @@ class Fleet:
         return self._gather_task is not None and not self._gather_task.done()
 
     @property
+    def recovery_enabled(self) -> bool:
+        return self._recovery_task is not None and not self._recovery_task.done()
+
+    @property
     def connecting(self) -> int:
         """Connect attempts the gather loop has in flight."""
         return len(self._connecting)
 
     async def scan(self) -> list[BLEDevice]:
-        return await self._scan(self._scan_secs)
+        async with self._scan_lock:
+            return await self._scan(self._scan_secs)
 
     async def connect(self, device: BLEDevice) -> DeviceSession:
         """Connect, identify (tag30) and match against the registry. On any
         failure the new link is closed and the error raised."""
-        session = DeviceSession(
-            device,
-            self.bus,
-            scan=self._scan,
-            client_factory=self._client_factory,
-            keepalive_interval=self._keepalive_interval,
-            connect_timeout=self._connect_timeout,
-            scan_secs=self._scan_secs,
-        )
+        session = self._new_session(device)
         self._unidentified.add(session)  # release() closes it, failing the connect
         try:
             await session.connect()
@@ -126,6 +139,9 @@ class Fleet:
             existing = self._sessions.get(info.device_id)
             if existing is not None and existing.state in _LIVE:
                 raise MS605Error(f"duplicate device id {info.device_id} ({existing.address}, {session.address})")
+            if existing in self._releasing:
+                raise MS605Error(f"device {info.device_id} is being released")
+            self._remember(session, info)
             # stored before any further await: release() owns it from here on
             self._sessions[info.device_id] = session
         except BaseException:
@@ -177,6 +193,12 @@ class Fleet:
             session.device_id, session.info = device_id, info
             await session.close()
             raise MS605Error(f"device id changed at {session.address}: expected {device_id}, got {new.device_id}")
+        session.address = device.address
+        try:
+            self._remember(session, new)
+        except StorageError:
+            await session.close()
+            raise
         self._emit_gathered(session, self._match(session, new))
 
     def _session_at(self, address: str) -> DeviceSession | None:
@@ -205,6 +227,8 @@ class Fleet:
                 if session is not None and session.state in _LIVE:
                     continue
                 self._connecting[key] = asyncio.create_task(self._gather_one(device, session))
+                self._connecting_targets[key] = session
+                self._connecting_sources[key] = "gather"
             await asyncio.sleep(self._gather_pause)
 
     async def _gather_one(self, device: BLEDevice, session: DeviceSession | None) -> None:
@@ -226,36 +250,282 @@ class Fleet:
             key = device.address.lower()
             if self._connecting.get(key) is asyncio.current_task():
                 del self._connecting[key]
+                self._connecting_targets.pop(key, None)
+                self._connecting_sources.pop(key, None)
 
     async def _cancel_connects(self, keys: Iterable[str]) -> None:
-        tasks = [self._connecting.pop(k) for k in list(keys) if k in self._connecting]
+        selected = list(keys)
+        tasks = [self._connecting.pop(k) for k in selected if k in self._connecting]
+        for key in selected:
+            self._connecting_targets.pop(key, None)
+            self._connecting_sources.pop(key, None)
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
 
     async def stop_gather(self, *, finish_pending: bool = False) -> None:
         """Stop scanning, then cancel in-flight connects -- or, with
-        `finish_pending`, let them finish first. Connected sessions stay; no new
-        link appears after this returns."""
+        `finish_pending`, let them finish first. Connected sessions stay; no
+        gather-started link appears after this returns."""
         task, self._gather_task = self._gather_task, None
         if task is not None:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
+        keys = [key for key, source in self._connecting_sources.items() if source == "gather"]
         if finish_pending:
-            await asyncio.gather(*self._connecting.values(), return_exceptions=True)
-        await self._cancel_connects(self._connecting)
+            await asyncio.gather(
+                *(self._connecting[key] for key in keys if key in self._connecting),
+                return_exceptions=True,
+            )
+        await self._cancel_connects(keys)
+
+    # -- persistent automatic recovery -----------------------------------------
+
+    @property
+    def _connections_path(self):
+        return self.storage.root / "connections.json"
+
+    def _load_connections(self) -> None:
+        if self._recovery_loaded:
+            return
+        path = self._connections_path
+        data = self.storage.read_json(path)
+        hosts: dict[str, dict[str, _RememberedConnection]] = {}
+        if data is not None:
+            if data.get("format") != _CONNECTIONS_FORMAT or data.get("version") != 1:
+                raise StorageError(f"{path} is not a version-1 {_CONNECTIONS_FORMAT} file")
+            raw_hosts = data.get("hosts")
+            if not isinstance(raw_hosts, dict):
+                raise StorageError(f"{path} is malformed: 'hosts' must be an object")
+            try:
+                for host, raw_connections in raw_hosts.items():
+                    if not isinstance(host, str) or not host or not isinstance(raw_connections, dict):
+                        raise ValueError("invalid host entry")
+                    parsed: dict[str, _RememberedConnection] = {}
+                    macs: set[str] = set()
+                    for device_id, raw in raw_connections.items():
+                        if not isinstance(device_id, str) or re.fullmatch(r"[0-9a-f]{2,128}", device_id) is None:
+                            raise ValueError("invalid device id")
+                        if not isinstance(raw, dict) or set(raw) != {"address", "name", "mac"}:
+                            raise ValueError(f"invalid connection {device_id}")
+                        address, name, mac = raw["address"], raw["name"], raw["mac"]
+                        if not isinstance(address, str) or not address or len(address) > 512:
+                            raise ValueError(f"invalid address for {device_id}")
+                        if name is not None and (not isinstance(name, str) or len(name) > 128):
+                            raise ValueError(f"invalid name for {device_id}")
+                        if mac is not None:
+                            if not isinstance(mac, str) or re.fullmatch(
+                                r"(?:[0-9A-F]{2}:){5}[0-9A-F]{2}", mac
+                            ) is None:
+                                raise ValueError(f"invalid MAC for {device_id}")
+                            if mac.replace(":", "").lower() != device_id:
+                                raise ValueError(f"MAC does not match device id {device_id}")
+                        if mac is not None and mac in macs:
+                            raise ValueError(f"duplicate connection for {device_id}")
+                        if mac is not None:
+                            macs.add(mac)
+                        parsed[device_id] = _RememberedConnection(address, name, mac)
+                    hosts[host] = parsed
+            except (KeyError, TypeError, ValueError) as exc:
+                raise StorageError(f"{path} is malformed: {exc}") from exc
+
+        migrated = self.registry.host not in hosts
+        remembered = hosts.setdefault(self.registry.host, {})
+        if migrated:
+            for device_id, sensor in self.registry.sensors.items():
+                address = sensor.addresses.get(self.registry.host)
+                if address:
+                    mac = (
+                        ":".join(device_id[index:index + 2] for index in range(0, 12, 2)).upper()
+                        if len(device_id) == 12
+                        else None
+                    )
+                    remembered[device_id] = _RememberedConnection(address, None, mac)
+        changed = migrated or data is None
+        for device_id, session in self._sessions.items():
+            if session.info is None:
+                continue
+            record = self._record(session, session.info)
+            if remembered.get(device_id) != record:
+                remembered[device_id] = record
+                changed = True
+        self._connection_hosts = hosts
+        if changed:
+            self._save_connections()
+        for device_id, record in remembered.items():
+            if device_id in self._sessions:
+                continue
+            session = self._new_session(record.address)
+            session.name = record.name
+            session.device_id = device_id
+            session.info = DeviceInfo(device_id, None, None, None, mac=record.mac)
+            self._sessions[device_id] = session
+        self._recovery_loaded = True
+
+    def _new_session(self, device: BLEDevice | str) -> DeviceSession:
+        return DeviceSession(
+            device,
+            self.bus,
+            scan=self._scan,
+            client_factory=self._client_factory,
+            keepalive_interval=self._keepalive_interval,
+            connect_timeout=self._connect_timeout,
+            scan_secs=self._scan_secs,
+        )
+
+    @staticmethod
+    def _record(session: DeviceSession, info: DeviceInfo) -> _RememberedConnection:
+        return _RememberedConnection(session.address, session.name, info.mac)
+
+    def _save_connections(self) -> None:
+        self.storage.write_json_atomic(
+            self._connections_path,
+            {
+                "format": _CONNECTIONS_FORMAT,
+                "version": 1,
+                "hosts": {
+                    host: {
+                        device_id: {"address": item.address, "name": item.name, "mac": item.mac}
+                        for device_id, item in connections.items()
+                    }
+                    for host, connections in self._connection_hosts.items()
+                },
+            },
+        )
+
+    def _remember(self, session: DeviceSession, info: DeviceInfo) -> None:
+        if not self._recovery_loaded:
+            return
+        remembered = self._connection_hosts[self.registry.host]
+        previous = remembered.get(info.device_id)
+        record = self._record(session, info)
+        if previous == record:
+            return
+        remembered[info.device_id] = record
+        try:
+            self._save_connections()
+        except BaseException:
+            if previous is None:
+                del remembered[info.device_id]
+            else:
+                remembered[info.device_id] = previous
+            raise
+
+    def _forget(self, device_ids: Iterable[str]) -> None:
+        if not self._recovery_loaded:
+            return
+        remembered = self._connection_hosts[self.registry.host]
+        removed = {device_id: remembered[device_id] for device_id in device_ids if device_id in remembered}
+        if not removed:
+            return
+        for device_id in removed:
+            del remembered[device_id]
+        try:
+            self._save_connections()
+        except BaseException:
+            remembered.update(removed)
+            raise
+
+    def start_recovery(self, *, interval: float = 1.0) -> None:
+        """Restore remembered sessions and keep reconnecting them until stopped."""
+        if interval <= 0:
+            raise ValueError("recovery interval must be positive")
+        if self.recovery_enabled:
+            return
+        self._load_connections()
+        self._recovery_interval = interval
+        self._recovery_task = asyncio.create_task(self._recovery_loop())
+
+    async def stop_recovery(self) -> None:
+        task, self._recovery_task = self._recovery_task, None
+        if task is not None:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        keys = [key for key, source in self._connecting_sources.items() if source == "recovery"]
+        await self._cancel_connects(keys)
+
+    def _recovery_session(self, device: BLEDevice) -> DeviceSession | None:
+        remembered = self._connection_hosts.get(self.registry.host, {})
+        address = device.address.lower()
+        mac = MS605.last_mac(device)
+        if mac is not None:
+            for device_id, record in remembered.items():
+                if record.mac == mac:
+                    return self._sessions.get(device_id)
+            # A verified, different MAC must never inherit another sensor's
+            # recycled host address. Only legacy records without a MAC may use
+            # the address fallback until an explicit gather replaces them.
+            matches = [
+                device_id
+                for device_id, record in remembered.items()
+                if record.mac is None and record.address.lower() == address
+            ]
+        else:
+            matches = [
+                device_id for device_id, record in remembered.items() if record.address.lower() == address
+            ]
+        return self._sessions.get(matches[0]) if len(matches) == 1 else None
+
+    async def _recovery_loop(self) -> None:
+        loop = asyncio.get_running_loop()
+        while True:
+            started = loop.time()
+            candidates = [
+                session
+                for device_id, session in self._sessions.items()
+                if device_id in self._connection_hosts[self.registry.host]
+                and session.state not in _LIVE
+                and session.busy is None
+                and session not in self._releasing
+            ]
+            if not candidates or self.gathering:
+                await asyncio.sleep(self._recovery_interval)
+                continue
+            try:
+                async with self._scan_lock:
+                    found = await self._scan(self._recovery_interval)
+            except Exception as exc:  # noqa: BLE001 - automatic recovery keeps retrying
+                _log.warning("recovery scan failed: %s", exc)
+                found = []
+            if self.gathering:
+                continue
+            for device in found:
+                session = self._recovery_session(device)
+                key = device.address.lower()
+                if (
+                    session is None
+                    or session.state in _LIVE
+                    or session.busy is not None
+                    or session in self._releasing
+                    or session in self._connecting_targets.values()
+                    or key in self._connecting
+                ):
+                    continue
+                self._connecting[key] = asyncio.create_task(self._gather_one(device, session))
+                self._connecting_targets[key] = session
+                self._connecting_sources[key] = "recovery"
+            delay = self._recovery_interval - (loop.time() - started)
+            if delay > 0:
+                await asyncio.sleep(delay)
 
     async def release(self, device_ids: Iterable[str] | None = None) -> None:
         """Close these sessions (all if None, incl. ones still being connected)
         and forget them."""
+        await self._release(device_ids, forget=True)
+
+    async def _release(self, device_ids: Iterable[str] | None, *, forget: bool) -> None:
         ids = list(self._sessions) if device_ids is None else list(device_ids)
         sessions = [self._sessions[i] for i in ids]  # KeyError before anything is closed
+        if forget:
+            self._forget(ids)
         # marked before the first await: the gather loop must not reconnect a session
         # (or connect its address afresh) while it is being closed here
         marked = [s for s in sessions if s not in self._releasing]
         self._releasing.update(marked)
         try:
-            keys = self._connecting if device_ids is None else [s.address.lower() for s in sessions]
+            keys = self._connecting if device_ids is None else [
+                key for key, target in self._connecting_targets.items() if target in sessions
+            ] + [s.address.lower() for s in sessions]
             await self._cancel_connects(keys)
             closing = sessions + (list(self._unidentified) if device_ids is None else [])
             await asyncio.gather(*(s.close() for s in closing))
@@ -266,14 +536,17 @@ class Fleet:
             self._releasing.difference_update(marked)
 
     async def aclose(self) -> None:
-        """Cancel unfinished batches, stop gathering and release everything."""
+        """Cancel work and close links without forgetting automatic recovery."""
         try:
             await asyncio.gather(*(batch.cancel() for batch in list(self._batches)))
         finally:
             try:
-                await self.stop_gather()
+                await self.stop_recovery()
             finally:
-                await self.release()
+                try:
+                    await self.stop_gather()
+                finally:
+                    await self._release(None, forget=False)
 
     async def __aenter__(self) -> Fleet:
         return self

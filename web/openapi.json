@@ -1525,6 +1525,11 @@
             "title": "Address",
             "type": "string"
           },
+          "auto_reconnect": {
+            "default": false,
+            "title": "Auto Reconnect",
+            "type": "boolean"
+          },
           "battery_pct": {
             "anyOf": [
               {
@@ -1580,6 +1585,18 @@
             "title": "Lost Reason",
             "type": "string"
           },
+          "mac": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Mac"
+          },
           "name": {
             "anyOf": [
               {
@@ -1594,8 +1611,10 @@
         },
         "required": [
           "address",
+          "mac",
           "name",
           "link",
+          "auto_reconnect",
           "busy",
           "lost_reason",
           "battery_pct",
@@ -2830,6 +2849,15 @@
       },
       "ServerInfo": {
         "properties": {
+          "ble_transport": {
+            "default": "browser",
+            "enum": [
+              "browser",
+              "server"
+            ],
+            "title": "Ble Transport",
+            "type": "string"
+          },
           "lan": {
             "title": "Lan",
             "type": "boolean"
@@ -2852,7 +2880,8 @@
         "required": [
           "version",
           "lan",
-          "sim"
+          "sim",
+          "ble_transport"
         ],
         "title": "ServerInfo",
         "type": "object"

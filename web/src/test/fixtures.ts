@@ -38,8 +38,10 @@ export const NOW_S = 1_790_000_000 // fixed epoch seconds for deterministic test
 export function live(n: number, patch: Partial<LiveInfo> = {}): LiveInfo {
   return {
     address: address(n),
+    mac: null,
     name: bleName(n),
     link: 'connected',
+    auto_reconnect: false,
     busy: null,
     lost_reason: '',
     battery_pct: 87,
@@ -81,7 +83,7 @@ export function pending(site: SiteView, alias: string, n: number): PendingView {
 export function stateSnapshot(patch: Partial<StateSnapshot> = {}): StateSnapshot {
   return {
     seq: 10,
-    server: { version: '0.0.0', lan: false, sim: { count: 3, speed: 20 } },
+    server: { ble_transport: 'browser', version: '0.0.0', lan: false, sim: { count: 3, speed: 20 } },
     gather: { gathering: false, connecting: [] },
     sites: [SITE_A],
     sensors: [],

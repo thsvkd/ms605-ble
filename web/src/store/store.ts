@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { ApplyItemView, ApplyJobView, BatchView, SensorView, SiteView } from '../api/types'
+import { sensorDisplayName } from '../alias'
 import {
   addWatch,
   type AppState,
@@ -128,9 +129,9 @@ export function selectSessions({ sensors, sites }: Pick<AppState, 'sensors' | 's
     })
 }
 
-/** Alias, else BLE name, else address, else id. */
+/** Alias, else advertised MAC label, BLE name, address, then id. */
 export function sensorName(s: SensorView | undefined, fallback = ''): string {
-  return s?.registry?.alias ?? s?.live?.name ?? s?.live?.address ?? (s?.device_id || fallback)
+  return sensorDisplayName(s, fallback)
 }
 
 /** The current round is waiting or running. */

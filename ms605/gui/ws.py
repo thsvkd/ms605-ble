@@ -460,8 +460,10 @@ class Hub:
             info = session.info
             live = LiveInfo(
                 address=session.address,
+                mac=info.mac if info else None,
                 name=session.name,
                 link=session.state,
+                auto_reconnect=self.fleet.recovery_enabled,
                 busy=session.busy,
                 lost_reason=session.last_lost_reason,
                 battery_pct=info.battery_pct if info else None,

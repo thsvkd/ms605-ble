@@ -415,6 +415,16 @@ def test_speed_needs_sim():
             _gui_args(*bad)
 
 
+def test_gui_tls_requires_both_certificate_and_key():
+    for argv in (("--ssl-certfile", "cert.pem"), ("--ssl-keyfile", "key.pem")):
+        with pytest.raises(SystemExit) as info:
+            _gui_args(*argv)
+        assert info.value.code == 2
+    args = _gui_args("--ssl-certfile", "cert.pem", "--ssl-keyfile", "key.pem")
+    assert args.ssl_certfile == "cert.pem"
+    assert args.ssl_keyfile == "key.pem"
+
+
 def test_port_in_use(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("MS605_DATA_DIR", str(tmp_path))
     with socket.socket() as busy:

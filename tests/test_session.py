@@ -844,3 +844,21 @@ def test_pir_read_uses_the_full_write_budget():
         await session.close()
 
     asyncio.run(main())
+
+
+def test_identify_retains_transport_mac_separately_from_device_id():
+    async def main():
+        dev, session, _ = _setup()
+        await session.connect()
+        try:
+            session.ms._client.mac = 'C4:E7:AE:12:34:56'
+            info = await session.read_info()
+            assert info.mac == 'C4:E7:AE:12:34:56'
+            assert info.device_id == 'c4e7ae123456'
+            from ms605.protocol import TAG_DEVICE_ID
+            dev.tags[TAG_DEVICE_ID] = b'changed-legacy-response'
+            assert (await session.read_info()).device_id == info.device_id
+        finally:
+            await session.close()
+
+    asyncio.run(main())

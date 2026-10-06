@@ -26,12 +26,21 @@ describe('sensorStatus (9.3)', () => {
   it('lost -> warn, and the hint depends on whether gathering is on', () => {
     const v = sensor(1, { live: live(1, { link: 'lost' }) })
     expect(sensorStatus(v, true, NOW)).toMatchObject({ kind: 'warn', label: '연결 끊김', hint: '센서 버튼을 다시 누르세요' })
-    expect(sensorStatus(v, false, NOW).hint).toBe('센서 모으기를 켜고 버튼을 누르세요')
+    expect(sensorStatus(v, false, NOW).hint).toBe('센서 추가를 켜고 버튼을 누르세요')
   })
 
   it('disconnected -> off', () => {
     const s = sensorStatus(sensor(1, { live: live(1, { link: 'disconnected' }) }), false, NOW)
     expect(s).toMatchObject({ kind: 'off', label: '연결 해제됨' })
+  })
+
+  it.each(['lost', 'disconnected'] as const)('remembered %s sensor explains automatic recovery', (link) => {
+    const s = sensorStatus(sensor(1, { live: live(1, { link, auto_reconnect: true }) }), false, NOW)
+    expect(s.hint).toContain('1초 간격')
+    expect(s.hint).not.toContain('센서 추가를 켜고')
+    if (link === 'disconnected') expect(s.label).toBe('재연결 대기')
+    expect(sensorStatus(sensor(1, { live: live(1, { link, auto_reconnect: true }) }), true, NOW).hint)
+      .toBe('센서 버튼을 다시 누르세요')
   })
 
   it('no session -> off with last-seen hint', () => {

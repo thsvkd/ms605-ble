@@ -31,19 +31,19 @@ describe('DashboardScreen', () => {
     const labA = screen.getByRole('region', { name: /Lab A/ })
     expect(within(labA).getByText('센서 1')).toBeInTheDocument()
     expect(within(labA).getByText('북쪽 벽')).toBeInTheDocument()
-    expect(within(labA).getByText('센서 모으기를 켜고 버튼을 누르세요')).toBeInTheDocument() // lost hint, not gathering
+    expect(within(labA).getByText('센서 추가를 켜고 버튼을 누르세요')).toBeInTheDocument() // lost hint, not gathering
     expect(within(labA).getByText('배터리 64% (마지막 값)')).toBeInTheDocument()
     expect(screen.getByRole('region', { name: /Lab B/ })).toHaveTextContent('창가 센서')
 
     const unregistered = screen.getByRole('region', { name: /등록되지 않은 센서/ })
     expect(within(unregistered).getByText(bleName(5))).toBeInTheDocument()
-    expect(within(unregistered).getByRole('button', { name: '이름 붙이기' })).toBeInTheDocument()
+    expect(within(unregistered).getByRole('button', { name: '센서 등록' })).toBeInTheDocument()
 
     const pend = screen.getByRole('region', { name: /가져온 센서/ })
     expect(within(pend).getByText('센서 9')).toBeInTheDocument()
     expect(within(pend).getByText('버튼을 누르면 자동으로 등록됩니다')).toBeInTheDocument()
 
-    expect(screen.getByRole('link', { name: '센서 모으기' })).toHaveAttribute('href', '/gather')
+    expect(screen.getByRole('link', { name: '센서 추가' })).toHaveAttribute('href', '/gather')
     expect(screen.getByRole('button', { name: '모두 연결 해제' })).toBeInTheDocument()
   })
 
@@ -59,7 +59,7 @@ describe('DashboardScreen', () => {
     resetStore(storeState())
     render(<DashboardScreen />)
     expect(screen.getByText('아직 등록된 센서가 없습니다')).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: '센서 모으기' })).toHaveAttribute('href', '/gather')
+    expect(screen.getByRole('link', { name: '센서 추가' })).toHaveAttribute('href', '/gather')
     expect(screen.queryByRole('button', { name: '모두 연결 해제' })).not.toBeInTheDocument()
   })
 
@@ -67,7 +67,7 @@ describe('DashboardScreen', () => {
     resetStore(storeState({ sensors: richSensors(), gather: { gathering: true, connecting: [] } }))
     render(<DashboardScreen />)
     fireEvent.click(screen.getByRole('button', { name: '모두 연결 해제' }))
-    expect(screen.getByText(/센서 모으기를 멈추고 모든 연결을 해제합니다/)).toBeInTheDocument()
+    expect(screen.getByText(/센서 추가를 멈추고 모든 연결을 해제합니다/)).toBeInTheDocument()
   })
 
   it('release-all is disabled with a note while an apply job runs, and enabled once it is done', () => {
@@ -86,7 +86,7 @@ describe('DashboardScreen', () => {
   it('the primary action points at the running gather', () => {
     resetStore(storeState({ sensors: richSensors(), gather: { gathering: true, connecting: [] } }))
     render(<DashboardScreen />)
-    expect(screen.getByRole('link', { name: '모으는 중 — 보러 가기' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: '추가 중 — 보러 가기' })).toBeInTheDocument()
     expect(screen.getAllByText('센서 버튼을 다시 누르세요').length).toBeGreaterThan(0)
   })
 })

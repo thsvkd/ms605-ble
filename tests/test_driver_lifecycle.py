@@ -765,3 +765,25 @@ def test_profile_error_is_exported_from_the_package():
     import ms605
 
     assert ms605.ProfileError is ProfileError and "ProfileError" in ms605.__all__
+
+
+def test_scan_mac_is_separate_from_host_uuid_and_expires(monkeypatch):
+    handle = BLEDevice('00000000-0000-4000-8000-000000000007', 'ms605', None)
+    adv = SimAdvertisement(local_name='ms605', rssi=-42, manufacturer_data={
+        0xffff: bytes.fromhex('c01801001a0400010203190a1c00c4e7ae123456abcd00'),
+    })
+
+    class Scanner:
+        @staticmethod
+        async def discover(timeout, return_adv):
+            return {handle.address: (handle, adv)}
+
+    monkeypatch.setattr(driver_mod, 'BleakScanner', Scanner)
+    monkeypatch.setattr(MS605, '_scan_rssi', {})
+    monkeypatch.setattr(MS605, '_scan_mac', {})
+    assert _run(MS605.scan(timeout=0.01)) == [handle]
+    assert MS605.last_mac(handle) == 'C4:E7:AE:12:34:56'
+    assert MS605.last_mac(handle.address) == 'C4:E7:AE:12:34:56'
+    rssi, seen = MS605._scan_rssi[handle.address]
+    MS605._scan_rssi[handle.address] = (rssi, seen - 61)
+    assert MS605.last_mac(handle) is None

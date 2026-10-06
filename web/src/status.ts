@@ -52,9 +52,13 @@ export function sensorStatus(view: SensorView, gathering: boolean, now: number =
         kind: 'warn',
         icon: AlertTriangle,
         label: t.link.lost,
-        hint: gathering ? t.link.lostHintGathering : t.link.lostHintIdle,
+        hint: gathering ? t.link.lostHintGathering : live.auto_reconnect ? t.link.reconnectHint : t.link.lostHintIdle,
       }
     case 'disconnected':
+      if (live.auto_reconnect) return {
+        kind: 'warn', icon: Clock, label: t.link.reconnectWaiting,
+        hint: gathering ? t.link.lostHintGathering : t.link.reconnectHint,
+      }
       return { kind: 'off', icon: CircleSlash, label: t.link.disconnected }
   }
 }

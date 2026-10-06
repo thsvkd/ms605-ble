@@ -294,7 +294,7 @@ describe('MonitorScreen', () => {
     render(<MonitorScreen />)
     const lost = tileOf('센서 2')
     expect(lost).toHaveAttribute('data-stale', 'true')
-    expect(within(lost).getByText('센서 모으기를 켜고 버튼을 누르세요')).toBeInTheDocument()
+    expect(within(lost).getByText('센서 추가를 켜고 버튼을 누르세요')).toBeInTheDocument()
     pushLive(2)
     expect(within(lost).getByText('실시간 값 없음 (마지막 값)')).toBeInTheDocument()
 
@@ -371,7 +371,7 @@ describe('MonitorScreen', () => {
     at('/monitor')
     render(<MonitorScreen />)
     expect(screen.getByText('연결된 센서가 없습니다')).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: '센서 모으기' })).toHaveAttribute('href', '/gather')
+    expect(screen.getByRole('link', { name: '센서 추가' })).toHaveAttribute('href', '/gather')
   })
 })
 

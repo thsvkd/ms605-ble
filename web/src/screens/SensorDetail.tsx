@@ -2,6 +2,7 @@ import { ArrowLeft, Crosshair, Trash2, Unplug } from 'lucide-react'
 import { useState } from 'react'
 import { Link, useLocation } from 'wouter'
 import { ApiRequestError, deleteSensor, release } from '../api/client'
+import { sensorDisplayName } from '../alias'
 import { Button, buttonClass } from '../components/Button'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { EditSensorForm } from '../components/EditSensorForm'
@@ -52,8 +53,7 @@ export function SensorDetailScreen({ deviceId, tab = 'info' }: { deviceId: strin
   }
 
   const status = sensorStatus(sensor, gathering, now)
-  const reg = sensor.registry
-  const title = reg?.alias ?? sensor.live?.name ?? sensor.live?.address ?? deviceId
+  const title = sensorDisplayName(sensor, deviceId)
 
   const releaseOne = async () => {
     setError(null)

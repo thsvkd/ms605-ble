@@ -16,6 +16,8 @@ export function SensorInfoList({ sensor }: { sensor: SensorView }) {
       <dl className={styles.info}>
         <dt>{t.detail.deviceId}</dt>
         <dd className="mono">{sensor.device_id}</dd>
+        <dt>MAC</dt>
+        <dd className="mono">{live?.mac ?? none}</dd>
         <dt>{t.detail.address}</dt>
         <dd className="mono">{live?.address ?? none}</dd>
         <dt>{t.detail.firmware}</dt>

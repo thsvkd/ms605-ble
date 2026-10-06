@@ -165,3 +165,18 @@ def test_tag33_time_sync_uses_u32_big_endian():
     assert datetime.fromtimestamp(epoch, timezone.utc) == datetime(
         2023, 11, 14, 22, 13, 20, tzinfo=timezone.utc
     )
+
+
+def test_mac_from_manufacturer_metadata():
+    from ms605.protocol import advertised_mac, decode_device_mac
+
+    # Synthetic unit suffix and surrounding fields; known Meross vendor OUI.
+    metadata = bytes.fromhex('1c00c4e7ae123456abcd')
+    assert decode_device_mac(metadata) == 'C4:E7:AE:12:34:56'
+    advertisement = bytes.fromhex('c01801001a0400010203190a') + metadata + b'\x00'
+    assert advertised_mac({0xffff: advertisement}) == 'C4:E7:AE:12:34:56'
+    for invalid in [b'', metadata[:-1], metadata + b'\x00', bytes(10), bytes.fromhex('1c00001122123456abcd')]:
+        assert decode_device_mac(invalid) is None
+    for invalid in [b'', b'\xc0', advertisement[:18], bytes.fromhex('c11801001a0400010203190a') + metadata]:
+        assert advertised_mac({0xffff: invalid}) is None
+    assert advertised_mac({0x004c: advertisement}) is None

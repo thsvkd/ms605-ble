@@ -8,16 +8,23 @@ import styles from './gather.module.css'
 export function GatherHero({ compact, wide }: { compact: boolean; wide: boolean }) {
   const gathering = useStore((s) => s.gather.gathering)
   const connecting = useStore((s) => s.gather.connecting.length)
+  const server = useStore((s) => s.server)
+  const transport = server && (server as typeof server & { ble_transport?: 'browser' | 'server' }).ble_transport
+  const browser = server !== null && server.sim === null && (transport ?? 'browser') === 'browser'
+  const serverBle = server !== null && server.sim === null && transport === 'server'
 
   if (gathering && compact) {
     return (
-      <div className={styles.compact} role="status">
-        <BluetoothSearching size={22} className={styles.compactIcon} aria-hidden />
-        <span className={styles.compactText}>
-          <span>{t.gather.pressTitle}</span>
-          {connecting > 0 && <span className={styles.compactSub}>· {t.gather.connecting(connecting)}</span>}
-        </span>
-      </div>
+      <>
+        <div className={styles.compact} role="status">
+          <BluetoothSearching size={22} className={styles.compactIcon} aria-hidden />
+          <span className={styles.compactText}>
+            <span>{browser ? t.gather.chooseTitle : t.gather.pressTitle}</span>
+            {connecting > 0 && <span className={styles.compactSub}>· {t.gather.connecting(connecting)}</span>}
+          </span>
+        </div>
+        {(browser || serverBle) && <p className={styles.heroBody}>{browser ? t.bluetooth.client : t.bluetooth.server}</p>}
+      </>
     )
   }
 
@@ -33,9 +40,9 @@ export function GatherHero({ compact, wide }: { compact: boolean; wide: boolean 
         )}
         <span className={styles.sonarCore}>{gathering ? <BluetoothSearching size={34} /> : <Bluetooth size={34} />}</span>
       </div>
-      <h2 className={styles.heroTitle}>{gathering ? t.gather.pressTitle : t.gather.idleTitle}</h2>
+      <h2 className={styles.heroTitle}>{gathering ? (browser ? t.gather.chooseTitle : t.gather.pressTitle) : t.gather.idleTitle}</h2>
       <p className={styles.heroBody}>
-        {gathering ? (wide ? t.gather.pressBodyWide : t.gather.pressBody) : t.gather.idleBody}
+        {browser ? t.bluetooth.client : serverBle ? t.bluetooth.server : gathering ? (wide ? t.gather.pressBodyWide : t.gather.pressBody) : t.gather.idleBody}
       </p>
       <ConnectingLine />
     </section>

@@ -9,7 +9,7 @@ describe('App', () => {
     resetStore({ ...storeState(), conn: 'unauthorized' })
     render(<App />)
     expect(screen.getByRole('heading', { name: '접속 권한이 없습니다' })).toBeInTheDocument()
-    expect(screen.getByText(/서버가 다시 시작되었다면 새 주소가 필요합니다/)).toBeInTheDocument()
+    expect(screen.getByText(/접근 토큰이 바뀌었거나 저장 위치가 달라졌다면 새 주소가 필요합니다/)).toBeInTheDocument()
     expect(screen.queryByRole('navigation')).not.toBeInTheDocument()
   })
 
@@ -18,7 +18,7 @@ describe('App', () => {
     render(<App />)
     expect(screen.getAllByRole('navigation', { name: '주 메뉴' }).length).toBeGreaterThan(0)
     expect(screen.getByText('시뮬레이터')).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: /모으는 중/ })).toHaveAttribute('href', '/gather')
+    expect(screen.getByRole('link', { name: /추가 중/ })).toHaveAttribute('href', '/gather')
   })
 
   it('shows the reconnect banner and dims the page while the socket is down', () => {

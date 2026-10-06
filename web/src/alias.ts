@@ -1,11 +1,24 @@
 import type { LiveInfo, SensorView } from './api/types'
 import { t } from './strings'
 
-/** Prefer a MAC suffix; fall back to an unused site sequence when unavailable (9.4). */
+function macSuffix(value: string | null | undefined): string | null {
+  return /^(?:[0-9a-f]{12}|(?:[0-9a-f]{2}:){5}[0-9a-f]{2}|(?:[0-9a-f]{2}-){5}[0-9a-f]{2})$/i.test(value ?? '')
+    ? value!.replace(/[:-]/g, '').slice(-6).toUpperCase()
+    : null
+}
+
+/** Registered alias, else actual advertised MAC, then the existing BLE identity fallbacks. */
+export function sensorDisplayName(sensor: SensorView | undefined, fallback = ''): string {
+  const suffix = macSuffix(sensor?.live?.mac)
+  return sensor?.registry?.alias ?? (suffix ? t.sensor.macAlias(suffix) : null) ??
+    sensor?.live?.name ?? sensor?.live?.address ?? (sensor?.device_id || fallback)
+}
+
+/** Prefer a MAC suffix; fall back to an unused site sequence when unavailable. */
 export function defaultAlias(
   sensors: Record<string, SensorView>,
   siteId: string | null,
-  identity?: Pick<LiveInfo, 'address' | 'name'> | null,
+  identity?: Pick<LiveInfo, 'mac' | 'address' | 'name'> | null,
 ): string {
   const taken = new Set<string>()
   if (siteId !== null) {
@@ -13,10 +26,8 @@ export function defaultAlias(
       if (s.registry?.site_id === siteId) taken.add(s.registry.alias)
     }
   }
-  const mac = identity?.address ?? ''
-  const suffix = /^(?:[0-9a-f]{12}|(?:[0-9a-f]{2}:){5}[0-9a-f]{2}|(?:[0-9a-f]{2}-){5}[0-9a-f]{2})$/i.test(mac)
-    ? mac.replace(/[:-]/g, '').slice(-6)
-    : identity?.name?.match(/^(?:RFBL|MRBL)_([0-9a-f]{6})$/i)?.[1]
+  const suffix = macSuffix(identity?.mac) ?? macSuffix(identity?.address) ??
+    identity?.name?.match(/^(?:RFBL|MRBL)_([0-9a-f]{6})$/i)?.[1]?.toUpperCase()
   if (suffix) {
     const base = t.sensor.macAlias(suffix.toUpperCase())
     let alias = base

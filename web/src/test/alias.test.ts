@@ -1,11 +1,19 @@
 import { describe, expect, it } from 'vitest'
-import { defaultAlias } from '../alias'
+import { defaultAlias, sensorDisplayName } from '../alias'
 import type { SensorView } from '../api/types'
 import { live, registry, SITE_A, SITE_B, sensor } from './fixtures'
 
 const map = (...views: SensorView[]) => Object.fromEntries(views.map((v) => [v.device_id, v]))
 
 describe('defaultAlias', () => {
+  it('prefers the device MAC over the host BLE address and advertised name', () => {
+    expect(defaultAlias(
+      {},
+      'lab-a',
+      live(1, { mac: '84:CC:A8:12:34:56', address: '02:00:00:ab:cd:ef', name: 'RFBL_ABCDEF' }),
+    )).toBe('MS605-123456')
+  })
+
   it.each(['02:00:00:ab:cd:ef', '02-00-00-AB-CD-EF', '020000aBcDeF'])(
     'uses the last six MAC characters as contiguous uppercase hex: %s',
     (address) => {
@@ -66,5 +74,20 @@ describe('defaultAlias', () => {
     )
     expect(defaultAlias(m, 'lab-a')).toBe('센서 4')
     expect(defaultAlias(m, 'lab-b')).toBe('센서 2')
+  })
+})
+
+describe('sensorDisplayName', () => {
+  it('shows the actual advertised MAC suffix before the BLE name or host address', () => {
+    const view = sensor(1, { live: live(1, { mac: '84:CC:A8:12:34:56', name: 'ms605' }) })
+    expect(sensorDisplayName(view)).toBe('MS605-123456')
+  })
+
+  it('keeps a registered alias ahead of the advertised MAC', () => {
+    const view = sensor(1, {
+      registry: registry(SITE_A, '북쪽 벽'),
+      live: live(1, { mac: '84:CC:A8:12:34:56' }),
+    })
+    expect(sensorDisplayName(view)).toBe('북쪽 벽')
   })
 })
