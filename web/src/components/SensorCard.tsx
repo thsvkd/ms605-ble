@@ -1,5 +1,6 @@
 import { memo } from 'react'
 import { Link } from 'wouter'
+import { useShallow } from 'zustand/react/shallow'
 import { relativeTime } from '../format'
 import { useNow } from '../hooks/useNow'
 import { presenceOf } from '../presence'
@@ -18,7 +19,20 @@ import styles from './dashboard.module.css'
 export const SensorCard = memo(function SensorCard({ deviceId }: { deviceId: string }) {
   const t = useStrings()
   const sensor = useStore((s) => s.sensors[deviceId])
-  const frame = useStore((s) => s.live[deviceId])
+  // Radar levels arrive several times a second but this card only draws presence signals. Flatten S1..S3 so
+  // Zustand can skip a render when a new frame carries the same displayed signal values.
+  const presence = useStore(useShallow((s) => {
+    const p = presenceOf(s.live[deviceId])
+    return {
+      pir: p.pir,
+      rf: p.rf,
+      present: p.present,
+      subsKnown: p.subs !== null,
+      s1: p.subs?.[0] ?? false,
+      s2: p.subs?.[1] ?? false,
+      s3: p.subs?.[2] ?? false,
+    }
+  }))
   const gathering = useStore((s) => s.gather.gathering)
   const now = useNow()
   if (!sensor?.registry) return null
@@ -46,7 +60,14 @@ export const SensorCard = memo(function SensorCard({ deviceId }: { deviceId: str
       </p>
       {connected && (
         <div className={styles.presence}>
-          <PresencePanel presence={presenceOf(frame)} />
+          <PresencePanel
+            presence={{
+              pir: presence.pir,
+              rf: presence.rf,
+              present: presence.present,
+              subs: presence.subsKnown ? [presence.s1, presence.s2, presence.s3] : null,
+            }}
+          />
         </div>
       )}
     </Link>

@@ -36,7 +36,7 @@ export const en = {
   bluetooth: {
     client: 'Connect using Bluetooth on the device running this browser. Keep the sensor near this device, press its button, then select it in the chooser. Add each sensor once and keep this tab open.',
     server: 'Connect using Bluetooth on the computer running the web app server. Keep the sensor near that computer and press its button. Added sensors are remembered when you close this page and reconnect automatically.',
-    secure: 'At this shared address, you can view, configure, and calibrate connected sensors. To add a new sensor, use localhost on the server computer or open a trusted HTTPS address on this device.',
+    secure: 'This HTTP address lets you view, configure and calibrate connected sensors. To add sensors using this device’s Bluetooth, open the HTTPS address in the sharing QR. Trust the generated certificate on this device once before connecting.',
     unsupported: 'This browser does not support Web Bluetooth. Open this page in a Bluetooth-capable Chrome or Edge browser. The default browser on iPhone and iPad is not supported.',
     permission: 'Turn on Bluetooth and allow this browser to access it. On macOS, check the browser under System Settings → Privacy & Security → Bluetooth.',
     failed: 'Could not connect to the sensor. Turn on Bluetooth, press the sensor button again, and select it.',

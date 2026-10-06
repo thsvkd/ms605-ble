@@ -113,7 +113,7 @@ inputs intact. Sensor names, sites and notes are not translated.
 
 ```bash
 make setup                          # or: uv sync  (installs the GUI dependencies)
-make gui                            # LAN HTTP sharing QR plus HTTPS; certificates prepared automatically
+make gui                            # HTTPS QR; sensors use the scanning client’s Bluetooth
 make gui ARGS="--lan-host 192.0.2.10" # put this address in the QR (VPN, several interfaces)
 make gui ARGS="--sim 7 --speed 20"   # demo with 7 simulated sensors, no hardware
 uv run ms605 gui                     # allow localhost access only
@@ -122,14 +122,16 @@ make gui ARGS="--ssl-certfile cert.pem --ssl-keyfile key.pem"  # optional custom
 
 - Every `gui` launch keeps an HTTPS listener, including simulator mode. With
   `--lan` (the `make gui` default), a second HTTP listener serves the same app
-  and sessions. Its LAN URL is printed as the sharing QR: guests on the same
-  reachable network need no tailnet membership or certificate installation.
+  and sessions. In the default browser Bluetooth mode, the sharing QR opens the
+  **HTTPS** LAN URL so the visitor can use their own device’s Bluetooth. Guests
+  need no tailnet membership, but each device must trust the HTTPS certificate.
+  The HTTP companion is for viewing and controlling existing sessions; it cannot
+  pair sensors through a remote browser’s Bluetooth.
   The default sharing port is the HTTPS port plus one (8606 by default);
   `--share-port` chooses another port, and `0` chooses a free port.
-  In the default `make gui` server transport, LAN guests can add nearby sensors,
-  monitor, configure and calibrate them without keeping a particular tab open.
-  In browser transport, use localhost or trusted HTTPS and keep the owning tab
-  open. Remote HTTP guests cannot pair sensors through their own Bluetooth.
+  Keep the browser tab that owns the sensor connection open. With explicit
+  `--ble-transport server`, the sharing QR uses HTTP and sensors connect through
+  the server computer; guests then need neither Web Bluetooth nor a trusted CA.
 - Without TLS flags,
   OpenSSL creates a local CA and server certificate in
   `<data_root>/cal_results/gui_tls/` and reuses them on later launches.
@@ -142,8 +144,8 @@ make gui ARGS="--ssl-certfile cert.pem --ssl-keyfile key.pem"  # optional custom
   The app does not change system trust settings. An already trusted custom
   certificate can still be supplied with both TLS flags. OpenSSL is needed
   only for automatic certificates.
-- `make gui` enables `--lan --ble-transport server` by default. Use
-  `make gui ARGS="--ble-transport browser"` for the client Bluetooth adapter. When Tailscale is running, it prints
+- `make gui` enables `--lan --ble-transport browser` by default. Use
+  `make gui ARGS="--ble-transport server"` only for the server Bluetooth adapter. When Tailscale is running, it prints
   the node's IPv4 URL and, when MagicDNS is enabled, its DNS URL. Both support
   authenticated API and live WebSocket access with the same token. The client
   must join the same tailnet, and its policy and the host firewall must allow
@@ -192,13 +194,14 @@ make gui ARGS="--ssl-certfile cert.pem --ssl-keyfile key.pem"  # optional custom
 - Open the printed URL once. The token in it is swapped for an HttpOnly cookie
   and reused after a restart. The private `cal_results/gui_access_token` file
   stores it with mode 0600; delete it while the server is stopped to rotate access. Anyone holding the URL can
-  control your sensors. The LAN sharing URL uses plain HTTP on a separate
-  listener; use it on a trusted network. It is not an Internet-public link.
-  Remote clients that pair sensors themselves must use the trusted HTTPS URL.
+  control your sensors. The HTTP companion listener uses plain HTTP; use it on
+  a trusted network. The LAN addresses are not Internet-public links. Remote
+  clients that pair sensors themselves must use the trusted HTTPS QR URL.
 - Only one server Bluetooth GUI may use a data directory, even on different ports.
   A second instance exits without taking over its sensors; the normal `make gui`
   restart replaces the previous process.
-- In server Bluetooth mode (`make gui`), added sensors are remembered, including
+- In explicit server Bluetooth mode (`make gui ARGS="--ble-transport server"`),
+  added sensors are remembered, including
   those without a saved name. Closing a browser leaves their links alive. After a
   disconnect or server restart, the server checks for remembered sensors every
   second and reconnects when they advertise. Attempts never overlap for one

@@ -82,7 +82,8 @@ def test_gui_uses_only_browser_bluetooth_and_advertises_tls(tmp_path, monkeypatc
     assert asyncio.run(gui_cli.run_gui(args, scan_secs=0.01, connect_timeout=1)) == 0
     output = capsys.readouterr().out
     assert "ms605 gui: https://127.0.0.1:8605/" in output
-    assert "LAN 주소: https://192.0.2.10:8605/" in output
+    assert "LAN 공유 주소 (브라우저 Bluetooth): https://192.0.2.10:8605/" in output
+    assert "브라우저 Bluetooth에는 HTTPS가 필요합니다" in output
 
 
 def test_server_ble_transport_scans_the_server_adapter(tmp_path, monkeypatch, capsys):

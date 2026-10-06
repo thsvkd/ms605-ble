@@ -62,7 +62,7 @@ export const ko = {
   bluetooth: {
     client: '이 브라우저를 연 기기의 Bluetooth로 연결합니다. 센서를 이 기기 가까이에 두고 버튼을 누른 뒤 선택 창에서 고르세요. 센서마다 한 번씩 추가하고 연결한 탭을 열어 두세요.',
     server: '웹 앱을 실행한 서버 컴퓨터의 Bluetooth로 연결합니다. 센서를 그 컴퓨터 가까이에 두고 버튼을 누르세요. 추가한 센서는 화면을 닫아도 기억하며, 연결이 끊기면 자동으로 다시 연결합니다.',
-    secure: '이 공유 주소에서는 연결된 센서를 보고 설정·보정할 수 있습니다. 새 센서는 서버 컴퓨터의 localhost 주소에서 연결하거나, 이 기기에서 신뢰된 HTTPS 주소로 접속해 추가하세요.',
+    secure: '이 HTTP 주소에서는 연결된 센서를 보고 설정·보정할 수 있습니다. 이 기기의 Bluetooth로 새 센서를 추가하려면 공유 QR의 HTTPS 주소로 접속하세요. 자동 생성 인증서는 이 기기에서 최초 한 번 신뢰 등록해야 합니다.',
     unsupported: '이 브라우저는 Web Bluetooth를 지원하지 않습니다. Bluetooth를 지원하는 Chrome 또는 Edge에서 열어 주세요. iPhone·iPad의 기본 브라우저에서는 사용할 수 없습니다.',
     permission: '이 기기의 Bluetooth를 켜고 브라우저의 Bluetooth 접근 권한을 허용하세요. macOS에서는 시스템 설정 → 개인정보 보호 및 보안 → Bluetooth에서 브라우저를 확인하세요.',
     failed: '센서에 연결하지 못했습니다. 이 기기의 Bluetooth를 켜고 센서 버튼을 다시 누른 뒤 선택하세요.',

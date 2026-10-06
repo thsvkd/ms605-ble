@@ -6,11 +6,11 @@ import {
   type PointerEvent as ReactPointerEvent,
   useEffect,
   useId,
-  useMemo,
   useRef,
   useState,
 } from 'react'
 import { Link } from 'wouter'
+import { useShallow } from 'zustand/react/shallow'
 import type { LiveZone } from '../api/types'
 import { useNow } from '../hooks/useNow'
 import { presenceOf, presenceTally, type SignalKind, signalTone, type Tri } from '../presence'
@@ -30,12 +30,9 @@ const state = (v: Tri) => (v === null ? 'unknown' : v ? 'on' : 'off')
  */
 export function MonitorSummary({ ids }: { ids: readonly string[] }) {
   const t = useStrings()
-  const live = useStore((s) => s.live)
-  const sensors = useStore((s) => s.sensors)
-  const c = useMemo(
-    () => presenceTally(ids.map((id) => ({ frame: live[id], connected: sensors[id]?.live?.link === 'connected' }))),
-    [ids, live, sensors],
-  )
+  const c = useStore(useShallow((s) =>
+    presenceTally(ids.map((id) => ({ frame: s.live[id], connected: s.sensors[id]?.live?.link === 'connected' }))),
+  ))
   const stats = [
     { key: 'present', n: c.present, tone: 'present', Icon: UserRound, label: t.monitor.summaryPresent(c.total) },
     { key: 'pir', n: c.pir, tone: 'hit', Icon: Eye, label: t.monitor.summaryPir },

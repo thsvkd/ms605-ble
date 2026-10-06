@@ -193,9 +193,35 @@ def test_gui_advertised_hosts_allow_cookie_api_and_websockets(tmp_path, monkeypa
         http_port = next(port for config, port in listeners if config.ssl_certfile is None)
         assert http_port == https_port + 1
         assert f"로컬 HTTP 주소: http://127.0.0.1:{http_port}/?t=synthetic-token" in output
-        assert f"LAN 공유 주소: http://192.0.2.10:{http_port}/?t=synthetic-token" in output
+        assert f"LAN 공유 주소 (브라우저 Bluetooth): https://192.0.2.10:{https_port}/?t=synthetic-token" in output
+        assert f"LAN HTTP 보기 주소: http://192.0.2.10:{http_port}/?t=synthetic-token" in output
+        assert "브라우저 Bluetooth에는 HTTPS가 필요합니다" in output
         if not discovered:
             assert "Tailnet 주소를 찾지 못했습니다" in output
+
+
+def test_server_bluetooth_qr_uses_http_share_url_without_ca_install(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("MS605_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(gui_cli, "lan_ip", lambda: "192.0.2.10")
+    monkeypatch.setattr(gui_cli, "tailnet_hosts", lambda: [])
+    monkeypatch.setattr(gui_cli.secrets, "token_urlsafe", lambda _: "synthetic-token")
+    ephemeral_ports = iter((32000, 32001))
+    monkeypatch.setattr(
+        gui_cli, "_listener", lambda host, port: Listener(host, next(ephemeral_ports) if port == 0 else port)
+    )
+
+    async def serve(*_args, **_kwargs):
+        pass
+
+    monkeypatch.setattr(uvicorn.Server, "serve", serve)
+    args = build_parser().parse_args([
+        "gui", "--lan", "--sim", "1", "--port", "0", "--ble-transport", "server",
+    ])
+    assert asyncio.run(gui_cli.run_gui(args, scan_secs=1, connect_timeout=1)) == 0
+    output = capsys.readouterr().out
+    assert "LAN HTTPS 주소: https://192.0.2.10:32000/?t=synthetic-token" in output
+    assert "LAN 공유 주소 (서버 Bluetooth): http://192.0.2.10:32001/?t=synthetic-token" in output
+    assert "브라우저 Bluetooth에는 HTTPS가 필요합니다" not in output
 
 
 def test_lan_share_bind_failure_starts_neither_server(tmp_path, monkeypatch, capsys):

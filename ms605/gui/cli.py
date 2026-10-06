@@ -459,17 +459,25 @@ async def run_gui(args: argparse.Namespace, *, scan_secs: float, connect_timeout
         print("센서는 GUI 서버 컴퓨터의 Bluetooth로 연결합니다. 서버 근처에서 센서 버튼을 누르세요.", flush=True)
     if lan:
         share_host = ip or f"{host_name()}.local"
+        https_url = f"{scheme}://{share_host}:{port}/?t={token}"
+        http_url = f"http://{share_host}:{share_port}/?t={token}"
         if ip is None:
-            url = f"{scheme}://{host_name()}.local:{port}/?t={token}"  # an IP would not pass the Host check
-            print(f"LAN 주소를 찾지 못했습니다. 같은 네트워크의 기기에서 이 주소로 접속해 보세요: {url}", flush=True)
-        else:
-            url = f"{scheme}://{ip}:{port}/?t={token}"
-            print(f"LAN 주소: {url}", flush=True)
-            if lan_host is None:
-                print("폰에서 열리지 않으면(VPN 등) --lan-host <이 컴퓨터의 Wi-Fi 주소>로 다시 실행하세요.", flush=True)
-        share_url = f"http://{share_host}:{share_port}/?t={token}"
+            print("LAN 주소를 찾지 못했습니다. 같은 네트워크에서 아래 .local 주소로 접속해 보세요.", flush=True)
+        elif lan_host is None:
+            print("폰에서 열리지 않으면(VPN 등) --lan-host <이 컴퓨터의 Wi-Fi 주소>로 다시 실행하세요.", flush=True)
         print(f"로컬 HTTP 주소: http://127.0.0.1:{share_port}/?t={token}", flush=True)
-        print(f"LAN 공유 주소: {share_url}", flush=True)
+        if ble_transport == "browser":
+            share_url = https_url
+            print(f"LAN 공유 주소 (브라우저 Bluetooth): {share_url}", flush=True)
+            print(f"LAN HTTP 보기 주소: {http_url}", flush=True)
+            print(
+                "브라우저 Bluetooth에는 HTTPS가 필요합니다. QR은 HTTPS 공유 주소를 사용합니다.",
+                flush=True,
+            )
+        else:
+            share_url = http_url
+            print(f"LAN HTTPS 주소: {https_url}", flush=True)
+            print(f"LAN 공유 주소 (서버 Bluetooth): {share_url}", flush=True)
         segno.make(share_url, error="m").terminal(out=sys.stdout, compact=True)
         for host in tailnet:
             print(f"Tailnet 주소: {scheme}://{host}:{port}/?t={token}", flush=True)

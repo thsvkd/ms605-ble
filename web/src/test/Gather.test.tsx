@@ -52,7 +52,7 @@ describe('GatherScreen', () => {
     vi.stubGlobal('isSecureContext', false)
     render(<GatherScreen />)
     expect(screen.getByRole('button', { name: '센서 추가 시작' })).toBeDisabled()
-    expect(screen.getByText(/공유 주소에서는 연결된 센서를 보고 설정·보정/)).toBeInTheDocument()
+    expect(screen.getByText(/HTTP 주소에서는 연결된 센서를 보고 설정·보정/)).toBeInTheDocument()
   })
 
   it('idle: asks to start gathering', () => {

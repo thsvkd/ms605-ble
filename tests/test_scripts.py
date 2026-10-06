@@ -77,7 +77,7 @@ def test_legacy_test_script_stops_on_python_failure(checkout):
         ("run", "--help", "uv <run> <ms605> <--help>"),
         (
             "gui", "--sim 7 --speed 20",
-            "uv <run> <python> <scripts/gui.py> <--ble-transport> <server> <--sim> <7> <--speed> <20>",
+            "uv <run> <python> <scripts/gui.py> <--sim> <7> <--speed> <20>",
         ),
     ],
 )

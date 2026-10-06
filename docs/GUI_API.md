@@ -197,7 +197,8 @@ CORS 미들웨어는 두지 않는다(같은 출처만 쓴다). FastAPI의 `/doc
 
 `gui`의 주 리스너는 HTTPS다. 자동 인증서를 사용할 때 HTTPS로 접속하는 각 기기에 출력된 `ca.pem`을 최초 한 번 신뢰 등록한다.
 `--lan`에서는 같은 앱·토큰·센서 세션을 공유하는 HTTP 리스너를 추가한다(기본 주 포트 + 1, `--share-port`로 변경).
-LAN QR은 이 HTTP 주소를 담으므로 같은 네트워크의 손님은 인증서 설치나 tailnet 가입 없이 접속한다.
+기본 `browser` 모드의 LAN QR은 HTTPS 주소를 담는다. 같은 네트워크의 손님은 tailnet 가입 없이 접속하지만, 자동 생성 CA는 각 클라이언트에 신뢰 등록해야 한다.
+명시적 `server` 모드에서는 HTTP 주소를 QR로 제공하므로 클라이언트 인증서 설치가 필요 없다.
 서버 컴퓨터의 HTTP `localhost`는 Web Bluetooth를 사용할 수 있다. 원격 HTTP 클라이언트는 새 BLE 기기를
 선택할 수 없지만, 다른 브라우저가 유지하는 연결 센서의 모니터·설정·보정 API와 WebSocket은 사용할 수 있다.
 HTTPS와 HTTP는 각 포트의 인증 쿠키를 사용하며 두 주소 모두 토큰 교환 및 동일 출처 검사를 유지한다.
@@ -212,9 +213,9 @@ ms605 gui: https://127.0.0.1:8605/?t=<token>
 HTTPS 신뢰 인증서: <data_root>/cal_results/gui_tls/ca.pem   (자동 인증서일 때)
 최초 한 번, 접속할 각 기기에 이 CA 인증서를 신뢰 등록하세요. 개인 키 파일은 공유하지 마세요.
 시뮬레이터: 센서 3대, 속도 x20                      (--sim일 때만)
-LAN 주소: https://192.0.2.10:8605/?t=<token>        (--lan일 때만)
 로컬 HTTP 주소: http://127.0.0.1:8606/?t=<token>   (--lan일 때만)
-LAN 공유 주소: http://192.0.2.10:8606/?t=<token>   (--lan일 때만)
+LAN 공유 주소 (브라우저 Bluetooth): https://192.0.2.10:8605/?t=<token>  (browser 기본, --lan일 때만)
+LAN HTTP 보기 주소: http://192.0.2.10:8606/?t=<token>   (기존 세션 보기·조작)
 <QR: LAN 공유 주소 URL 전체>                         (--lan일 때만)
 폰에서 열리지 않으면(VPN 등) --lan-host <이 컴퓨터의 Wi-Fi 주소>로 다시 실행하세요.   (--lan이고 --lan-host가 없을 때만)
 Tailnet 주소: https://100.64.0.10:8605/?t=<token>     (--lan이고 Tailscale이 연결되어 있을 때)
@@ -223,11 +224,11 @@ Tailnet 주소: https://sensor.test-tailnet.ts.net:8605/?t=<token> (MagicDNS도 
 종료하려면 Ctrl-C를 누르세요.
 ```
 
-- QR 내용은 HTTP 공유 URL 그대로(`http://<lan-host>:<share-port>/?t=<token>`)다. `segno.make(share_url, error="m").terminal(out=sys.stdout, compact=True)`. HTTPS LAN 주소는 별도로 출력한다.
+- QR 내용은 선택한 전송 모드의 공유 URL이다. `browser`는 `https://<lan-host>:<port>/?t=<token>`, `server`는 `http://<lan-host>:<share-port>/?t=<token>`이다. `segno.make(share_url, error="m").terminal(out=sys.stdout, compact=True)`로 출력한다. HTTP 보조 주소는 별도로 표시하며 원격 브라우저 BLE 연결에 사용할 수 없다.
 - LAN IP: `--lan-host ADDR`가 있으면 그것(소문자로). 없으면 UDP 소켓을 `("192.0.2.1", 9)`에 `connect()`한 뒤 `getsockname()[0]`(패킷은 나가지 않는다).
   기본 경로의 주소이므로 VPN이나 유선·무선이 함께 켜진 노트북에서는 폰이 닿지 않는 주소일 수 있다. 그래서 `--lan-host`를 둔다. 실패하거나 `127.`로
-  시작하면 `LAN 주소를 찾지 못했습니다. 같은 네트워크의 기기에서 이 주소로 접속해 보세요: https://<호스트 이름>.local:<port>/?t=<token>`을
-  출력하고 공유 QR에는 `http://<호스트 이름>.local:<share-port>/?t=<token>`을 넣는다.
+  시작하면 LAN 주소를 찾지 못했다는 안내와 `.local` 접속 주소를 출력하고 공유 QR도 해당 호스트 이름을 사용한다
+  (`browser`는 HTTPS 주 포트, `server`는 HTTP 공유 포트).
 - `--lan` 없이 QR은 출력하지 않는다(폰에서 `127.0.0.1`은 의미가 없다).
 - Tailnet: `tailscale status --json --peers=false`를 최대 2초 동안 실행하고 `BackendState == "Running"`일 때만
   `TailscaleIPs`의 IPv4 주소를 쓴다. `CurrentTailnet.MagicDNSEnabled == true`이면 `Self.DNSName`의 끝 `.`을
@@ -811,7 +812,7 @@ Python 코어의 프레임 파서·식별·keep-alive·보정·설정 적용은 
 ms605 [--scan-secs S] [--connect-timeout T] gui [--lan [--lan-host ADDR]] [--port 8605] [--share-port PORT] [--ble-transport browser|server] [--sim N [--speed K]] [--ssl-certfile PATH --ssl-keyfile PATH]
 ```
 
-`make gui ARGS="..."`는 위 명령에 `--lan --ble-transport server`를 기본으로 추가해 서버 Bluetooth와 LAN·tailnet 접속을 허용한다.
+`make gui ARGS="..."`는 위 명령에 `--lan`을 추가하고 기본 `browser` 전송 모드로 접속 클라이언트의 Bluetooth와 LAN·tailnet 접속을 사용한다. `--ble-transport server`를 명시하면 서버 어댑터를 사용한다. 기본 공유 QR은 HTTPS이며 자동 생성 CA는 클라이언트에 신뢰 등록해야 한다. 서버 모드 공유 QR만 HTTP를 사용한다.
 `uv run ms605 gui`는 기존처럼 localhost 전용이다.
 Make의 `scripts/gui.py`는 인자를 먼저 검증한 뒤 선택한 포트의 리스너를 `lsof`로 찾는다.
 `ps`로 이 프로젝트 Python 환경의 현재 사용자 `ms605 gui` 또는 `python -m ms605.cli.cli gui` 진입점임을 확인한 프로세스에만
@@ -838,7 +839,7 @@ Make의 `scripts/gui.py`는 인자를 먼저 검증한 뒤 선택한 포트의 �
     `--port`: int 0~65535(0 = 빈 포트). `--sim`: int 1~32. `--speed`: float > 0, 기본 1.0, `--sim` 없이 주면 argparse 오류(종료 코드 2). `--lan-host`: 문자열(4.4절), `--lan` 없이 주면 argparse 오류(종료 코드 2).
     `--share-port`: `--lan`에서만 사용, 0~65535(0 = 빈 포트). 기본은 HTTPS 실제 포트+1이며,
     `--port 0` 또는 HTTPS 포트 65535이면 빈 포트를 선택한다.
-    `--ble-transport`: `browser`(CLI 기본) 또는 `server`(Make 기본).
+    `--ble-transport`: `browser`(CLI·Make 기본) 또는 `server`(명시적 선택).
     `--address`는 쓰지 않는다.
     기본 HTTPS이며 `--ssl-certfile`/`--ssl-keyfile`을 함께 지정하면 자동 인증서 대신 사용한다.
     미지정 시 OpenSSL로 `<data_root>/cal_results/gui_tls/`에 로컬 CA(10년)와 서버 인증서(90일)를 생성한다.
