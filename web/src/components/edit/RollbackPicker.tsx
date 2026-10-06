@@ -6,7 +6,7 @@ import { formatDateTime, sectionList } from '../../apply'
 import { expectRevOf } from '../../draft'
 import { toMillis } from '../../format'
 import { sensorName, useStore } from '../../store/store'
-import { t } from '../../strings'
+import { t, useStrings } from '../../strings'
 import { Button } from '../Button'
 import { RelativeTime } from '../RelativeTime'
 import { DiffPreview } from './DiffPreview'
@@ -22,9 +22,10 @@ interface PreviewProps {
 
 /** previewRollback -> the server's diff -> rollback (202). Shared by the picker and the results' 되돌리기. */
 export function RollbackPreview({ items, title, onStarted, onBack, sheet }: PreviewProps) {
+  const t = useStrings()
   const sensors = useStore((s) => s.sensors)
   const [preview, setPreview] = useState<DraftPreview | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<{ cause: unknown } | null>(null)
   const key = JSON.stringify(items)
 
   useEffect(() => {
@@ -33,7 +34,7 @@ export function RollbackPreview({ items, title, onStarted, onBack, sheet }: Prev
     setError(null)
     previewRollback({ items: JSON.parse(key) as RollbackItem[], expect_rev: null }).then(
       (p) => live && setPreview(p),
-      (e: unknown) => live && setError(failureText(e)),
+      (e: unknown) => live && setError({ cause: e }),
     )
     return () => {
       live = false
@@ -44,7 +45,7 @@ export function RollbackPreview({ items, title, onStarted, onBack, sheet }: Prev
     return (
       <div className={styles.diff}>
         <p className={styles.error} role="alert">
-          {error}
+          {failureText(error.cause)}
         </p>
         <Button onClick={onBack}>{t.diff.back}</Button>
       </div>
@@ -102,9 +103,10 @@ interface Props {
 
 /** 설정 백업: every snapshot, newest first; pick one, see the diff back to it, roll back (15.9.13). */
 export function RollbackPicker({ deviceId, connected, locked, onStarted }: Props) {
+  const t = useStrings()
   const name = useId()
   const [list, setList] = useState<SnapshotView[] | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<{ cause: unknown } | null>(null)
   const [picked, setPicked] = useState<string | null>(null)
   const [detail, setDetail] = useState<SnapshotDetail | null>(null)
   const [previewing, setPreviewing] = useState(false)
@@ -114,7 +116,7 @@ export function RollbackPicker({ deviceId, connected, locked, onStarted }: Props
     let live = true
     listSnapshots(deviceId).then(
       (r) => live && setList(r.snapshots),
-      (e: unknown) => live && setError(failureText(e)),
+      (e: unknown) => live && setError({ cause: e }),
     )
     return () => {
       live = false
@@ -144,7 +146,7 @@ export function RollbackPicker({ deviceId, connected, locked, onStarted }: Props
       </h2>
       {error && (
         <p className={styles.error} role="alert">
-          {error}
+          {failureText(error.cause)}
         </p>
       )}
       {list === null && !error && <p className={styles.note}>{t.history.loading}</p>}

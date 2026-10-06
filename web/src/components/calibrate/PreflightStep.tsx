@@ -1,11 +1,11 @@
 import { ArrowLeft, Info, Loader2, Play, RefreshCw, UserRound } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ApiRequestError, createBatch, preflight } from '../../api/client'
+import { createBatch, failureText, preflight } from '../../api/client'
 import type { PreflightResult, SensorView } from '../../api/types'
 import { presenceStatus } from '../../calibration'
 import { useNow } from '../../hooks/useNow'
 import { sensorName } from '../../store/store'
-import { errorText, t } from '../../strings'
+import { useStrings } from '../../strings'
 import { Button } from '../Button'
 import { StatusBadge } from '../StatusBadge'
 import styles from './calibrate.module.css'
@@ -21,16 +21,15 @@ interface Props {
   onBack: () => void
 }
 
-type Check = { phase: 'running' } | { phase: 'done'; result: PreflightResult } | { phase: 'error'; message: string }
-
-const failText = (e: unknown) => (e instanceof ApiRequestError ? errorText(e.code, e.message) : t.error.internal)
+type Check = { phase: 'running' } | { phase: 'done'; result: PreflightResult } | { phase: 'error'; error: unknown }
 
 /** Step 2: who is still in the room, then how to start. A warning, never a gate: the operator decides. */
 export function PreflightStep({ ids, sensors, choice, onChoice, onBack }: Props) {
+  const t = useStrings()
   const [check, setCheck] = useState<Check>({ phase: 'running' })
   const [override, setOverride] = useState(false)
   const [submitting, setSubmitting] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<unknown>(null)
   const run = useRef(0)
 
   const recheck = useCallback(async () => {
@@ -41,7 +40,7 @@ export function PreflightStep({ ids, sensors, choice, onChoice, onBack }: Props)
       const result = await preflight(ids)
       if (run.current === mine) setCheck({ phase: 'done', result })
     } catch (e) {
-      if (run.current === mine) setCheck({ phase: 'error', message: failText(e) })
+      if (run.current === mine) setCheck({ phase: 'error', error: e })
     }
   }, [ids])
 
@@ -68,7 +67,7 @@ export function PreflightStep({ ids, sensors, choice, onChoice, onBack }: Props)
       await createBatch({ device_ids: ids, ...body, presence_override: needsOverride && override })
       // the screen moves on when the server's `batch` message arrives (G10)
     } catch (e) {
-      setError(failText(e))
+      setError(e)
     } finally {
       setSubmitting(false)
     }
@@ -97,9 +96,9 @@ export function PreflightStep({ ids, sensors, choice, onChoice, onBack }: Props)
         </section>
         <div className={styles.dock}>
           <div className={styles.dockInner}>
-            {error && (
+            {error !== null && (
               <p className={styles.error} role="alert">
-                {error}
+                {failureText(error)}
               </p>
             )}
             <Button variant="primary" size="lg" block icon={Play} disabled={!canStart} onClick={start}>
@@ -140,7 +139,7 @@ export function PreflightStep({ ids, sensors, choice, onChoice, onBack }: Props)
           )}
           {check.phase === 'error' && (
             <p className={styles.error} role="alert">
-              {check.message}
+              {failureText(check.error)}
             </p>
           )}
           {check.phase === 'done' && (

@@ -36,18 +36,32 @@ interface AdvertisementEvent extends Event {
   readonly manufacturerData: Map<number, DataView>
 }
 
-export class BluetoothError extends Error {}
+type BluetoothErrorCode = 'secure' | 'unsupported' | 'permission' | 'failed' | 'serverLost'
+
+export class BluetoothError extends Error {
+  readonly code: BluetoothErrorCode
+
+  constructor(code: BluetoothErrorCode) {
+    super(t.bluetooth[code])
+    this.code = code
+  }
+}
+
+function unavailableCode(): BluetoothErrorCode | null {
+  if (!globalThis.isSecureContext) return 'secure'
+  if (!(navigator as Navigator & { bluetooth?: Bluetooth }).bluetooth) return 'unsupported'
+  return null
+}
 
 export function bluetoothUnavailable(): string | null {
-  if (!globalThis.isSecureContext) return t.bluetooth.secure
-  if (!(navigator as Navigator & { bluetooth?: Bluetooth }).bluetooth) return t.bluetooth.unsupported
-  return null
+  const code = unavailableCode()
+  return code ? t.bluetooth[code] : null
 }
 
 function bluetoothFailure(error: unknown): BluetoothError {
   const name = errorName(error)
-  if (name === 'SecurityError' || name === 'NotAllowedError') return new BluetoothError(t.bluetooth.permission)
-  return new BluetoothError(t.bluetooth.failed)
+  if (name === 'SecurityError' || name === 'NotAllowedError') return new BluetoothError('permission')
+  return new BluetoothError('failed')
 }
 
 function errorName(error: unknown): string {
@@ -59,7 +73,7 @@ const sessions = new Map<string, BrowserSession>()
 
 /** Called directly from a click: requestDevice must run before any network await. */
 export async function requestBrowserSensor(): Promise<BrowserSession | null> {
-  const unavailable = bluetoothUnavailable()
+  const unavailable = unavailableCode()
   if (unavailable) throw new BluetoothError(unavailable)
   const bluetooth = (navigator as Navigator & { bluetooth: Bluetooth }).bluetooth
   let device: BrowserDevice
@@ -81,7 +95,7 @@ export async function requestBrowserSensor(): Promise<BrowserSession | null> {
   }
   const existing = sessions.get(device.id)
   if (existing) return existing
-  if (!device.gatt) throw new BluetoothError(t.bluetooth.failed)
+  if (!device.gatt) throw new BluetoothError('failed')
   const manufacturerData = await readManufacturerData(device)
   return openBridge(device, manufacturerData)
 }
@@ -153,7 +167,7 @@ function openBridge(device: BrowserDevice, manufacturerData?: number[]): Promise
       window.removeEventListener('pagehide', close)
       device.gatt?.disconnect()
       socket.close()
-      if (!ready) reject(new BluetoothError(t.bluetooth.serverLost))
+      if (!ready) reject(new BluetoothError('serverLost'))
     }
     const session = { close }
     const timer = setTimeout(close, 10_000)
@@ -164,7 +178,7 @@ function openBridge(device: BrowserDevice, manufacturerData?: number[]): Promise
         // Its cleanup must not disconnect the GATT link now owned by the newer bridge.
         const owner = sessions.get(device.id)
         if (!owner || owner === session) device.gatt?.disconnect()
-        throw new BluetoothError(t.bluetooth.failed)
+        throw new BluetoothError('failed')
       }
     }
     device.addEventListener('gattserverdisconnected', onDisconnected)
@@ -219,12 +233,12 @@ function openBridge(device: BrowserDevice, manufacturerData?: number[]): Promise
             intentionalDisconnect = false
           } else if (op === 'start_notify') {
             ensureOpen()
-            if (!notify) throw new BluetoothError(t.bluetooth.failed)
+            if (!notify) throw new BluetoothError('failed')
             notify.addEventListener('characteristicvaluechanged', onNotify)
             await notify.startNotifications()
           } else if (op === 'write') {
             ensureOpen()
-            if (!write) throw new BluetoothError(t.bluetooth.failed)
+            if (!write) throw new BluetoothError('failed')
             await write.writeValueWithoutResponse(new Uint8Array(data!))
           } else {
             intentionalDisconnect = true

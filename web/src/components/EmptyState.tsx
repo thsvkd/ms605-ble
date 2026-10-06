@@ -1,10 +1,11 @@
 import { Plus, Radar } from 'lucide-react'
 import { Link } from 'wouter'
-import { t } from '../strings'
+import { useStrings } from '../strings'
 import { buttonClass } from './Button'
 import styles from './dashboard.module.css'
 
 export function EmptyState() {
+  const t = useStrings()
   return (
     <div className={styles.empty}>
       <div className={styles.emptyIcon} aria-hidden>

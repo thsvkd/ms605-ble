@@ -3,7 +3,7 @@ import { useId, useState } from 'react'
 import { failureText } from '../../api/client'
 import type { Change, DraftPreview, SensorPreview } from '../../api/types'
 import { formatChange, needsOverwriteAck, riskText, rowLabel } from '../../apply'
-import { t } from '../../strings'
+import { useStrings } from '../../strings'
 import { Button } from '../Button'
 import styles from './edit.module.css'
 import cal from '../calibrate/calibrate.module.css'
@@ -49,6 +49,7 @@ function Row({ c }: { c: Change }) {
 }
 
 function Item({ item, name, several, first }: { item: SensorPreview; name: string; several: boolean; first: boolean }) {
+  const t = useStrings()
   const body = item.error ? (
     <p className={styles.itemError}>{t.diff.itemError(item.error)}</p>
   ) : item.changes.length === 0 ? (
@@ -110,12 +111,13 @@ function Item({ item, name, several, first }: { item: SensorPreview; name: strin
  * absolute overwrite is not acknowledged.
  */
 export function DiffPreview(p: Props) {
+  const t = useStrings()
   const { preview } = p
   const ackId = useId()
   const titleId = useId()
   const [ack, setAck] = useState(Boolean(p.ackInitially))
   const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<{ cause: unknown } | null>(null)
 
   const several = preview.items.length > 1
   const rows = preview.items.reduce((n, i) => n + i.changes.length, 0)
@@ -131,7 +133,7 @@ export function DiffPreview(p: Props) {
     try {
       await p.onApply()
     } catch (e) {
-      setError(failureText(e))
+      setError({ cause: e })
     } finally {
       setBusy(false)
     }
@@ -188,7 +190,7 @@ export function DiffPreview(p: Props) {
         {nothing && <p className={styles.reason}>{t.diff.nothing}</p>}
         {error && (
           <p className={styles.error} role="alert">
-            {error}
+            {failureText(error.cause)}
           </p>
         )}
         <Button variant="primary" size="lg" block icon={Upload} disabled={blocked || busy} onClick={apply}>

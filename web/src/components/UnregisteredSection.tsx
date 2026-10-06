@@ -4,7 +4,7 @@ import { sensorDisplayName } from '../alias'
 import { useNow } from '../hooks/useNow'
 import { sensorStatus } from '../status'
 import { selectUnregistered, useStore } from '../store/store'
-import { t } from '../strings'
+import { useStrings } from '../strings'
 import { BatteryIndicator } from './BatteryIndicator'
 import { Button } from './Button'
 import { NameSensorDialog } from './NameSensorDialog'
@@ -12,6 +12,7 @@ import { StatusBadge } from './StatusBadge'
 import styles from './dashboard.module.css'
 
 export function UnregisteredSection() {
+  const t = useStrings()
   const sensors = useStore((s) => s.sensors)
   const gathering = useStore((s) => s.gather.gathering)
   const list = useMemo(() => selectUnregistered({ sensors }), [sensors])

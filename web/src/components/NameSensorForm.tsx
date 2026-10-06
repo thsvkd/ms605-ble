@@ -1,8 +1,8 @@
 import { useEffect, useId, useRef, useState } from 'react'
-import { ApiRequestError, createSensor, ensureSite } from '../api/client'
+import { ApiRequestError, createSensor, ensureSite, failureText } from '../api/client'
 import { defaultAlias, readLastSite, writeLastSite } from '../alias'
 import { type Store, useStore } from '../store/store'
-import { errorText, t } from '../strings'
+import { useStrings } from '../strings'
 import { Button } from './Button'
 import { Field } from './Field'
 import { type SiteChoice, SitePicker } from './SitePicker'
@@ -28,6 +28,7 @@ export function initialSite(state: Pick<Store, 'sites'>): SiteChoice {
 }
 
 export function NameSensorForm({ deviceId, bleName, autoFocus, onDone }: Props) {
+  const t = useStrings()
   const uid = useId()
   const sensors = useStore((s) => s.sensors)
   const sites = useStore((s) => s.sites)
@@ -38,9 +39,9 @@ export function NameSensorForm({ deviceId, bleName, autoFocus, onDone }: Props) 
   const alias = aliasEdit ?? defaultAlias(sensors, siteId, sensors[deviceId]?.live)
   const [location, setLocation] = useState('')
   const [saving, setSaving] = useState(false)
-  const [aliasError, setAliasError] = useState<string | null>(null)
-  const [siteError, setSiteError] = useState<string | null>(null)
-  const [formError, setFormError] = useState<string | null>(null)
+  const [aliasError, setAliasError] = useState(false)
+  const [siteError, setSiteError] = useState(false)
+  const [formError, setFormError] = useState<unknown>(null)
   const aliasRef = useRef<HTMLInputElement>(null)
   const siteNameRef = useRef<HTMLInputElement>(null)
 
@@ -59,8 +60,8 @@ export function NameSensorForm({ deviceId, bleName, autoFocus, onDone }: Props) 
   const save = async () => {
     const name = alias.trim()
     const newSite = site.kind === 'new' ? site.name.trim() : null
-    setAliasError(name ? null : t.form.required)
-    setSiteError(newSite === '' ? t.form.required : null)
+    setAliasError(!name)
+    setSiteError(newSite === '')
     setFormError(null)
     if (!name || newSite === '') return
     setSaving(true)
@@ -80,7 +81,7 @@ export function NameSensorForm({ deviceId, bleName, autoFocus, onDone }: Props) 
         onDone('taken')
         return
       }
-      setFormError(e instanceof ApiRequestError ? errorText(e.code, e.message) : t.error.internal)
+      setFormError(e)
     } finally {
       setSaving(false)
     }
@@ -96,7 +97,7 @@ export function NameSensorForm({ deviceId, bleName, autoFocus, onDone }: Props) 
       }}
     >
       <div className={styles.formFields}>
-        <Field id={`${uid}-alias`} label={t.form.alias} error={aliasError}>
+        <Field id={`${uid}-alias`} label={t.form.alias} error={aliasError ? t.form.required : null}>
           {(p) => (
             <input
               {...p}
@@ -116,7 +117,7 @@ export function NameSensorForm({ deviceId, bleName, autoFocus, onDone }: Props) 
             siteTouched.current = true
             setSite(next)
           }}
-          nameError={siteError}
+          nameError={siteError ? t.form.required : null}
           nameInputRef={siteNameRef}
         />
         <Field id={`${uid}-location`} label={t.form.location}>
@@ -133,9 +134,9 @@ export function NameSensorForm({ deviceId, bleName, autoFocus, onDone }: Props) 
           )}
         </Field>
       </div>
-      {formError && (
+      {formError !== null && (
         <p className={styles.formError} role="alert">
-          {formError}
+          {failureText(formError)}
         </p>
       )}
       <div className={styles.formActions}>

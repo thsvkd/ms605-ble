@@ -1,7 +1,7 @@
 import { ArrowLeft, Crosshair, Trash2, Unplug } from 'lucide-react'
 import { useState } from 'react'
 import { Link, useLocation } from 'wouter'
-import { ApiRequestError, deleteSensor, release } from '../api/client'
+import { deleteSensor, failureText, release } from '../api/client'
 import { sensorDisplayName } from '../alias'
 import { Button, buttonClass } from '../components/Button'
 import { ConfirmDialog } from '../components/ConfirmDialog'
@@ -18,9 +18,10 @@ import { SettingsTab } from '../components/edit/SettingsTab'
 import { useNow } from '../hooks/useNow'
 import { sensorStatus } from '../status'
 import { selectApplyMembers, selectBatchMembers, useStore } from '../store/store'
-import { errorText, t } from '../strings'
+import { useStrings } from '../strings'
 
 function BackLink() {
+  const t = useStrings()
   return (
     <Link href="/" className={styles.back}>
       <ArrowLeft size={16} aria-hidden />
@@ -31,6 +32,7 @@ function BackLink() {
 
 /** /sensors/:id[/settings|/advanced|/history]: one header, four tab routes (15.9.1). */
 export function SensorDetailScreen({ deviceId, tab = 'info' }: { deviceId: string; tab?: SensorTab }) {
+  const t = useStrings()
   const sensor = useStore((s) => s.sensors[deviceId])
   const gathering = useStore((s) => s.gather.gathering)
   const batchLocked = useStore((s) => selectBatchMembers(s).has(deviceId))
@@ -39,7 +41,7 @@ export function SensorDetailScreen({ deviceId, tab = 'info' }: { deviceId: strin
   const now = useNow()
   const [, navigate] = useLocation()
   const [confirmDelete, setConfirmDelete] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<{ cause: unknown } | null>(null)
 
   if (!sensor) {
     return (
@@ -60,7 +62,7 @@ export function SensorDetailScreen({ deviceId, tab = 'info' }: { deviceId: strin
     try {
       await release([deviceId])
     } catch (e) {
-      setError(e instanceof ApiRequestError ? errorText(e.code, e.message) : t.error.internal)
+      setError({ cause: e })
     }
   }
 
@@ -84,7 +86,7 @@ export function SensorDetailScreen({ deviceId, tab = 'info' }: { deviceId: strin
           applyLocked={applyLocked}
           onDelete={() => setConfirmDelete(true)}
           onRelease={releaseOne}
-          error={error}
+          error={error ? failureText(error.cause) : null}
         />
       )}
 
@@ -115,6 +117,7 @@ interface InfoProps {
 
 /** 정보: the M2/M3 page (name, live strip, calibrate this sensor, release, delete). */
 function InfoTab({ deviceId, locked, applyLocked, onDelete, onRelease, error }: InfoProps) {
+  const t = useStrings()
   const sensor = useStore((s) => s.sensors[deviceId])
   const [, navigate] = useLocation()
   if (!sensor) return null

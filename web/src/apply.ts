@@ -24,7 +24,7 @@ export function rowLabel(c: Change): string {
     case 'dnd':
       return t.section.dnd
     case 'zone_enable':
-      return `Z${i} 켜기/끄기`
+      return t.common.zoneToggle(i)
     case 'zone_thresholds':
       return `Z${i} ${c.part === 'maintain' ? t.live.maintain : t.live.trigger}`
     case 'subsensor_zones':
@@ -37,7 +37,7 @@ export function rowLabel(c: Change): string {
 }
 
 function valueText(c: Change, v: Change['before']): string {
-  if (v === null) return '알 수 없음'
+  if (v === null) return t.common.unknown
   if (typeof v === 'boolean') return v ? t.edit.zoneOn : t.edit.zoneOff
   if (Array.isArray(v)) return v.length ? v.map((z) => `Z${z}`).join(', ') : t.adv.zonesNone
   if (c.section === 'sensitivity') return t.sens[v] ?? String(v)

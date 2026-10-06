@@ -1,9 +1,10 @@
 import { useStore } from '../store/store'
-import { t } from '../strings'
+import { useStrings } from '../strings'
 import styles from './dashboard.module.css'
 
 /** Imported entries whose sensor has not connected yet. */
 export function PendingSection() {
+  const t = useStrings()
   const pending = useStore((s) => s.pending)
   const sites = useStore((s) => s.sites)
   if (pending.length === 0) return null

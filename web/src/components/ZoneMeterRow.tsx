@@ -1,10 +1,11 @@
 import type { LiveZone } from '../api/types'
-import { t } from '../strings'
+import { useStrings } from '../strings'
 import { Meter } from './Meter'
 import styles from './live.module.css'
 
 /** One zone on the sensor detail strip: its label and the compact trigger bar. */
 function ZoneMeterRow({ zone }: { zone: LiveZone }) {
+  const t = useStrings()
   const label = <span className={styles.zoneLabel}>{t.live.zone(zone.index, zone.distance_m)}</span>
   if (!zone.enabled) {
     return (

@@ -1,6 +1,7 @@
 import '@testing-library/jest-dom/vitest'
 import { cleanup } from '@testing-library/react'
 import { afterEach, beforeEach, vi } from 'vitest'
+import { setLocale } from '../strings'
 import { resetDrafts } from '../store/drafts'
 import { resetStore } from '../store/store'
 
@@ -33,6 +34,7 @@ if (!HTMLDialogElement.prototype.showModal) {
 beforeEach(() => {
   resetStore()
   resetDrafts()
+  setLocale('ko')
   localStorage.clear()
 })
 

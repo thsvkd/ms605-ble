@@ -1,11 +1,12 @@
 import { scopeChangedCount, scopeOf, useDrafts } from '../store/drafts'
-import { t } from '../strings'
+import { useStrings } from '../strings'
 import { Button } from './Button'
 import { Dialog } from './Dialog'
 import styles from './ui.module.css'
 
 /** Opens when the guard held a navigation (15.9.3): 머무르기 (default, Esc) or 버리고 이동. */
 export function UnsavedChangesDialog() {
+  const t = useStrings()
   const pending = useDrafts((s) => s.pendingNav)
   const count = useDrafts((s) => {
     const scope = scopeOf(window.location.pathname)

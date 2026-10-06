@@ -4,7 +4,7 @@ import { Link } from 'wouter'
 import { baseSection, baseThreshold, draftSection, draftThreshold, setSection, setThreshold } from '../../draft'
 import { useLiveWatch } from '../../hooks/useLiveWatch'
 import { useStore } from '../../store/store'
-import { t } from '../../strings'
+import { useStrings } from '../../strings'
 import cal from '../calibrate/calibrate.module.css'
 import { EditFrame } from './EditFrame'
 import styles from './edit.module.css'
@@ -14,6 +14,7 @@ const SENSITIVITIES = [1, 2, 3, 4] as const
 
 /** 설정: sensitivity and the seven zones, each threshold draggable over its live fill (15.9.6). */
 export function SettingsTab({ deviceId }: { deviceId: string }) {
+  const t = useStrings()
   useLiveWatch([deviceId])
   const frame = useStore((s) => s.live[deviceId])
   const radio = useId()
@@ -31,7 +32,7 @@ export function SettingsTab({ deviceId }: { deviceId: string }) {
                 <Gauge size={18} aria-hidden />
                 {t.edit.sensitivity}
               </h2>
-              <fieldset className={cal.segmented} disabled={disabled}>
+              <fieldset className={`${cal.segmented} ${styles.sensitivity}`} disabled={disabled}>
                 <legend className="visually-hidden">{t.edit.sensitivity}</legend>
                 {SENSITIVITIES.map((v) => (
                   <label key={v} className={cal.segment}>

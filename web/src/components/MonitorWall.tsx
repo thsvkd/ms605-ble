@@ -16,7 +16,7 @@ import { useNow } from '../hooks/useNow'
 import { presenceOf, presenceTally, type SignalKind, signalTone, type Tri } from '../presence'
 import { sensorStatus } from '../status'
 import { sensorName, useStore } from '../store/store'
-import { t } from '../strings'
+import { t, useStrings } from '../strings'
 import { LegendTextRow, PresenceLegend, SignalChip, signalAria, signalIcon, SubBoxes } from './PresenceSignals'
 import styles from './monitor.module.css'
 
@@ -29,6 +29,7 @@ const state = (v: Tri) => (v === null ? 'unknown' : v ? 'on' : 'off')
  * counts: the last frame of a lost or released one is history, so it shows as "연결 끊김" instead.
  */
 export function MonitorSummary({ ids }: { ids: readonly string[] }) {
+  const t = useStrings()
   const live = useStore((s) => s.live)
   const sensors = useStore((s) => s.sensors)
   const c = useMemo(
@@ -72,6 +73,7 @@ export function MonitorSummary({ ids }: { ids: readonly string[] }) {
  * meter and zone rows) open below on demand.
  */
 export function MonitorLegend() {
+  const t = useStrings()
   const [open, setOpen] = useState(false)
   const id = useId()
   return (
@@ -125,6 +127,7 @@ export function MonitorLegend() {
 
 /** One tile per watched sensor: 4 columns on a wide screen, 3 at medium widths, 2 on a phone. */
 export function MonitorWall({ ids }: { ids: readonly string[] }) {
+  const t = useStrings()
   return (
     <ul className={styles.wall} aria-label={t.monitor.wallLabel}>
       {ids.map((id) => (
@@ -139,6 +142,7 @@ export function MonitorWall({ ids }: { ids: readonly string[] }) {
  * meters. A lost sensor keeps its last frame, dimmed and never tinted blue.
  */
 export const MonitorTile = memo(function MonitorTile({ deviceId }: { deviceId: string }) {
+  const t = useStrings()
   const sensor = useStore((s) => s.sensors[deviceId])
   const frame = useStore((s) => s.live[deviceId])
   const gathering = useStore((s) => s.gather.gathering)
@@ -214,6 +218,7 @@ export const MonitorTile = memo(function MonitorTile({ deviceId }: { deviceId: s
 
 /** A raw signal as a half-width block: colour + icon + words, red when it fires. */
 function SignalBlock({ kind, value }: { kind: Exclude<SignalKind, 'presence'>; value: Tri }) {
+  const t = useStrings()
   const Icon = signalIcon(kind, value)
   const aria = signalAria(kind, value)
   return (
@@ -270,6 +275,7 @@ export const scaleAt = (v: number, { lo, hi }: ZoneScale) => Math.min(1, Math.ma
  * elsewhere hides it.
  */
 function ZoneStrip({ zones }: { zones: LiveZone[] | undefined }) {
+  const t = useStrings()
   const [open, setOpen] = useState<number | null>(null)
   const ref = useRef<HTMLDivElement>(null)
   // where the press started: a touch toggles against the state before its own focus event opened it
@@ -354,6 +360,7 @@ type ZoneMeterProps = {
 
 /** One zone: its trigger meter (or hatching when off) and Z{i}; the accessible name carries the numbers. */
 function ZoneMeter({ zone: z, scale, active, ...on }: ZoneMeterProps) {
+  const t = useStrings()
   const detail = zoneDetail(z)
   const over = z.enabled ? z.trigger > z.trigger_threshold : undefined
   return (

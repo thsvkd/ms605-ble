@@ -31,7 +31,7 @@ describe('GatherScreen', () => {
       'POST /api/gather/start': { status: 200, body: { gathering: true, connecting: [] } },
     })
     render(<GatherScreen />)
-    expect(screen.getByText(/서버 컴퓨터 근처 센서의 버튼을 누르세요/)).toBeInTheDocument()
+    expect(screen.getByText(/웹 앱을 실행한 서버 컴퓨터의 Bluetooth로 연결합니다/)).toBeInTheDocument()
     expect(screen.queryByText(/Web Bluetooth/)).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '센서 추가 시작' }))
     expect(calls.map((call) => `${call.method} ${call.path}`)).toEqual(['POST /api/gather/start'])
@@ -43,7 +43,7 @@ describe('GatherScreen', () => {
     Object.defineProperty(navigator, 'bluetooth', { configurable: true, value: { requestDevice: () => {} } })
     render(<GatherScreen />)
     expect(screen.getByRole('button', { name: '센서 추가' })).toBeEnabled()
-    expect(screen.getByText(/이 기기의 Bluetooth로 연결합니다/)).toBeInTheDocument()
+    expect(screen.getByText(/이 브라우저를 연 기기의 Bluetooth로 연결합니다/)).toBeInTheDocument()
     Reflect.deleteProperty(navigator, 'bluetooth')
   })
 

@@ -1,15 +1,16 @@
 import { ChevronRight, Hand, Unplug } from 'lucide-react'
 import { useState } from 'react'
-import { ApiRequestError, simDrop, simPress, simPressAll } from '../api/client'
+import { failureText, simDrop, simPress, simPressAll } from '../api/client'
 import { useStore } from '../store/store'
-import { errorText, t } from '../strings'
+import { useStrings } from '../strings'
 import { Button } from './Button'
 import styles from './gather.module.css'
 
 /** Only with --sim: stands in for a person walking around pressing buttons (6.6). */
 export function SimPanel() {
+  const t = useStrings()
   const count = useStore((s) => s.server?.sim?.count ?? 0)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<unknown>(null)
   if (count === 0) return null
 
   const run = (fn: () => Promise<void>) => async () => {
@@ -17,7 +18,7 @@ export function SimPanel() {
     try {
       await fn()
     } catch (e) {
-      setError(e instanceof ApiRequestError ? errorText(e.code, e.message) : t.error.internal)
+      setError(e)
     }
   }
   const indexes = Array.from({ length: count }, (_, i) => i + 1)
@@ -46,9 +47,9 @@ export function SimPanel() {
             </Button>
           ))}
         </div>
-        {error && (
+        {error !== null && (
           <p className={`${styles.result} ${styles.resultError}`} role="alert">
-            {error}
+            {failureText(error)}
           </p>
         )}
       </div>

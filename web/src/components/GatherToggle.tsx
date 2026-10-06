@@ -3,19 +3,20 @@ import { useState } from 'react'
 import { bluetoothUnavailable } from '../api/bluetooth'
 import { failureText, startGather, stopGather } from '../api/client'
 import { useStore } from '../store/store'
-import { t } from '../strings'
+import { useStrings } from '../strings'
 import { Button } from './Button'
 import styles from './gather.module.css'
 
 /** The gather screen's one primary action: 64 px, docked above the tab bar on phones. */
 export function GatherToggle() {
+  const t = useStrings()
   const gathering = useStore((s) => s.gather.gathering)
   const server = useStore((s) => s.server)
   const transport = server && (server as typeof server & { ble_transport?: 'browser' | 'server' }).ble_transport
   const browser = server !== null && server.sim === null && (transport ?? 'browser') === 'browser'
   const unavailable = browser ? bluetoothUnavailable() : null
   const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<unknown>(null)
 
   const run = async (action: () => Promise<unknown>) => {
     setBusy(true)
@@ -23,7 +24,7 @@ export function GatherToggle() {
     try {
       await action()
     } catch (e) {
-      setError(failureText(e))
+      setError(e)
     } finally {
       setBusy(false)
     }
@@ -33,9 +34,9 @@ export function GatherToggle() {
     <div className={styles.toggleDock}>
       <div className={styles.toggleInner}>
         {unavailable && <p className={styles.formError} role="alert">{unavailable}</p>}
-        {error && (
+        {error !== null && (
           <p className={styles.formError} role="alert">
-            {error}
+            {failureText(error)}
           </p>
         )}
         <div className={styles.toggleActions}>

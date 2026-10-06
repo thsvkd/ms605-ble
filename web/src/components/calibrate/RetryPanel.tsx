@@ -3,7 +3,7 @@ import { useState } from 'react'
 import { failureText, retryBatch, startGather } from '../../api/client'
 import type { BatchView, SensorView } from '../../api/types'
 import { sensorName } from '../../store/store'
-import { t } from '../../strings'
+import { useStrings } from '../../strings'
 import { Button } from '../Button'
 import styles from './calibrate.module.css'
 import { type StartChoice, StartOptions, startBody, startLabel } from './StartOptions'
@@ -20,10 +20,11 @@ const RETRY_MODES = ['now', 'delay'] as const
 
 /** Only the failed or lost sensors, once they are connected again. No new preflight (14.5.4). */
 export function RetryPanel({ batch, sensors, gathering, choice, onChoice }: Props) {
+  const t = useStrings()
   // remember what the operator unticked, so a sensor that reconnects later arrives ticked
   const [unticked, setUnticked] = useState<ReadonlySet<string>>(new Set())
   const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<unknown>(null)
   const candidates = batch.jobs.filter((j) => j.retryable)
   if (candidates.length === 0) return null
 
@@ -46,7 +47,7 @@ export function RetryPanel({ batch, sensors, gathering, choice, onChoice }: Prop
     try {
       await fn()
     } catch (e) {
-      setError(failureText(e))
+      setError(e)
     } finally {
       setBusy(false)
     }
@@ -90,9 +91,9 @@ export function RetryPanel({ batch, sensors, gathering, choice, onChoice }: Prop
       </section>
       <div className={styles.dock}>
         <div className={styles.dockInner}>
-          {error && (
+        {error !== null && (
             <p className={styles.error} role="alert">
-              {error}
+              {failureText(error)}
             </p>
           )}
           <Button

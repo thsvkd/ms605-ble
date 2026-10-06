@@ -2,13 +2,14 @@ import { Unplug } from 'lucide-react'
 import { useState } from 'react'
 import { release } from '../api/client'
 import { selectApplyActive, selectBatchActive, useStore } from '../store/store'
-import { t } from '../strings'
+import { useStrings } from '../strings'
 import { Button } from './Button'
 import { ConfirmDialog } from './ConfirmDialog'
 import styles from './ui.module.css'
 
 /** Secondary; shown only while some session exists. Releasing everything also stops gathering (6.4). */
 export function ReleaseAllButton({ className }: { className?: string }) {
+  const t = useStrings()
   const hasSession = useStore((s) => Object.values(s.sensors).some((x) => x.live !== null))
   const gathering = useStore((s) => s.gather.gathering)
   const batchLocked = useStore(selectBatchActive) // a calibrating link must not drop (G22)

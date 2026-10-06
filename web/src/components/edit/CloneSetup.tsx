@@ -5,7 +5,7 @@ import type { ConfigView, Section, SensorView } from '../../api/types'
 import { sectionLabel } from '../../apply'
 import { type CloneDraft, SECTION_ORDER } from '../../draft'
 import { sensorName } from '../../store/store'
-import { t } from '../../strings'
+import { t, useStrings } from '../../strings'
 import cal from '../calibrate/calibrate.module.css'
 import { BulkTargets, targetReason } from './BulkTargets'
 import styles from './edit.module.css'
@@ -32,9 +32,10 @@ function summaryOf(cfg: ConfigView): string {
 
 /** Clone = the server reads the source and writes it to the targets as an absolute draft (G36). */
 export function CloneSetup({ clone, sessions, batchLocked, applyLocked, gathering, onChange, onSource }: Props) {
+  const t = useStrings()
   const id = useId()
   const [cfg, setCfg] = useState<ConfigView | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<{ cause: unknown } | null>(null)
   const sources = sessions.filter((s) => targetReason(s, batchLocked, applyLocked) === null)
 
   useEffect(() => {
@@ -49,7 +50,7 @@ export function CloneSetup({ clone, sessions, batchLocked, applyLocked, gatherin
         setCfg(c)
         onSource(c)
       },
-      (e: unknown) => live && setError(failureText(e)),
+      (e: unknown) => live && setError({ cause: e }),
     )
     return () => {
       live = false
@@ -94,7 +95,7 @@ export function CloneSetup({ clone, sessions, batchLocked, applyLocked, gatherin
         {cfg && <p className={styles.note}>{summaryOf(cfg)}</p>}
         {error && (
           <p className={styles.error} role="alert">
-            {error}
+            {failureText(error.cause)}
           </p>
         )}
       </section>

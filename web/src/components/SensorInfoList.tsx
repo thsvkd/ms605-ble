@@ -1,11 +1,12 @@
 import type { SensorView } from '../api/types'
 import { formatLux } from '../format'
-import { t } from '../strings'
+import { useStrings } from '../strings'
 import { BatteryIndicator } from './BatteryIndicator'
 import { RelativeTime } from './RelativeTime'
 import styles from './detail.module.css'
 
 export function SensorInfoList({ sensor }: { sensor: SensorView }) {
+  const t = useStrings()
   const { live, registry, last_calibration: cal, last_snapshot: snap } = sensor
   const none = t.detail.none
   return (

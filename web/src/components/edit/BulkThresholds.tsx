@@ -1,7 +1,7 @@
 import { AlertTriangle, Minus, Plus, Rows3 } from 'lucide-react'
 import { type MouseEvent, useEffect, useId, useState } from 'react'
 import { type BulkDraft, setBulkMode, THRESHOLD_UI_MAX, type ThresholdPart, ZONES } from '../../draft'
-import { t } from '../../strings'
+import { useStrings } from '../../strings'
 import cal from '../calibrate/calibrate.module.css'
 import styles from './edit.module.css'
 
@@ -30,6 +30,7 @@ interface StepProps {
 
 /** − · number · +, each 48 px; Shift+click steps 10. Blank means 그대로. */
 export function StepInput({ label, value, relative, onChange }: StepProps) {
+  const t = useStrings()
   const [text, setText] = useState(show(value, relative))
   const [focused, setFocused] = useState(false)
   useEffect(() => {
@@ -76,13 +77,13 @@ export function StepInput({ label, value, relative, onChange }: StepProps) {
   )
 }
 
-const PARTS: { part: ThresholdPart; label: string }[] = [
-  { part: 'trigger', label: t.live.trigger },
-  { part: 'maintain', label: t.live.maintain },
-]
-
 /** D8: relative ±n by default; absolute is chosen on purpose and must be acknowledged (G29). */
 export function BulkThresholds({ bulk, onChange }: { bulk: BulkDraft; onChange: (b: BulkDraft) => void }) {
+  const t = useStrings()
+  const parts: { part: ThresholdPart; label: string }[] = [
+    { part: 'trigger', label: t.live.trigger },
+    { part: 'maintain', label: t.live.maintain },
+  ]
   const name = useId()
   const relative = bulk.mode === 'relative'
   const setCell = (part: ThresholdPart, zone: number | 'all', v: number | null) =>
@@ -139,7 +140,7 @@ export function BulkThresholds({ bulk, onChange }: { bulk: BulkDraft; onChange: 
             <th scope="col">
               <span className="visually-hidden">{t.history.zone}</span>
             </th>
-            {PARTS.map((p) => (
+            {parts.map((p) => (
               <th key={p.part} scope="col">
                 {p.label}
               </th>
@@ -149,7 +150,7 @@ export function BulkThresholds({ bulk, onChange }: { bulk: BulkDraft; onChange: 
         <tbody>
           <tr data-all="true">
             <th scope="row">{t.bulk.allZones}</th>
-            {PARTS.map((p) => (
+            {parts.map((p) => (
               <td key={p.part} data-label={p.label}>
                 <StepInput
                   label={`${t.bulk.allZones} ${p.label}`}
@@ -163,7 +164,7 @@ export function BulkThresholds({ bulk, onChange }: { bulk: BulkDraft; onChange: 
           {Array.from({ length: ZONES }, (_, z) => (
             <tr key={z}>
               <th scope="row">Z{z}</th>
-              {PARTS.map((p) => (
+              {parts.map((p) => (
                 <td key={p.part} data-label={p.label}>
                   <StepInput
                     label={`Z${z} ${p.label}`}

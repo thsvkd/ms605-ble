@@ -1,11 +1,12 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
 import { selectGathered, useStore } from '../store/store'
-import { t } from '../strings'
+import { useStrings } from '../strings'
 import { GatheredItem } from './GatheredItem'
 import styles from './gather.module.css'
 
 /** Sensors with a session, newest first. New unregistered sensors open ready for registration. */
 export function GatheredList() {
+  const t = useStrings()
   const sensors = useStore((s) => s.sensors)
   const synced = useStore((s) => s.lastSeq !== null)
   const list = useMemo(() => selectGathered({ sensors }), [sensors])

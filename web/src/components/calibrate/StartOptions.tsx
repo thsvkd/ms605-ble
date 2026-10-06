@@ -3,7 +3,7 @@ import { useId } from 'react'
 import type { StartBody } from '../../api/client'
 import type { StartMode } from '../../api/types'
 import { formatHHMM, resolveAt } from '../../calibration'
-import { t } from '../../strings'
+import { t, useStrings } from '../../strings'
 import styles from './calibrate.module.css'
 
 export interface StartChoice {
@@ -15,7 +15,6 @@ export interface StartChoice {
 }
 
 const QUICK_S = [10, 30, 60, 120]
-const MODE_LABEL: Record<StartMode, string> = { now: t.start.now, delay: t.start.delay, at: t.start.at }
 
 /** Ten minutes from now, rounded up to the next 5-minute mark. */
 export function defaultAt(now: Date): string {
@@ -67,6 +66,8 @@ interface Props {
 
 /** 지금 / N초 후 / 시각 예약, as a segmented radio group. */
 export function StartOptions({ value, onChange, modes = ['now', 'delay', 'at'], now }: Props) {
+  const t = useStrings()
+  const modeLabel: Record<StartMode, string> = { now: t.start.now, delay: t.start.delay, at: t.start.at }
   const name = useId()
   const delayId = useId()
   const atId = useId()
@@ -80,7 +81,7 @@ export function StartOptions({ value, onChange, modes = ['now', 'delay', 'at'], 
         {modes.map((m) => (
           <label key={m} className={styles.segment}>
             <input type="radio" name={name} value={m} checked={value.mode === m} onChange={() => set({ mode: m })} />
-            {MODE_LABEL[m]}
+            {modeLabel[m]}
           </label>
         ))}
       </fieldset>

@@ -1,10 +1,11 @@
 import { AlertTriangle, CheckCircle2, Clock } from 'lucide-react'
 import { useMemo } from 'react'
 import { selectCounts, useStore } from '../store/store'
-import { t } from '../strings'
+import { useStrings } from '../strings'
 import styles from './dashboard.module.css'
 
 export function SummaryBar() {
+  const t = useStrings()
   const sensors = useStore((s) => s.sensors)
   const c = useMemo(() => selectCounts({ sensors }), [sensors])
   return (

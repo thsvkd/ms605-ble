@@ -1,9 +1,10 @@
 import { Loader2 } from 'lucide-react'
 import { useStore } from '../store/store'
-import { t } from '../strings'
+import { useStrings } from '../strings'
 import styles from './gather.module.css'
 
 export function ConnectingLine() {
+  const t = useStrings()
   const n = useStore((s) => s.gather.connecting.length)
   if (n === 0) return null
   return (

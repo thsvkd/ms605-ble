@@ -1,10 +1,11 @@
 import { Loader2, WifiOff } from 'lucide-react'
 import { useStore } from '../store/store'
-import { t } from '../strings'
+import { useStrings } from '../strings'
 import styles from './shell.module.css'
 
 /** Shown while the WS is not open; after two failed reconnects it says the server is unreachable. */
 export function ConnectionBanner() {
+  const t = useStrings()
   const conn = useStore((s) => s.conn)
   const failures = useStore((s) => s.failures)
   if (conn === 'open' || conn === 'unauthorized') return null

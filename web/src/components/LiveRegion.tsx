@@ -3,7 +3,7 @@ import { kindText } from '../apply'
 import { batchTotals } from '../calibration'
 import { presenceFlips } from '../presence'
 import { selectApplyTally, sensorName, type Store, useStore } from '../store/store'
-import { t } from '../strings'
+import { t, useLocale } from '../strings'
 
 /** Batch news (14.8.10): the round starts running, the batch ends, a sensor drops mid-calibration. */
 function batchAnnouncements(prev: Store, next: Store): string[] {
@@ -69,22 +69,23 @@ export function announcements(prev: Store, next: Store): string[] {
 }
 
 export function LiveRegion() {
+  const locale = useLocale()
   const [text, setText] = useState('')
   const last = useRef<{ text: string; at: number }>({ text: '', at: 0 })
 
-  useEffect(
-    () =>
-      useStore.subscribe((next, prev) => {
-        const lines = announcements(prev, next)
-        if (lines.length === 0) return
-        const msg = lines.join('. ')
-        const now = Date.now()
-        if (msg === last.current.text && now - last.current.at < 1000) return
-        last.current = { text: msg, at: now }
-        setText(msg)
-      }),
-    [],
-  )
+  useEffect(() => {
+    setText('')
+    last.current = { text: '', at: 0 }
+    return useStore.subscribe((next, prev) => {
+      const lines = announcements(prev, next)
+      if (lines.length === 0) return
+      const msg = lines.join('. ')
+      const now = Date.now()
+      if (msg === last.current.text && now - last.current.at < 1000) return
+      last.current = { text: msg, at: now }
+      setText(msg)
+    })
+  }, [locale])
 
   return (
     <div className="visually-hidden" aria-live="polite" aria-atomic="true">

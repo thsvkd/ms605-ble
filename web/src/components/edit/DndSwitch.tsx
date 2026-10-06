@@ -1,5 +1,5 @@
 import { BellOff, HelpCircle } from 'lucide-react'
-import { t } from '../../strings'
+import { useStrings } from '../../strings'
 import styles from './edit.module.css'
 import { Switch } from './Switch'
 
@@ -12,6 +12,7 @@ interface Props {
 
 /** 방해 금지 (tag32). When the device did not answer the read, there is nothing to edit. */
 export function DndSwitch({ value, base, disabled, onChange }: Props) {
+  const t = useStrings()
   return (
     <section className={styles.section} aria-label={t.adv.dnd}>
       <div className={styles.sectionHead}>

@@ -5,7 +5,7 @@ import { sensorDisplayName } from '../alias'
 import { useNow } from '../hooks/useNow'
 import { sensorStatus } from '../status'
 import { useStore } from '../store/store'
-import { t } from '../strings'
+import { useStrings } from '../strings'
 import { BatteryIndicator } from './BatteryIndicator'
 import { Button } from './Button'
 import { type NameResult, NameSensorForm } from './NameSensorForm'
@@ -39,12 +39,13 @@ function useFresh(gatheredAt: number | undefined, arrived: boolean): boolean {
 }
 
 export const GatheredItem = memo(function GatheredItem(props: Props) {
+  const t = useStrings()
   const { deviceId, arrived, expanded, onExpand, onCollapse, focusName } = props
   const sensor = useStore((s) => s.sensors[deviceId])
   const gathering = useStore((s) => s.gather.gathering)
   const now = useNow()
   const fresh = useFresh(sensor?.live?.gathered_at, arrived)
-  const [message, setMessage] = useState<string | null>(null)
+  const [message, setMessage] = useState<NameResult | null>(null)
   if (!sensor?.live) return null
 
   const status = sensorStatus(sensor, gathering, now)
@@ -54,8 +55,7 @@ export const GatheredItem = memo(function GatheredItem(props: Props) {
 
   const done = (result?: NameResult) => {
     onCollapse(deviceId)
-    if (result === 'saved') setMessage(t.form.saved)
-    else if (result === 'taken') setMessage(t.form.takenElsewhere)
+    if (result) setMessage(result)
   }
 
   if (reg) {
@@ -75,7 +75,7 @@ export const GatheredItem = memo(function GatheredItem(props: Props) {
         {status.hint && <p className={styles.itemMessage}>{status.hint}</p>}
         {message && (
           <p className={styles.itemMessage} role="status">
-            {message}
+            {message === 'saved' ? t.form.saved : t.form.takenElsewhere}
           </p>
         )}
       </li>
@@ -95,7 +95,7 @@ export const GatheredItem = memo(function GatheredItem(props: Props) {
       {status.hint && <p className={styles.itemMessage}>{status.hint}</p>}
       {message && (
         <p className={styles.itemMessage} role="status">
-          {message}
+          {message === 'saved' ? t.form.saved : t.form.takenElsewhere}
         </p>
       )}
       {expanded ? (
@@ -124,6 +124,7 @@ export const GatheredItem = memo(function GatheredItem(props: Props) {
 })
 
 function NewBadge() {
+  const t = useStrings()
   return (
     <span className={styles.newBadge}>
       <Sparkles size={12} aria-hidden />

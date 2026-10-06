@@ -1,7 +1,7 @@
 import { RotateCcw } from 'lucide-react'
 import { type KeyboardEvent, type PointerEvent, useEffect, useId, useRef, useState } from 'react'
 import { axisFor, clampThreshold, keyStep, THRESHOLD_UI_MAX, valueAt } from '../../draft'
-import { t } from '../../strings'
+import { useStrings } from '../../strings'
 import styles from './edit.module.css'
 
 interface Props {
@@ -43,6 +43,7 @@ const HANDLE_GRAB_PX = 24
  * comparison as the monitor meter (value > threshold). An ARIA slider with the 15.9.5 key table.
  */
 export function ThresholdMeter({ label, value, base, live, onChange, disabled = false }: Props) {
+  const t = useStrings()
   const labelId = useId()
   const captionId = useId()
   const trackRef = useRef<HTMLDivElement>(null)

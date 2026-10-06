@@ -88,6 +88,17 @@
   font-weight: 700;
 }
 
+@media (max-width: 399px) {
+  .sensitivity {
+    grid-auto-flow: row;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .sensitivity > label {
+    white-space: nowrap;
+  }
+}
+
 .note {
   color: var(--text-muted);
   font-size: 13px;

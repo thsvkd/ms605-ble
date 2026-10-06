@@ -89,7 +89,7 @@ export const deleteSensor = (deviceId: string) => request<void>('DELETE', `/api/
 
 export async function startGather(): Promise<GatherStatus> {
   const server = useStore.getState().server
-  if (!server) throw new BluetoothError(t.bluetooth.serverLost)
+  if (!server) throw new BluetoothError('serverLost')
   const transport = (server as typeof server & { ble_transport?: 'browser' | 'server' }).ble_transport ?? 'browser'
   if (server.sim || transport === 'server') return request<GatherStatus>('POST', '/api/gather/start')
   const session = await requestBrowserSensor()
@@ -166,6 +166,6 @@ export const deviceHistory = (deviceId: string, kind: DeviceHistoryKind, detail 
 
 /** The words for a failed request (any thrown value). */
 export function failureText(e: unknown): string {
-  if (e instanceof BluetoothError) return e.message
+  if (e instanceof BluetoothError) return t.bluetooth[e.code]
   return e instanceof ApiRequestError ? errorText(e.code, e.message) : t.error.internal
 }

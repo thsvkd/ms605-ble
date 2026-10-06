@@ -3,7 +3,7 @@ import type { SensorView } from '../../api/types'
 import { useNow } from '../../hooks/useNow'
 import { sensorStatus } from '../../status'
 import { sensorName } from '../../store/store'
-import { t } from '../../strings'
+import { t, useStrings } from '../../strings'
 import { Button } from '../Button'
 import cal from '../calibrate/calibrate.module.css'
 import { StatusBadge } from '../StatusBadge'
@@ -33,6 +33,7 @@ export function targetReason(
 
 /** Sensors with a session (site, then alias); only connected ones outside a calibration or apply can be ticked. */
 export function BulkTargets({ sessions, selected, batchLocked, applyLocked, gathering, onChange, exclude }: Props) {
+  const t = useStrings()
   const now = useNow()
   const list = sessions.filter((s) => s.device_id !== exclude)
   const ok = list.filter((s) => targetReason(s, batchLocked, applyLocked) === null).map((s) => s.device_id)

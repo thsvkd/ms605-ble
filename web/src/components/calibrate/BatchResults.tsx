@@ -2,7 +2,7 @@ import { ChevronRight, Plus } from 'lucide-react'
 import type { BatchView, SensorView } from '../../api/types'
 import { batchHeadline } from '../../calibration'
 import { sensorName } from '../../store/store'
-import { t } from '../../strings'
+import { useStrings } from '../../strings'
 import { Button } from '../Button'
 import styles from './calibrate.module.css'
 import { JobRow } from './JobRow'
@@ -21,6 +21,7 @@ interface Props {
 
 /** Done or cancelled: per-sensor outcome, before/after thresholds, and a retry for the failed or lost. */
 export function BatchResults({ batch, sensors, gathering, retryChoice, onRetryChoice, onNew }: Props) {
+  const t = useStrings()
   const retry = batch.jobs.some((j) => j.retryable)
   return (
     <>

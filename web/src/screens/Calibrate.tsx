@@ -8,7 +8,7 @@ import { SelectStep, selectable } from '../components/calibrate/SelectStep'
 import { defaultChoice, type StartChoice } from '../components/calibrate/StartOptions'
 import { type CalibStep, StepIndicator } from '../components/calibrate/StepIndicator'
 import { selectApplyMembers, selectBatchActive, selectSessions, useStore } from '../store/store'
-import { t } from '../strings'
+import { useStrings } from '../strings'
 import { idsParam } from './Monitor'
 
 const DISMISSED_KEY = 'ms605.dismissedBatch'
@@ -34,6 +34,7 @@ function writeDismissed(batchId: string): void {
  * only the select/check steps before a start are this screen's own state.
  */
 export function CalibrateScreen() {
+  const t = useStrings()
   const batch = useStore((s) => s.batch)
   const sensors = useStore((s) => s.sensors)
   const sites = useStore((s) => s.sites)

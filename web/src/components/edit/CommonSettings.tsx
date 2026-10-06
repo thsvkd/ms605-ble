@@ -1,20 +1,21 @@
 import { ChevronRight } from 'lucide-react'
 import { useId } from 'react'
 import type { BulkDraft } from '../../draft'
-import { t } from '../../strings'
+import { useStrings } from '../../strings'
 import cal from '../calibrate/calibrate.module.css'
 import styles from './edit.module.css'
 import { Switch } from './Switch'
 
 const ALL_ON = [true, true, true, true, true, true, true]
-const DND: { value: boolean | null; label: string }[] = [
-  { value: null, label: t.bulk.keep },
-  { value: true, label: t.bulk.dndOn },
-  { value: false, label: t.bulk.dndOff },
-]
 
 /** 공통 설정 (folded): sensitivity, zone on/off for all 7, DND. No sub-sensors here (per sensor, 고급). */
 export function CommonSettings({ bulk, onChange }: { bulk: BulkDraft; onChange: (b: BulkDraft) => void }) {
+  const t = useStrings()
+  const dnd: { value: boolean | null; label: string }[] = [
+    { value: null, label: t.bulk.keep },
+    { value: true, label: t.bulk.dndOn },
+    { value: false, label: t.bulk.dndOff },
+  ]
   const id = useId()
   const set = (patch: Partial<BulkDraft>) => onChange({ ...bulk, ...patch })
   const open = bulk.sensitivity !== null || bulk.zone_enable !== null || bulk.dnd !== null
@@ -78,7 +79,7 @@ export function CommonSettings({ bulk, onChange }: { bulk: BulkDraft; onChange: 
         </span>
         <fieldset className={cal.segmented}>
           <legend className="visually-hidden">{t.section.dnd}</legend>
-          {DND.map((o) => (
+          {dnd.map((o) => (
             <label key={String(o.value)} className={cal.segment}>
               <input
                 type="radio"

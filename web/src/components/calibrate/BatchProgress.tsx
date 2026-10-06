@@ -1,10 +1,10 @@
 import { AlertTriangle, CircleStop, Info, PauseCircle, XCircle } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import { ApiRequestError, cancelBatch } from '../../api/client'
+import { cancelBatch, failureText } from '../../api/client'
 import type { BatchView, SensorView } from '../../api/types'
 import { batchHeadline, formatCountdown, formatElapsed, needsCancelConfirm } from '../../calibration'
 import { useCountdown } from '../../hooks/useCountdown'
-import { errorText, t } from '../../strings'
+import { useStrings } from '../../strings'
 import { Button } from '../Button'
 import { ConfirmDialog } from '../ConfirmDialog'
 import styles from './calibrate.module.css'
@@ -18,10 +18,11 @@ interface Props {
 
 /** Waiting (countdown) or running. Every screen shows the same thing: the batch is server state (G16). */
 export function BatchProgress({ batch, sensors, gathering }: Props) {
+  const t = useStrings()
   const remaining = useCountdown()
   const [confirm, setConfirm] = useState(false)
   const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<unknown>(null)
   const waiting = batch.state === 'waiting'
   const headline = batchHeadline(batch, remaining, new Date())
 
@@ -41,7 +42,7 @@ export function BatchProgress({ batch, sensors, gathering }: Props) {
     try {
       await cancelBatch(batch.batch_id)
     } catch (e) {
-      setError(e instanceof ApiRequestError ? errorText(e.code, e.message) : t.error.internal)
+      setError(e)
     } finally {
       setBusy(false)
     }
@@ -90,9 +91,9 @@ export function BatchProgress({ batch, sensors, gathering }: Props) {
         )}
         <div className={styles.dock}>
           <div className={styles.dockInner}>
-            {error && (
+            {error !== null && (
               <p className={styles.error} role="alert">
-                {error}
+                {failureText(error)}
               </p>
             )}
             <Button

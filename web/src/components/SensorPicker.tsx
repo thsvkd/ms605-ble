@@ -1,7 +1,7 @@
 import { Check } from 'lucide-react'
 import type { SensorView } from '../api/types'
 import { sensorName } from '../store/store'
-import { t } from '../strings'
+import { useStrings } from '../strings'
 import { Button } from './Button'
 import styles from './live.module.css'
 
@@ -13,6 +13,7 @@ interface Props {
 
 /** Toggle chips for the sensors that have a session; wraps, never scrolls sideways. */
 export function SensorPicker({ sensors, selected, onChange }: Props) {
+  const t = useStrings()
   const chosen = new Set(selected)
   const toggle = (id: string) => {
     if (chosen.has(id)) onChange(selected.filter((x) => x !== id))

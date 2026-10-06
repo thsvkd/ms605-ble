@@ -106,6 +106,11 @@ an undo. It is a FastAPI
 server plus a React app that ships pre-built inside the package, so Node is not
 needed to use it.
 
+Choose **한국어 / English** in the header. The first visit follows your browser’s
+preferred supported language (English if neither is supported); your choice is
+saved in this browser. Switching language keeps sensor connections and unsaved
+inputs intact. Sensor names, sites and notes are not translated.
+
 ```bash
 make setup                          # or: uv sync  (installs the GUI dependencies)
 make gui                            # LAN HTTP sharing QR plus HTTPS; certificates prepared automatically

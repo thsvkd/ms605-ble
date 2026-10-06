@@ -1,6 +1,6 @@
 import { Radio } from 'lucide-react'
 import { baseSection, draftSection, setSection, SUBSENSORS } from '../../draft'
-import { t } from '../../strings'
+import { useStrings } from '../../strings'
 import { DndSwitch } from './DndSwitch'
 import { EditFrame } from './EditFrame'
 import styles from './edit.module.css'
@@ -11,6 +11,7 @@ const INDEXES = Array.from({ length: SUBSENSORS }, (_, i) => i)
 
 /** 고급: sub-sensors and DND on the same draft and flow as 설정 (15.9.7); time sync is an action. */
 export function AdvancedTab({ deviceId }: { deviceId: string }) {
+  const t = useStrings()
   return (
     <EditFrame deviceId={deviceId}>
       {(d, disabled, update) => {

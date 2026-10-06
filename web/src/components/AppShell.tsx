@@ -3,12 +3,13 @@ import type { ReactNode } from 'react'
 import { Link, useRoute } from 'wouter'
 import { useBeforeUnloadGuard } from '../navGuard'
 import { selectBatchActive, useStore } from '../store/store'
-import { t } from '../strings'
+import { useStrings } from '../strings'
 import { ApplyPill } from './ApplyPill'
 import { CalibrationPill } from './CalibrationPill'
 import { ConnectionBanner } from './ConnectionBanner'
 import { GatherPill } from './GatherPill'
 import { LanBadge } from './LanBadge'
+import { LanguageSelect } from './LanguageSelect'
 import { LiveRegion } from './LiveRegion'
 import { Notices } from './Notices'
 import { ThemeToggle } from './ThemeToggle'
@@ -25,6 +26,7 @@ function NavLink({ href, className, children }: { href: string; className?: stri
 }
 
 export function AppShell({ children }: { children: ReactNode }) {
+  const t = useStrings()
   const open = useStore((s) => s.conn === 'open')
   const gathering = useStore((s) => s.gather.gathering)
   const batchActive = useStore(selectBatchActive)
@@ -33,7 +35,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     <div className={styles.app}>
       <header className={styles.header}>
         <div className={styles.headerInner}>
-          <Link href="/" className={styles.brand}>
+          <Link href="/" className={styles.brand} aria-label="MS605">
             <span className={styles.brandMark} aria-hidden>
               <Radar size={18} />
             </span>
@@ -42,19 +44,19 @@ export function AppShell({ children }: { children: ReactNode }) {
           <nav className={styles.tabs} aria-label={t.nav.label}>
             <NavLink href="/" className={styles.tab}>
               <LayoutGrid size={18} aria-hidden />
-              {t.nav.dashboard}
+              <span className={styles.tabLabel}>{t.nav.dashboard}</span>
             </NavLink>
             <NavLink href="/gather" className={styles.tab}>
               <Bluetooth size={18} aria-hidden />
-              {t.nav.gather}
+              <span className={styles.tabLabel}>{t.nav.gather}</span>
             </NavLink>
             <NavLink href="/monitor" className={styles.tab}>
               <Activity size={18} aria-hidden />
-              {t.nav.monitor}
+              <span className={styles.tabLabel}>{t.nav.monitor}</span>
             </NavLink>
             <NavLink href="/calibrate" className={styles.tab}>
               <Crosshair size={18} aria-hidden />
-              {t.nav.calibrate}
+              <span className={styles.tabLabel}>{t.nav.calibrate}</span>
             </NavLink>
           </nav>
           <div className={styles.headerEnd}>
@@ -62,6 +64,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             <CalibrationPill />
             <GatherPill />
             <LanBadge />
+            <LanguageSelect />
             <ThemeToggle />
           </div>
         </div>

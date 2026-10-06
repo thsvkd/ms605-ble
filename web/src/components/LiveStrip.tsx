@@ -3,7 +3,7 @@ import { Link } from 'wouter'
 import { useLiveWatch } from '../hooks/useLiveWatch'
 import { presenceOf } from '../presence'
 import { useStore } from '../store/store'
-import { t } from '../strings'
+import { useStrings } from '../strings'
 import { PresenceLegend, PresencePanel } from './PresenceSignals'
 import { ZoneList } from './ZoneMeterRow'
 import styles from './live.module.css'
@@ -13,6 +13,7 @@ import styles from './live.module.css'
  * dashboard and monitor draw them (14.8.5.1). Watched only while this page is open and visible.
  */
 export function LiveStrip({ deviceId }: { deviceId: string }) {
+  const t = useStrings()
   useLiveWatch([deviceId])
   const frame = useStore((s) => s.live[deviceId])
   const connected = useStore((s) => s.sensors[deviceId]?.live?.link === 'connected')

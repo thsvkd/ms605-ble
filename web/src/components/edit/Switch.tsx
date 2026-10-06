@@ -1,4 +1,4 @@
-import { t } from '../../strings'
+import { useStrings } from '../../strings'
 import styles from './edit.module.css'
 
 interface Props {
@@ -14,6 +14,7 @@ interface Props {
 
 /** A role=switch button: the state is in words next to the knob, never colour alone. */
 export function Switch({ checked, onChange, label, text, disabled, changed }: Props) {
+  const t = useStrings()
   return (
     <button
       type="button"

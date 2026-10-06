@@ -10,7 +10,7 @@ import { useNow } from '../../hooks/useNow'
 import { sensorStatus } from '../../status'
 import { sensorScope, useDrafts } from '../../store/drafts'
 import { selectApplyMembers, selectBatchMembers, sensorName, useStore } from '../../store/store'
-import { t } from '../../strings'
+import { useStrings } from '../../strings'
 import { Button } from '../Button'
 import { Dialog } from '../Dialog'
 import { ApplyResults } from './ApplyResults'
@@ -31,6 +31,7 @@ interface Props {
  * the result of this client's job. Nothing reaches the sensor before 적용 on a diff.
  */
 export function EditFrame({ deviceId, children }: Props) {
+  const t = useStrings()
   const scope = sensorScope(deviceId)
   const sensor = useStore((s) => s.sensors[deviceId])
   const gathering = useStore((s) => s.gather.gathering)
@@ -44,10 +45,10 @@ export function EditFrame({ deviceId, children }: Props) {
   const desktop = useMediaQuery(DESKTOP)
   const now = useNow()
 
-  const [loadError, setLoadError] = useState<string | null>(null)
+  const [loadError, setLoadError] = useState<{ cause: unknown } | null>(null)
   const [loading, setLoading] = useState(false)
   const [preview, setPreview] = useState<{ for: string; data: DraftPreview } | null>(null)
-  const [previewError, setPreviewError] = useState<string | null>(null)
+  const [previewError, setPreviewError] = useState<{ cause: unknown } | null>(null)
   const [previewBusy, setPreviewBusy] = useState(false)
 
   const connected = sensor?.live?.link === 'connected'
@@ -66,7 +67,7 @@ export function EditFrame({ deviceId, children }: Props) {
         if (how === 'open') useDrafts.getState().openSensor(base)
         else useDrafts.getState().rebase(base)
       } catch (e) {
-        setLoadError(failureText(e))
+        setLoadError({ cause: e })
       } finally {
         setLoading(false)
       }
@@ -147,7 +148,7 @@ export function EditFrame({ deviceId, children }: Props) {
             (loadError ? (
               <div className={styles.section}>
                 <p className={styles.error} role="alert">
-                  {loadError}
+                  {failureText(loadError.cause)}
                 </p>
                 <Button icon={RefreshCw} onClick={() => void load('open')} disabled={loading}>
                   {t.edit.reload}
@@ -174,7 +175,7 @@ export function EditFrame({ deviceId, children }: Props) {
     try {
       setPreview({ for: previewKey, data: await previewDraft(toDraftIn(draft)) })
     } catch (e) {
-      setPreviewError(failureText(e))
+      setPreviewError({ cause: e })
     } finally {
       setPreviewBusy(false)
     }
@@ -229,7 +230,7 @@ export function EditFrame({ deviceId, children }: Props) {
         )}
         {previewError && (
           <p className={styles.error} role="alert">
-            {previewError}
+            {failureText(previewError.cause)}
           </p>
         )}
         {desktop && diff}

@@ -14,9 +14,10 @@ import styles from '../components/dashboard.module.css'
 import { useLiveWatch } from '../hooks/useLiveWatch'
 import { DESKTOP, useMediaQuery } from '../hooks/useMediaQuery'
 import { selectBySite, useStore } from '../store/store'
-import { t } from '../strings'
+import { useStrings } from '../strings'
 
 export function DashboardScreen() {
+  const t = useStrings()
   const sensors = useStore((s) => s.sensors)
   const sites = useStore((s) => s.sites)
   const pending = useStore((s) => s.pending)

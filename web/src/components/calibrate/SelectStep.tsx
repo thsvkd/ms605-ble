@@ -3,7 +3,7 @@ import type { SensorView } from '../../api/types'
 import { useNow } from '../../hooks/useNow'
 import { busyText, sensorStatus } from '../../status'
 import { sensorName } from '../../store/store'
-import { t } from '../../strings'
+import { t, useStrings } from '../../strings'
 import { Button } from '../Button'
 import { StatusBadge } from '../StatusBadge'
 import styles from './calibrate.module.css'
@@ -39,6 +39,7 @@ interface Props {
 }
 
 export function SelectStep({ sessions, checked, gathering, applyLocked = NONE, onToggle, onSelectAll, onNext }: Props) {
+  const t = useStrings()
   const now = useNow()
   const ok = (s: SensorView) => selectable(s, applyLocked)
   const count = sessions.filter((s) => ok(s) && checked.has(s.device_id)).length

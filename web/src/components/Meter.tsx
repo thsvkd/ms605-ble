@@ -1,5 +1,5 @@
 import { meter } from '../meter'
-import { t } from '../strings'
+import { useStrings } from '../strings'
 import styles from './live.module.css'
 
 interface Props {
@@ -15,6 +15,7 @@ interface Props {
 
 /** The CLI meter as a 16-cell grid: the tick never moves; the fill crosses it, in red, iff value > threshold. */
 export function Meter({ value, threshold, label, hot, compact }: Props) {
+  const t = useStrings()
   const { cells, over } = meter(value, threshold)
   return (
     <div className={`${styles.meter} ${compact ? styles.compact : ''}`} data-over={over}>

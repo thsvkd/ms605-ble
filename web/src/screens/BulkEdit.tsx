@@ -25,7 +25,7 @@ import { DESKTOP, useMediaQuery } from '../hooks/useMediaQuery'
 import { useMyApply } from '../hooks/useMyApply'
 import { useDrafts } from '../store/drafts'
 import { selectApplyMembers, selectBatchMembers, selectSessions, sensorName, useStore } from '../store/store'
-import { t } from '../strings'
+import { useStrings } from '../strings'
 import { idsParam } from './Monitor'
 
 const DISMISSED_KEY = 'ms605.dismissedApply'
@@ -53,6 +53,7 @@ type Previewed = { kind: 'edit'; body: DraftIn; data: DraftPreview } | { kind: '
  * a preview -> the diff; else the form. Thresholds are relative by default (D8, G32).
  */
 export function BulkEditScreen() {
+  const t = useStrings()
   const search = useSearch()
   const [, navigate] = useLocation()
   const params = new URLSearchParams(search)
@@ -78,7 +79,7 @@ export function BulkEditScreen() {
   const [dismissed, setDismissed] = useState(readDismissed)
   const [previewed, setPreviewed] = useState<Previewed | null>(null)
   const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<{ cause: unknown } | null>(null)
   const [source, setSource] = useState<ConfigView | null>(null)
 
   // first visit: ?ids= is the initial selection; ?source= picks the clone source (from a sensor's 설정 tab)
@@ -118,7 +119,7 @@ export function BulkEditScreen() {
     try {
       await f()
     } catch (e) {
-      setError(failureText(e))
+      setError({ cause: e })
     } finally {
       setBusy(false)
     }
@@ -207,7 +208,7 @@ export function BulkEditScreen() {
         />
         {error && (
           <p className={styles.error} role="alert">
-            {error}
+            {failureText(error.cause)}
           </p>
         )}
       </div>
@@ -240,7 +241,7 @@ export function BulkEditScreen() {
         {why && <p className={styles.reason}>{why}</p>}
         {error && (
           <p className={styles.error} role="alert">
-            {error}
+            {failureText(error.cause)}
           </p>
         )}
         <Button

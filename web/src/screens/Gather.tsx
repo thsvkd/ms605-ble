@@ -7,9 +7,10 @@ import { SimPanel } from '../components/SimPanel'
 import styles from '../components/gather.module.css'
 import { DESKTOP, useMediaQuery } from '../hooks/useMediaQuery'
 import { selectGathered, useStore } from '../store/store'
-import { t } from '../strings'
+import { useStrings } from '../strings'
 
 export function GatherScreen() {
+  const t = useStrings()
   const sensors = useStore((s) => s.sensors)
   const hasGathered = useMemo(() => selectGathered({ sensors }).length > 0, [sensors])
   const desktop = useMediaQuery(DESKTOP)

@@ -1,6 +1,6 @@
 import type { CalibrationJobView } from '../../api/types'
 import { compareCell } from '../../calibration'
-import { t } from '../../strings'
+import { useStrings } from '../../strings'
 import styles from './calibrate.module.css'
 
 function Cell({ before, after, label }: { before: number; after: number; label: string }) {
@@ -16,6 +16,7 @@ function Cell({ before, after, label }: { before: number; after: number; label: 
 
 /** Thresholds per zone before and after: `70 → 64 (−6)`. */
 export function ThresholdCompare({ job, alias }: { job: CalibrationJobView; alias: string }) {
+  const t = useStrings()
   const { before, after } = job
   if (!before || !after) return <p className={styles.muted}>{t.compare.none}</p>
   return (

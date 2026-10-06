@@ -1,11 +1,12 @@
 import { ArrowRight, Plus } from 'lucide-react'
 import { Link } from 'wouter'
 import { useStore } from '../store/store'
-import { t } from '../strings'
+import { useStrings } from '../strings'
 import { buttonClass } from './Button'
 
 /** The dashboard's one primary action (10.1-1). */
 export function PrimaryAction() {
+  const t = useStrings()
   const gathering = useStore((s) => s.gather.gathering)
   const Icon = gathering ? ArrowRight : Plus
   return (

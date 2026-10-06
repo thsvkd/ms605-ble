@@ -3,7 +3,7 @@ import { useState } from 'react'
 import type { ApplyJobView, RollbackItem } from '../../api/types'
 import { applyHeadline, applyItemStatus, canRollback, formatDateTime, snapshotTime } from '../../apply'
 import { sensorName, useStore } from '../../store/store'
-import { t } from '../../strings'
+import { t, useStrings } from '../../strings'
 import { Button } from '../Button'
 import cal from '../calibrate/calibrate.module.css'
 import { Dialog } from '../Dialog'
@@ -27,6 +27,7 @@ interface Props {
  * not started warn, failed while writing danger. No retry (G37): what reached the write can roll back.
  */
 export function ApplyResults({ job, only, onDismiss, dismissLabel = t.apply.close, onStarted }: Props) {
+  const t = useStrings()
   const sensors = useStore((s) => s.sensors)
   const [rb, setRb] = useState<RollbackItem[] | null>(null)
   const items = only ? job.items.filter((i) => i.device_id === only) : job.items

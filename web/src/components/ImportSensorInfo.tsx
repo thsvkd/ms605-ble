@@ -1,23 +1,30 @@
 import { ChevronRight, FileUp } from 'lucide-react'
 import { useId, useState } from 'react'
 import { ApiRequestError, importSensorInfo } from '../api/client'
-import { errorText, t } from '../strings'
+import type { ErrorCode } from '../api/types'
+import { errorText, useStrings } from '../strings'
 import { Button } from './Button'
 import { type SiteChoice, SitePicker } from './SitePicker'
 import styles from './gather.module.css'
 
+type Result =
+  | { kind: 'required' }
+  | { kind: 'done'; count: number }
+  | { kind: 'error'; code?: ErrorCode; message?: string }
+
 /** Collapsed secondary area: import a sensor_info_*.yaml as pending entries (6.5). */
 export function ImportSensorInfo() {
+  const t = useStrings()
   const uid = useId()
   const [file, setFile] = useState<File | null>(null)
   const [site, setSite] = useState<SiteChoice>({ kind: 'auto' })
   const [busy, setBusy] = useState(false)
-  const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null)
+  const [result, setResult] = useState<Result | null>(null)
 
   const submit = async () => {
     if (!file) return
     if (site.kind === 'new' && !site.name.trim()) {
-      setResult({ ok: false, text: t.form.required })
+      setResult({ kind: 'required' })
       return
     }
     setBusy(true)
@@ -31,9 +38,9 @@ export function ImportSensorInfo() {
         site_name: site.kind === 'new' ? site.name.trim() : null,
       })
       const n = res.added.length
-      setResult({ ok: true, text: n > 0 ? t.import.done(n) : t.import.none })
+      setResult({ kind: 'done', count: n })
     } catch (e) {
-      setResult({ ok: false, text: e instanceof ApiRequestError ? errorText(e.code, e.message) : t.error.internal })
+      setResult(e instanceof ApiRequestError ? { kind: 'error', code: e.code, message: e.message } : { kind: 'error' })
     } finally {
       setBusy(false)
     }
@@ -70,8 +77,16 @@ export function ImportSensorInfo() {
           {t.import.action}
         </Button>
         {result && (
-          <p className={`${styles.result} ${result.ok ? '' : styles.resultError}`} role="status">
-            {result.text}
+          <p className={`${styles.result} ${result.kind === 'done' ? '' : styles.resultError}`} role="status">
+            {result.kind === 'required'
+              ? t.form.required
+              : result.kind === 'done'
+                ? result.count > 0
+                  ? t.import.done(result.count)
+                  : t.import.none
+                : result.code
+                  ? errorText(result.code, result.message ?? '')
+                  : t.error.internal}
           </p>
         )}
       </form>

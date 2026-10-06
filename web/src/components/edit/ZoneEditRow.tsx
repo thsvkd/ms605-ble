@@ -1,5 +1,5 @@
 import type { LiveZone } from '../../api/types'
-import { t } from '../../strings'
+import { useStrings } from '../../strings'
 import styles from './edit.module.css'
 import { Switch } from './Switch'
 import { ThresholdMeter } from './ThresholdMeter'
@@ -25,6 +25,7 @@ interface Props {
 
 /** One zone: name · distance, the on/off switch, then the trigger and maintain sliders over the live fill. */
 export function ZoneEditRow(p: Props) {
+  const t = useStrings()
   const name = `Z${p.index}`
   return (
     <li className={styles.zone} data-off={!p.enabled}>

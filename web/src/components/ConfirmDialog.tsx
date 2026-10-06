@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import { ApiRequestError } from '../api/client'
-import { errorText, t } from '../strings'
+import { failureText } from '../api/client'
+import { useStrings } from '../strings'
 import { Button } from './Button'
 import { Dialog } from './Dialog'
 import styles from './ui.module.css'
@@ -17,8 +17,9 @@ interface Props {
 
 /** For the irreversible or battery/link-heavy actions only (10.1-5). */
 export function ConfirmDialog({ open, title, body, confirmLabel, danger, onConfirm, onClose }: Props) {
+  const t = useStrings()
   const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<unknown>(null)
 
   const close = () => {
     setError(null)
@@ -32,7 +33,7 @@ export function ConfirmDialog({ open, title, body, confirmLabel, danger, onConfi
       await onConfirm()
       close()
     } catch (e) {
-      setError(e instanceof ApiRequestError ? errorText(e.code, e.message) : t.error.internal)
+      setError(e)
     } finally {
       setBusy(false)
     }
@@ -41,9 +42,9 @@ export function ConfirmDialog({ open, title, body, confirmLabel, danger, onConfi
   return (
     <Dialog open={open} title={title} onClose={close}>
       <p className={styles.dialogText}>{body}</p>
-      {error && (
+      {error !== null && (
         <p className={styles.error} role="alert">
-          {error}
+          {failureText(error)}
         </p>
       )}
       <div className={styles.dialogActions}>

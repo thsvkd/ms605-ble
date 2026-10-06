@@ -1,5 +1,5 @@
 import { Eye, RotateCcw } from 'lucide-react'
-import { t } from '../../strings'
+import { useStrings } from '../../strings'
 import { Button } from '../Button'
 import styles from './edit.module.css'
 
@@ -13,6 +13,7 @@ interface Props {
 
 /** Shown only while something changed: the count, 모두 되돌리기 (draft only, no confirm), and the one primary: 미리보기. */
 export function DraftBar({ count, busy, disabled, onReset, onPreview }: Props) {
+  const t = useStrings()
   return (
     <div className={styles.draftBar}>
       <div className={styles.draftBarInner} role="group" aria-label={t.edit.changed(count)}>

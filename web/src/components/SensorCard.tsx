@@ -5,7 +5,7 @@ import { useNow } from '../hooks/useNow'
 import { presenceOf } from '../presence'
 import { sensorStatus } from '../status'
 import { useStore } from '../store/store'
-import { t } from '../strings'
+import { useStrings } from '../strings'
 import { BatteryIndicator } from './BatteryIndicator'
 import { PresencePanel } from './PresenceSignals'
 import { StatusBadge } from './StatusBadge'
@@ -16,6 +16,7 @@ import styles from './dashboard.module.css'
  * shows the device's 재실 call (the card's answer) apart from the raw PIR / RF chips; the screen holds the watch.
  */
 export const SensorCard = memo(function SensorCard({ deviceId }: { deviceId: string }) {
+  const t = useStrings()
   const sensor = useStore((s) => s.sensors[deviceId])
   const frame = useStore((s) => s.live[deviceId])
   const gathering = useStore((s) => s.gather.gathering)

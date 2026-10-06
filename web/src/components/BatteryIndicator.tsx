@@ -1,10 +1,11 @@
 import { Battery, BatteryLow } from 'lucide-react'
 import type { SensorView } from '../api/types'
-import { t } from '../strings'
+import { useStrings } from '../strings'
 import styles from './ui.module.css'
 
 /** The live reading when connected, else the registry's last known value marked "(마지막 값)". */
 export function BatteryIndicator({ sensor }: { sensor: SensorView }) {
+  const t = useStrings()
   const live = sensor.live?.link === 'connected' ? sensor.live.battery_pct : null
   const pct = live ?? sensor.live?.battery_pct ?? sensor.registry?.battery_pct ?? null
   if (pct === null) return null

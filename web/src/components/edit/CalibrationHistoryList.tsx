@@ -4,21 +4,22 @@ import { calibrationHistory, failureText } from '../../api/client'
 import type { CalibrationRecord } from '../../api/types'
 import { formatDateTime } from '../../apply'
 import { toMillis } from '../../format'
-import { t } from '../../strings'
+import { useStrings } from '../../strings'
 import cal from '../calibrate/calibrate.module.css'
 import { RelativeTime } from '../RelativeTime'
 import styles from './edit.module.css'
 
 /** 보정 기록 from storage (calibration_history.jsonl), newest first; no connection needed. */
 export function CalibrationHistoryList({ deviceId, refresh }: { deviceId: string; refresh?: unknown }) {
+  const t = useStrings()
   const [records, setRecords] = useState<CalibrationRecord[] | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<{ cause: unknown } | null>(null)
 
   useEffect(() => {
     let live = true
     calibrationHistory(deviceId).then(
       (r) => live && setRecords(r.records),
-      (e: unknown) => live && setError(failureText(e)),
+      (e: unknown) => live && setError({ cause: e }),
     )
     return () => {
       live = false
@@ -33,7 +34,7 @@ export function CalibrationHistoryList({ deviceId, refresh }: { deviceId: string
       </h2>
       {error && (
         <p className={styles.error} role="alert">
-          {error}
+          {failureText(error.cause)}
         </p>
       )}
       {records === null && !error && <p className={styles.note}>{t.history.loading}</p>}

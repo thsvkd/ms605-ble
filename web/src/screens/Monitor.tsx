@@ -7,7 +7,7 @@ import { SensorPicker } from '../components/SensorPicker'
 import styles from '../components/live.module.css'
 import { useLiveWatch } from '../hooks/useLiveWatch'
 import { selectSessions, useStore } from '../store/store'
-import { t } from '../strings'
+import { useStrings } from '../strings'
 
 const SAVED_KEY = 'ms605.monitorIds'
 
@@ -44,6 +44,7 @@ export function idsParam(search: string): string[] | null {
 }
 
 export function MonitorScreen() {
+  const t = useStrings()
   const sensors = useStore((s) => s.sensors)
   const sites = useStore((s) => s.sites)
   const synced = useStore((s) => s.lastSeq !== null)

@@ -1,7 +1,10 @@
 /* Multi-sensor calibration (docs/GUI_API.md 14.8.6): one calm column on phones, two on desktops. */
 .screen {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--space-4);
+  width: 100%;
+  min-width: 0;
   max-width: 640px;
   margin: 0 auto;
   /* room for the docked primary button above the bottom nav */
@@ -93,6 +96,7 @@
 /* -- layout: aside (headline, start options, actions) + body (sensor rows) ------------------ */
 .layout {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--space-4);
   align-items: start;
 }
@@ -118,6 +122,33 @@
   background: var(--surface);
   box-shadow: var(--shadow);
   min-width: 0;
+  max-width: 100%;
+}
+
+@media (max-width: 399px) {
+  .steps {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    align-items: start;
+    gap: 4px;
+  }
+
+  .step,
+  .step:last-child {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    justify-items: center;
+    gap: 4px;
+    min-width: 0;
+    line-height: 1.2;
+    text-align: center;
+    white-space: normal;
+    word-break: keep-all;
+  }
+
+  .step:not(:last-child)::after {
+    display: none;
+  }
 }
 
 .panelHead {

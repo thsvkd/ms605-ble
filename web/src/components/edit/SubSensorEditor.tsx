@@ -1,6 +1,6 @@
 import { AlertTriangle } from 'lucide-react'
 import { useEffect, useId, useState } from 'react'
-import { t } from '../../strings'
+import { useStrings } from '../../strings'
 import styles from './edit.module.css'
 import { Switch } from './Switch'
 
@@ -20,6 +20,7 @@ function Seconds({
   disabled: boolean
   onChange: (v: number) => void
 }) {
+  const t = useStrings()
   const id = useId()
   const [text, setText] = useState(String(value))
   useEffect(() => setText(String(value)), [value])
@@ -68,6 +69,7 @@ interface Props {
 
 /** One sub-sensor: use (tag41), zones Z0-Z6 (tag48), presence / absence seconds (tag49). */
 export function SubSensorEditor(p: Props) {
+  const t = useStrings()
   const title = useId()
   const name = t.adv.sub(p.index + 1)
   const toggle = (z: number) =>

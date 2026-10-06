@@ -2,7 +2,7 @@ import type { ReactNode } from 'react'
 import type { BatchView, CalibrationJobView, SensorView } from '../../api/types'
 import { formatElapsed, jobProgress, jobStatus } from '../../calibration'
 import { sensorName } from '../../store/store'
-import { t } from '../../strings'
+import { useStrings } from '../../strings'
 import { StatusBadge } from '../StatusBadge'
 import styles from './calibrate.module.css'
 
@@ -16,6 +16,7 @@ interface Props {
 
 /** One sensor of the batch: its state in words, and while learning, elapsed vs the expected time (G21). */
 export function JobRow({ job, batch, sensor, gathering, children }: Props) {
+  const t = useStrings()
   const status = jobStatus(job, { batchState: batch.state, gathering, link: sensor?.live?.link ?? null })
   const inRound = batch.round_ids.includes(job.device_id)
   const { ratio, overdue } = jobProgress(job, batch.expected_s)

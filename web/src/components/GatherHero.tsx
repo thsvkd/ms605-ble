@@ -1,11 +1,12 @@
 import { Bluetooth, BluetoothSearching } from 'lucide-react'
 import { useStore } from '../store/store'
-import { t } from '../strings'
+import { useStrings } from '../strings'
 import { ConnectingLine } from './ConnectingLine'
 import styles from './gather.module.css'
 
 /** The three states of 10.3. `compact` is the phone's one-liner once a sensor has been gathered. */
 export function GatherHero({ compact, wide }: { compact: boolean; wide: boolean }) {
+  const t = useStrings()
   const gathering = useStore((s) => s.gather.gathering)
   const connecting = useStore((s) => s.gather.connecting.length)
   const server = useStore((s) => s.server)

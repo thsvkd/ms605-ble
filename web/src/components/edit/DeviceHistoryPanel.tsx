@@ -3,7 +3,7 @@ import { useId, useState } from 'react'
 import { deviceHistory, failureText } from '../../api/client'
 import type { DeviceHistory, DeviceHistoryKind } from '../../api/types'
 import { formatDateTime } from '../../apply'
-import { t } from '../../strings'
+import { useStrings } from '../../strings'
 import { Button } from '../Button'
 import cal from '../calibrate/calibrate.module.css'
 import styles from './edit.module.css'
@@ -12,12 +12,13 @@ const KINDS: DeviceHistoryKind[] = ['presence', 'light']
 
 /** 기기 기록 — 실험적 (G35, SPEC 8.8): one read, no paging, the record layout unverified; always labelled. */
 export function DeviceHistoryPanel({ deviceId, connected }: { deviceId: string; connected: boolean }) {
+  const t = useStrings()
   const name = useId()
   const [kind, setKind] = useState<DeviceHistoryKind>('presence')
   const [detail, setDetail] = useState(false)
   const [busy, setBusy] = useState(false)
   const [result, setResult] = useState<DeviceHistory | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<{ cause: unknown } | null>(null)
 
   const read = async () => {
     setBusy(true)
@@ -26,7 +27,7 @@ export function DeviceHistoryPanel({ deviceId, connected }: { deviceId: string; 
     try {
       setResult(await deviceHistory(deviceId, kind, kind === 'presence' && detail))
     } catch (e) {
-      setError(failureText(e))
+      setError({ cause: e })
     } finally {
       setBusy(false)
     }
@@ -64,7 +65,7 @@ export function DeviceHistoryPanel({ deviceId, connected }: { deviceId: string; 
       {!connected && <p className={styles.note}>{t.edit.needConnection}</p>}
       {error && (
         <p className={styles.error} role="alert">
-          {error}
+          {failureText(error.cause)}
         </p>
       )}
       {empty && <p className={styles.note}>{t.history.deviceEmpty}</p>}

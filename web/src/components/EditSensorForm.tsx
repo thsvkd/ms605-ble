@@ -1,7 +1,7 @@
 import { useEffect, useId, useState } from 'react'
 import { ApiRequestError, ensureSite, updateSensor } from '../api/client'
-import type { RegistryInfo, SensorUpdate } from '../api/types'
-import { errorText, t } from '../strings'
+import type { ErrorCode, RegistryInfo, SensorUpdate } from '../api/types'
+import { errorText, useStrings } from '../strings'
 import { Button } from './Button'
 import { Field } from './Field'
 import { type SiteChoice, SitePicker } from './SitePicker'
@@ -18,15 +18,16 @@ function settle(edit: string | null, value: string, trim = true): string | null 
  * saving one field never overwrites another screen's change to a different one.
  */
 export function EditSensorForm({ deviceId, registry }: { deviceId: string; registry: RegistryInfo }) {
+  const t = useStrings()
   const uid = useId()
   const [aliasEdit, setAliasEdit] = useState<string | null>(null)
   const [siteEdit, setSiteEdit] = useState<SiteChoice | null>(null)
   const [locationEdit, setLocationEdit] = useState<string | null>(null)
   const [notesEdit, setNotesEdit] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
-  const [aliasError, setAliasError] = useState<string | null>(null)
-  const [siteError, setSiteError] = useState<string | null>(null)
-  const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null)
+  const [aliasError, setAliasError] = useState(false)
+  const [siteError, setSiteError] = useState(false)
+  const [result, setResult] = useState<{ ok: true } | { ok: false; code?: ErrorCode; message?: string } | null>(null)
 
   const alias = aliasEdit ?? registry.alias
   const site: SiteChoice = siteEdit ?? { kind: 'existing', siteId: registry.site_id }
@@ -43,8 +44,8 @@ export function EditSensorForm({ deviceId, registry }: { deviceId: string; regis
   const save = async () => {
     const name = alias.trim()
     const newSite = site.kind === 'new' ? site.name.trim() : null
-    setAliasError(name ? null : t.form.required)
-    setSiteError(newSite === '' ? t.form.required : null)
+    setAliasError(!name)
+    setSiteError(newSite === '')
     setResult(null)
     if (!name || newSite === '') return
     setBusy(true)
@@ -61,9 +62,9 @@ export function EditSensorForm({ deviceId, registry }: { deviceId: string; regis
         body.site_id = site.siteId
       }
       await updateSensor(deviceId, body)
-      setResult({ ok: true, text: t.form.saved })
+      setResult({ ok: true })
     } catch (e) {
-      setResult({ ok: false, text: e instanceof ApiRequestError ? errorText(e.code, e.message) : t.error.internal })
+      setResult(e instanceof ApiRequestError ? { ok: false, code: e.code, message: e.message } : { ok: false })
     } finally {
       setBusy(false)
     }
@@ -82,12 +83,17 @@ export function EditSensorForm({ deviceId, registry }: { deviceId: string; regis
         {t.detail.edit}
       </h2>
       <div className={styles.fields}>
-        <Field id={`${uid}-alias`} label={t.form.alias} error={aliasError}>
+        <Field id={`${uid}-alias`} label={t.form.alias} error={aliasError ? t.form.required : null}>
           {(p) => (
             <input {...p} value={alias} maxLength={64} autoComplete="off" onChange={(e) => setAliasEdit(e.target.value)} />
           )}
         </Field>
-        <SitePicker id={`${uid}-site`} value={site} onChange={setSiteEdit} nameError={siteError} />
+        <SitePicker
+          id={`${uid}-site`}
+          value={site}
+          onChange={setSiteEdit}
+          nameError={siteError ? t.form.required : null}
+        />
         <div className={styles.wide}>
           <Field id={`${uid}-location`} label={t.form.location}>
             {(p) => (
@@ -111,7 +117,7 @@ export function EditSensorForm({ deviceId, registry }: { deviceId: string; regis
       <div className={styles.actions}>
         {result && (
           <p className={result.ok ? styles.saved : styles.error} role="status">
-            {result.text}
+            {result.ok ? t.form.saved : result.code ? errorText(result.code, result.message ?? '') : t.error.internal}
           </p>
         )}
         <Button type="submit" variant="primary" disabled={busy}>

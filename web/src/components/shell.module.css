@@ -112,9 +112,15 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* Narrow phones with a calibration pill: icons only for the rest of the header (text stays for screen readers). */
-@media (max-width: 479px) {
-  .headerInner:has(.pillCal) .squeeze {
+/* Compact headers reserve space for language and theme controls even when every status is visible. */
+@media (max-width: 1199px) {
+  .headerInner {
+    gap: var(--space-2);
+    padding-inline: var(--space-3);
+  }
+
+  .headerInner .squeeze,
+  .headerInner .tabLabel {
     position: absolute;
     width: 1px;
     height: 1px;
@@ -123,8 +129,26 @@
     white-space: nowrap;
   }
 
-  .headerInner:has(.pillCal) .pill:not(.pillCal) {
-    padding: 0 10px;
+  .brand {
+    gap: 0;
+  }
+
+  .headerEnd {
+    flex: 1;
+    justify-content: flex-end;
+    gap: 4px;
+  }
+
+  .headerEnd .pill {
+    width: 36px;
+    padding: 0;
+    justify-content: center;
+  }
+
+  .headerEnd .chip {
+    width: 24px;
+    padding: 0;
+    justify-content: center;
   }
 }
 
@@ -172,6 +196,37 @@
 .iconButton:hover {
   background: var(--surface-2);
   color: var(--text);
+}
+
+.languageSelect {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 36px;
+  padding: 0 6px 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-muted);
+  background: var(--surface);
+  flex: none;
+}
+
+.languageSelect select {
+  max-width: 78px;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.languageSelect:focus-within {
+  border-color: var(--focus);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus) 25%, transparent);
 }
 
 /* -- banner ----------------------------------------------------------------------------- */
@@ -333,10 +388,32 @@
 
 /* -- auth ------------------------------------------------------------------------------- */
 .auth {
+  position: relative;
   min-height: 100dvh;
   display: grid;
   place-items: center;
   padding: var(--space-5) var(--space-4);
+}
+
+.authLanguage {
+  position: absolute;
+  top: max(var(--space-4), env(safe-area-inset-top));
+  right: var(--space-4);
+}
+
+@media (max-width: 1199px) {
+  .headerEnd .languageSelect {
+    width: 38px;
+    padding: 0;
+    justify-content: center;
+  }
+
+  .headerEnd .languageSelect select {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    opacity: 0;
+  }
 }
 
 .authCard {

@@ -2,7 +2,7 @@ import { AlertTriangle, X } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import type { Notice } from '../api/types'
 import { useStore } from '../store/store'
-import { t } from '../strings'
+import { t, useStrings } from '../strings'
 import styles from './shell.module.css'
 
 const VISIBLE_MS = 8000
@@ -40,6 +40,7 @@ export function Notices() {
 
 /** One toast with its own timer: a newer toast never restarts or cancels an older one's. */
 function Toast({ id, notice, onDismiss }: { id: string; notice: Notice; onDismiss: (key: string) => void }) {
+  const t = useStrings()
   useEffect(() => {
     const timer = setTimeout(() => onDismiss(id), VISIBLE_MS)
     return () => clearTimeout(timer)
